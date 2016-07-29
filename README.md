@@ -1,5 +1,7 @@
 # fractiomatix
-Mathematical code repository for matrices and specific combinatorial problems of interest.<br>
+Mathematical code repository for matrices and specific combinatorial problems of interest.
+
+There is a dependency on [jfreechart] (https://github.com/jfree/jfreechart) for drawing routines.
 
 Current contents:
 
