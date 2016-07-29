@@ -4,12 +4,12 @@ Mathematical code repository for matrices and specific combinatorial problems of
 Current contents:
 
 		lkr74.mathgenerics:
-  			class MiscMath<br>
+  			class MiscMath
     				public class HatBasis
       					HatBasis(double span)
       					public double get(double x)
     				public static class RandFill
-    						RandFill(int range)<br>
+    					RandFill(int range)
       					public int remainingSlots()
       					public int getRandom()
     				public static double[] solveCubicPolynomial(double A, double B, double C)
@@ -94,8 +94,8 @@ Current contents:
     				public static boolean equal(CSRMatrix S, CSRMatrix T)
     				public void swap(int r1, int r2)
     				public static CSRMatrix add(CSRMatrix S, CSRMatrix T)	
-  					public static CSRMatrix subtract(CSRMatrix S, CSRMatrix T, boolean subtract)
-  					public static CSRMatrix addSub(CSRMatrix S, CSRMatrix T, boolean subtract)
+  				public static CSRMatrix subtract(CSRMatrix S, CSRMatrix T, boolean subtract)
+  				public static CSRMatrix addSub(CSRMatrix S, CSRMatrix T, boolean subtract)
     				public static CSRMatrix multiply(CSRMatrix S, CSRMatrix T)
     				public String toString()
     
