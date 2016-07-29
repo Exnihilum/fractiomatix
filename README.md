@@ -26,8 +26,8 @@ Current contents:
       					public double getDescendingDistance(double t)
       					public double getTime(double d)
   
-		lkr74.matrixlib
-  			public class Matrix implements Cloneable
+		lkr74.matrixlib:
+  			public class Matrix
     				public Matrix(String name, int r, int c)
     				public Matrix(String name, int r, int c, Type type)
     				public Matrix(String name, int M, int N, double[] data)
