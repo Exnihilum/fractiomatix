@@ -259,6 +259,7 @@ public class Matrix implements Cloneable {
 
 	
 	
+	// finds out number of zeroes in each row & column, sums them up into an analysis array, useful for finding determinant
 	public void analyseRowsColumns() {
 		
 		if (M < 2 || N < 2) {
@@ -425,6 +426,7 @@ public class Matrix implements Cloneable {
 	
 	
 	// polymorphic add will do A+B returning resultant C of matrix type A
+	// the data from both matrices are gotten through the polymorphic method getDataRef()
 	public static Matrix add(Matrix A, Matrix B) {
 		
 		if (B.M != A.M || B.N != A.N)
@@ -1180,7 +1182,9 @@ public class Matrix implements Cloneable {
 	
 	
 	
-	public void doGaussElimination() {
+	// does Gauss elimination, returns false if matrix was singular
+	// taken from http://introcs.cs.princeton.edu/java/95linear/Matrix.java.html
+	public boolean doGaussElimination() {
 
 		if (M != N) throw new RuntimeException("Matrix.doGaussElimination(): Matrix not square.");
 
@@ -1203,7 +1207,7 @@ public class Matrix implements Cloneable {
 			// singular
 			if (data[iN + i] <= ROUNDOFF_ERROR && data[iN + i] >= -ROUNDOFF_ERROR) {
 				status |= SINGULAR_MATRIX;
-				return;
+				return false;
 			}
 
 			// pivot within A
@@ -1224,10 +1228,12 @@ public class Matrix implements Cloneable {
 			System.out.println(this.toString());
 		}
 		bitImage.make();
+		return true;
 	}
 
 	
 	// return x = A^-1 b, assuming A is square and has full rank
+	// taken from http://introcs.cs.princeton.edu/java/95linear/Matrix.java.html
 	public Matrix solve(Matrix rhs) {
 		if (M != N || rhs.M != N || rhs.N != 1)
 			throw new RuntimeException("Matrix.solve(): Invalid matrix/vector dimensions.");
@@ -1283,7 +1289,7 @@ public class Matrix implements Cloneable {
 		}
 		
 		if (DEBUG_LEVEL > 1) {
-			System.out.println("Solver:");
+			System.out.println("Gaussian with partial pivoting solver:");
 			System.out.println(x.toString());
 		}
 		x.bitImage = new BinBitImage(x);

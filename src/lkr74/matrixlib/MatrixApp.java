@@ -182,8 +182,10 @@ public class MatrixApp {
 			System.out.println(UVl[0].toString());
 			System.out.println(UVl[1].toString());
 		}
+		x6 = D5.solve(c2);
 		x6 = c2.solveCrout(UVl[0], UVl[1]);
-		
+
+
 		tstart = System.nanoTime();
 		System.out.println(D5.toString());
 		for (int i = 0; i < iters; i++)

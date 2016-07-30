@@ -200,28 +200,6 @@ public class BinBitImage {
 	}
 
 	
-	public String toString() {
-		StringBuilder sb = new StringBuilder();
-		System.out.println("matrix " + this.M.name + "'s bitImage:");
-		if (bitSets == 0) {
-			for (int i = 0; i < 64 && i < M.M * M.N; i++) {
-				sb.append(((data[0] & (0x1L<<i)) > 0) ? "1 " : ". ");
-				if ((i + 1) % M.N == 0) sb.append("\n");
-			}
-			return sb.toString();
-		}
-		for (int i = 0; i < M.M; i++) {
-			for (int j = 0; j < bitSets; j++) {
-				for (int k = 0; k < 64; k++)
-					if (M.N > j * 64 + k)
-						sb.append(((data[i * bitSets + j]&(0x1L<<k))!=0)?"1 ":". ");
-			}
-			sb.append("\n");
-		}
-		sb.append("\n");
-		return sb.toString();
-	}
-
 	
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
 	//			BINARY TREE BITSEARCH METHODS
@@ -353,6 +331,34 @@ public class BinBitImage {
 		binBitI.position(0);
 		return binBitLength;
 	}
+
+	
+	///////////////////////////////////////////////////////////////////////////////////////////////////////////
+	//			OUTPUT METHODS
+	///////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	public String toString() {
+		StringBuilder sb = new StringBuilder();
+		System.out.println("matrix " + this.M.name + "'s bitImage:");
+		if (bitSets == 0) {
+			for (int i = 0; i < 64 && i < M.M * M.N; i++) {
+				sb.append(((data[0] & (0x1L<<i)) > 0) ? "1 " : ". ");
+				if ((i + 1) % M.N == 0) sb.append("\n");
+			}
+			return sb.toString();
+		}
+		for (int i = 0; i < M.M; i++) {
+			for (int j = 0; j < bitSets; j++) {
+				for (int k = 0; k < 64; k++)
+					if (M.N > j * 64 + k)
+						sb.append(((data[i * bitSets + j]&(0x1L<<k))!=0)?"1 ":". ");
+			}
+			sb.append("\n");
+		}
+		sb.append("\n");
+		return sb.toString();
+	}
+
 
 	// returns String version of current binBitI & binBitD contents
 	protected static String binBitToString() {

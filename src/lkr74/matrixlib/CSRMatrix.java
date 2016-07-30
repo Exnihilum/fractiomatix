@@ -82,46 +82,12 @@ public class CSRMatrix extends Matrix {
 		return data;
 	}
 	
-	// get any subset of the CSR dataset or an expanded/contracted dataset, converted into RC format
-	// Mi = top boundary, Ni = left boundary, Mo = bottom boundary, No = right boundary
-	@Override
-	public CSRMatrix rescale(int Mi, int Ni, int Mo, int No, boolean doBitImage) {
-		
-		if (Mi > Mo || Ni > No) throw new RuntimeException("CSRMatrix.getData(): Invalid data subset size.");
-		int newM = Mo - Mi, newN = No - Ni;
-		
-		String newname;
-		if (DEBUG_LEVEL > 1)	newname = name + "(r:" + Mi + "," + Ni + "," + "Mo" + "," + No + ")";
-		else					newname = name + "(r)";
-		CSRMatrix A = new CSRMatrix(newname, newM, newN, Matrix.Type.Null);
-		double[] newdata = A.data;
-
-		// nr & nc are indexes into the new dataset
-		for (int nr = Mi, r = 0; nr < Mo; nr++, r++) {
-			// store a row only if indexing stays inside row bounds of original matrix
-			if (nr >= 0 && nr < M ) {
-				int nrofs = r * newN, iN = IA[nr + 1];
-				for (int nc = Ni, c = 0; nc < No; nc++, c++) {
-					// store a value only if indexing stays inside column bounds of original matrix
-					if (nc >= 0 && nc < N) {
-						// iterate through row's sparse column indices, check if sought column exists -> a sparse value is stored
-						for (int i = IA[nr]; i < iN; i++)
-							if (JA[i] == nc)	newdata[nrofs + c] = this.A[i];
-					}
-				}
-			}
-		}
-		A.putData(newdata);
-		if (Matrix.DEBUG_LEVEL > 1) System.out.println(this.toString());
-		if (doBitImage) A.bitImage = new BinBitImage(A);
-		return A;
-	}
 	
-	
-	// incominf row-column data into CSRMatrix must be converted to native format
+	// incoming row-column data into CSRMatrix must be converted to native format
 	@Override
 	public void putDataRef(double[] data) { this.putData(data); }
 
+	
 	// TODO: optimise this algorithm
 	@Override
 	public void putData(double[] data) {
@@ -160,6 +126,43 @@ public class CSRMatrix extends Matrix {
 		}
 	}
 	
+	
+	
+
+	// get any subset of the CSR dataset or an expanded/contracted dataset, converted into RC format
+	// Mi = top boundary, Ni = left boundary, Mo = bottom boundary, No = right boundary
+	@Override
+	public CSRMatrix rescale(int Mi, int Ni, int Mo, int No, boolean doBitImage) {
+		
+		if (Mi > Mo || Ni > No) throw new RuntimeException("CSRMatrix.getData(): Invalid data subset size.");
+		int newM = Mo - Mi, newN = No - Ni;
+		
+		String newname;
+		if (DEBUG_LEVEL > 1)	newname = name + "(r:" + Mi + "," + Ni + "," + "Mo" + "," + No + ")";
+		else					newname = name + "(r)";
+		CSRMatrix A = new CSRMatrix(newname, newM, newN, Matrix.Type.Null);
+		double[] newdata = A.data;
+
+		// nr & nc are indexes into the new dataset
+		for (int nr = Mi, r = 0; nr < Mo; nr++, r++) {
+			// store a row only if indexing stays inside row bounds of original matrix
+			if (nr >= 0 && nr < M ) {
+				int nrofs = r * newN, iN = IA[nr + 1];
+				for (int nc = Ni, c = 0; nc < No; nc++, c++) {
+					// store a value only if indexing stays inside column bounds of original matrix
+					if (nc >= 0 && nc < N) {
+						// iterate through row's sparse column indices, check if sought column exists -> a sparse value is stored
+						for (int i = IA[nr]; i < iN; i++)
+							if (JA[i] == nc)	newdata[nrofs + c] = this.A[i];
+					}
+				}
+			}
+		}
+		A.putData(newdata);
+		if (Matrix.DEBUG_LEVEL > 1) System.out.println(this.toString());
+		if (doBitImage) A.bitImage = new BinBitImage(A);
+		return A;
+	}
 	
 	
 	// retrieves value of a row & column index
@@ -556,7 +559,10 @@ public class CSRMatrix extends Matrix {
 	}
 	
 	
-	
+	///////////////////////////////////////////////////////////////////////////////////////////////////////////
+	//			OUTPUT METHODS
+	///////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 	@Override
 	public String toString() {
 		StringBuffer sb = new StringBuffer();
