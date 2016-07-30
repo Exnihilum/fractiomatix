@@ -178,10 +178,6 @@ public class MatrixApp {
 		Matrix c2 = new Matrix("c2", 3, 1, d9), x6 = null;
 		Matrix D5 = new Matrix("A", 3, 3, d5);
 		Matrix[] UVl = D5.factorise();
-		if (UVl != null) {
-			System.out.println(UVl[0].toString());
-			System.out.println(UVl[1].toString());
-		}
 		x6 = D5.solve(c2);
 		x6 = c2.solveCrout(UVl[0], UVl[1]);
 

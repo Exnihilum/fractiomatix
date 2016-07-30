@@ -1070,13 +1070,15 @@ public class Matrix implements Cloneable {
 	//		..u			vvv
 	public Matrix[] factorise() {
 		
-		if (M != N)					throw new RuntimeException("Matrix.factorise(): Matrix not square.");
-		if (M < 1)					throw new RuntimeException("Matrix.factorise(): Invalid matrix.");
+		if (M != N)	throw new RuntimeException("Matrix.factorise(): Matrix not square.");
+		if (M < 1)	throw new RuntimeException("Matrix.factorise(): Invalid matrix.");
 
 		// all diagonal elements must be nonzero
-		for (int d = 0; d < M; d++)
-			if (data[d * M + d] < ROUNDOFF_ERROR && data[d * M + d] > - ROUNDOFF_ERROR) return null;
-
+		for (int d = 0; d < M; d++) {
+			double v = data[d * M + d];
+			if (v > -ROUNDOFF_ERROR && v < ROUNDOFF_ERROR) return null;
+		}
+			
 		Matrix[] lUV = new Matrix[2];
 		lUV[0] = new Matrix("U" + nameCount, M, N, Matrix.Type.Null);
 		lUV[1] = new Matrix("V" + nameCount, M, N, Matrix.Type.Null);
@@ -1268,9 +1270,9 @@ public class Matrix implements Cloneable {
 						double p = dataA[j * M + i] / dAi;
 						int jN = j * N;
 						for (int k = i + 1; k < N; k++) {
-							data[jN + k] -= data[iN + k] * p;
+							dataA[jN + k] -= dataA[iN + k] * p;
 						}
-						data[jN + i] = 0.0;
+						dataA[jN + i] = 0.0;
 					}
 		}
 
@@ -1324,32 +1326,37 @@ public class Matrix implements Cloneable {
 
 			for (int i = 0; i < M; i++) {
 				int iN = i * N;
-				double div = dataA[iN + r];						// get divisor for current lined-up row of A, c, Ai structures
-				det *= div;
-				// division by zero case aborts method, indicating a singular matrix
-				if (div > - ROUNDOFF_ERROR && div < ROUNDOFF_ERROR) return null;
-				else div = 1.0 / div;
-
-				// go along the lined-up row of A, c, Ai structures, dividing by current element
-				for (int j = 0; j < N; j++) {
-					dataA[iN + j] *= div;						// divide row in A (which moves towards Identity matrix)
-					dataAi[iN + j] *= div;						// divide row in Ai (which moves towards an inverse of A)
-				}	
-				datax[i] *= div;								// divide input vector c
+				double div = dataA[iN + r];							// get divisor for current lined-up row of A, c, Ai structures
+				// divide only if row-dividing element isn't zero
+				//if (div < -ROUNDOFF_ERROR || div > ROUNDOFF_ERROR) {
+					det *= div;
+					// division by zero case aborts method, indicating a singular matrix
+					//if (div > - ROUNDOFF_ERROR && div < ROUNDOFF_ERROR) return null;
+					div = 1.0 / div;
+	
+					// go along the lined-up row of A, c, Ai structures, dividing by current element
+					for (int j = 0; j < N; j++) {
+						dataA[iN + j] *= div;						// divide row in A (which moves towards Identity matrix)
+						dataAi[iN + j] *= div;						// divide row in Ai (which moves towards an inverse of A)
+					}	
+					datax[i] *= div;								// divide input vector c
+				//}
 			}
 
 			int rN = r * N;
 			// for every row i in the lined-up A, c, Ai structures, subtract row r from row i, both above and below r
-			for (int i = 0; i < M; i++) {
-				int iN = i * N;				
-				if (i != r) {									// don't subtract row r from itself!
-					for (int j = 0; j < N; j++) {
-						dataA[iN + j] -= dataA[rN + j];			// subtract from A
-						dataAi[iN + j] -= dataAi[rN + j];		// subtract from Ai
+			// subtract only if dividing element wasn't zero
+			if (dataA[rN] < -ROUNDOFF_ERROR || dataA[rN] > ROUNDOFF_ERROR)
+				for (int i = 0; i < M; i++) {
+					int iN = i * N;				
+					if (i != r) {									// don't subtract row r from itself!
+						for (int j = 0; j < N; j++) {
+							dataA[iN + j] -= dataA[rN + j];			// subtract from A
+							dataAi[iN + j] -= dataAi[rN + j];		// subtract from Ai
+						}
+						datax[i] -= datax[r];						// subtract from c
 					}
-					datax[i] -= datax[r];						// subtract from c
 				}
-			}
 		}
 		
 		// finally, divide all rows by a'(ii) for a final normalising, this finally turns A into an Identity matrix
