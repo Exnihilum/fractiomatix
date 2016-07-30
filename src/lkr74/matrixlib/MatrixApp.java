@@ -119,7 +119,7 @@ public class MatrixApp {
 						0,0,3,0,0,0,3,
 						0,6,0,0,0,0,0};
 		double[] d5 = {	1,2,3,
-						3,2,1,
+						0,2,1,
 						2,1,3};
 		double[] d10 = {1,2,3,4,5,6,7,8,7,6,
 						2,2,3,4,5,6,7,8,7,6,
@@ -179,7 +179,8 @@ public class MatrixApp {
 		Matrix D5 = new Matrix("A", 3, 3, d5);
 		Matrix[] UVl = D5.factorise();
 		x6 = D5.solve(c2);
-		x6 = c2.solveCrout(UVl[0], UVl[1]);
+		if (UVl != null)	x6 = c2.solveCrout(UVl[0], UVl[1]);
+		else				System.out.println("Crout solver: nonfactorisable matrix.");
 
 
 		tstart = System.nanoTime();

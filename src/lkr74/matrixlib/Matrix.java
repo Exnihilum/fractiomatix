@@ -1263,7 +1263,7 @@ public class Matrix implements Cloneable {
 
 					// pivot within b
 					for (int j = i + 1; j < N; j++)
-						datab[j] -= datab[i] * dataA[j * M + i] / dAi;
+						datab[j] -= datab[i] * dataA[j * N + i] / dAi;
 
 					// pivot within A
 					for (int j = i + 1; j < N; j++) {
@@ -1328,7 +1328,7 @@ public class Matrix implements Cloneable {
 				int iN = i * N;
 				double div = dataA[iN + r];							// get divisor for current lined-up row of A, c, Ai structures
 				// divide only if row-dividing element isn't zero
-				//if (div < -ROUNDOFF_ERROR || div > ROUNDOFF_ERROR) {
+				if (div < -ROUNDOFF_ERROR || div > ROUNDOFF_ERROR) {
 					det *= div;
 					// division by zero case aborts method, indicating a singular matrix
 					//if (div > - ROUNDOFF_ERROR && div < ROUNDOFF_ERROR) return null;
@@ -1340,13 +1340,13 @@ public class Matrix implements Cloneable {
 						dataAi[iN + j] *= div;						// divide row in Ai (which moves towards an inverse of A)
 					}	
 					datax[i] *= div;								// divide input vector c
-				//}
+				}
 			}
 
 			int rN = r * N;
 			// for every row i in the lined-up A, c, Ai structures, subtract row r from row i, both above and below r
 			// subtract only if dividing element wasn't zero
-			if (dataA[rN] < -ROUNDOFF_ERROR || dataA[rN] > ROUNDOFF_ERROR)
+			//if (dataA[rN] < -ROUNDOFF_ERROR || dataA[rN] > ROUNDOFF_ERROR)
 				for (int i = 0; i < M; i++) {
 					int iN = i * N;				
 					if (i != r) {									// don't subtract row r from itself!
