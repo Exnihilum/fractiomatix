@@ -557,33 +557,12 @@ public class Matrix implements Cloneable {
 	}
 	
 	
-	
-	static double[][] buffer2x2StrasWin;				// preallocated buffer for the 2x2 submatrix cases
-	private static DoubleBuffer bufSWA, bufSWB, bufSWC;	// preallocated DirectBuffer for operations upto specific matrix size
-	
-	// method preallocates a DirectBuffer for a matrix operation of a certain size with a certain recursion cutoff
-	public static boolean allocateStrasWin(int Mreqsize, int truncP) {
 
-		if (Mreqsize < 2) throw new RuntimeException("Matrix.allocateStrasWin(): Invalid matrix dimensions.");
-		if (truncP < 2) throw new RuntimeException("Matrix.allocateStrasWin(): Invalid truncation point.");
-		if (truncP > Mreqsize) truncP = Mreqsize;
-		
-		int Msize = 2, memSize = 0;
-		// do 2^(n+1) until we reach truncation point (to make sure we'll encompass the smallest submatrix size)
-		for (; Msize < truncP; Msize <<= 1);		
-		for (; Msize < Mreqsize; Msize <<= 1)		// do 2^(n+1) until we reach or excel the provided matrix size
-			memSize += truncP * truncP * 8;			// we need 8 allocations per recursion level/submatrix
-		memSize += Msize * Msize * 2;				// Matrix A & B will also be copied to direct buffer
-		
-		bufSWA = ByteBuffer.allocateDirect(memSize * 8).asDoubleBuffer();
-		if (DEBUG_LEVEL > 2)
-	        System.out.println("bufSW is direct: " + bufSWA.isDirect() + "and has " + (bufSWA.hasArray() ? "a" : "no") + "backing array.");
-		return true;
-	}
+	static double[][] buffer2x2StrasWin;				// preallocated buffer for the 2x2 submatrix cases
 	
 	// multiplier uses the Strassen-Winograd algorithm for matrix multiplication, adapted for flat data arrays
 	// truncP = the size of submatrix at which recursion stops and the normal multiplicator takes over
-	public static Matrix multiplyStrasWin(Matrix A, Matrix B, int truncP, boolean useDBversion) {
+	public static Matrix multiplyStrasWin(Matrix A, Matrix B, int truncP) {
 		
 		if (A.M < 1 || A.N < 1 || B.M < 1 || B.N < 1) throw new RuntimeException("Matrix.multiply(): Invalid matrix dimensions.");
 		if (A.N != B.M) throw new RuntimeException("Matrix.multiply(): Nonmatching matrix dimensions.");
@@ -603,32 +582,15 @@ public class Matrix implements Cloneable {
 		else						newname = "W" + Matrix.nameCount++;
 		Matrix C = new Matrix(newname, newM, newM, Matrix.Type.Null);
 		
-		if (useDBversion) {
-			int Msize = newM * newM;
-			bufSWA.get(A.data, 0, Msize);
-			bufSWA.reset();
-			bufSWB = bufSWA.duplicate();
-			bufSWC = bufSWA.duplicate();
-			bufSWB.position(Msize).mark();
-			bufSWB.get(B.data, Msize, Msize);
-			bufSWB.reset();
-			bufSWC.position(Msize << 1).mark();
-			// at start, offsA,offsB,offsC point to A, B, C matrix data offsets, the submatrices offset points beyond those three
-			int[] subInfo = {truncP, newM, 0, Msize, Msize << 1, newM, newM, newM, Msize * 3};
-			//multiplyStrasWin2DB(bufSWA, bufSWB, bufSWC, subInfo);
-			bufSWC.reset();
-			bufSWC.put(C.data, Msize << 1, Msize);
-		} else {
-
-			buffer2x2StrasWin = new double[8][truncP > 16 ? 16*16 : truncP*truncP];
+		buffer2x2StrasWin = new double[8][truncP > 16 ? 16*16 : truncP*truncP];
+		
+		// subInfo carries along following data:
+		// (truncP) the matrix size truncation point when standard multiplicator is used instead
+		// (dim) the current submatrix dimension 
+		// 3x offsets into the flat datafields, 3x the matrix width of the datafields
+		int[] subInfo = {truncP, newM, 0, 0, 0, newM, newM, newM};
+		multiplyStrasWin2(A.data, B.data, C.data, subInfo);
 			
-			// subInfo carries along following data:
-			// (truncP) the matrix size truncation point when standard multiplicator is used instead
-			// (dim) the current submatrix dimension 
-			// 3x offsets into the flat datafields, 3x the matrix width of the datafields
-			int[] subInfo = {truncP, newM, 0, 0, 0, newM, newM, newM};
-			multiplyStrasWin2(A.data, B.data, C.data, subInfo);
-		}
 		if (DEBUG_LEVEL > 1) System.out.println(C.toString());
 		return C;
 
@@ -817,208 +779,6 @@ public class Matrix implements Cloneable {
 		Matrix.mulAdopsSW_DEBUG += (23 + sdim2 * 31);
 	}
 	
-	// the preallocated DirectBuffer version of Strassen-Winograd multiplier, using bufSWA, bufSWB, bufSWC pointers
-//	public static void multiplyStrasWin2DB(DoubleBuffer dA, DoubleBuffer dB, DoubleBuffer dC, int[] subInfo) {
-//
-//		int truncP = subInfo[0], dim = subInfo[1], offset = subInfo[8];
-//		int offsA = subInfo[2], offsB = subInfo[3], offsC = subInfo[4];
-//		int dimA = subInfo[5], dimB = subInfo[6], dimC = subInfo[7];
-//		Matrix.mulSW_DEBUG++;
-//		Matrix.mulFlopsSW_DEBUG += 4;
-//
-//		// if we reached base case of 2x2, return straight 2x2 multiplication
-//		if (dim == 2) {
-//			dA.position(offsA);
-//			dB.position(offsB);
-//			dC.position(offsC);
-//			double a11 = dA.get(), a12 = dA.get(), a21 = dA.get(offsA + dimA), a22 = dA.get(offsA + dimA + 1);
-//			double b11 = dB.get(), b12 = dB.get(), b21 = dB.get(offsB + dimB), b22 = dB.get(offsB + dimB + 1);
-//			dC.put(a11 * b11 + a12 * b21);
-//			dC.put(a11 * b12 + a12 * b22);
-//			dC.position(offsC + dimC);
-//			dC.put(a21 * b11 + a22 * b21);
-//			dC.put(a21 * b12 + a22 * b22);
-//			Matrix.mulFlopsSW_DEBUG += 8;
-//			Matrix.mulAdopsSW_DEBUG += 11;
-//			return;
-//		}
-//		
-//		// if we reached the recursion truncation point, multiply current submatrix with standard algorithm
-//		if (truncP >= dim) {
-//			Matrix.mulFlopsSW_DEBUG += dim * 2 + dim * dim + dim * dim * dim;
-//			Matrix.mulAdopsSW_DEBUG += dim * 2 + dim * dim + dim * dim * dim * 2;
-//			
-//			for (int i = 0; i < dim; i++) {
-//				int ioffsA = offsA + i * dimA, ioffsC = offsC + i * dimC;
-//				for (int j = 0; j < dim; j++) {
-//					dA.position(ioffsA + j);
-//					dB.position(offsB + j * dimB);
-//					dC.position(ioffsC);
-//					double v = dA.get();
-//					if (v < -Matrix.ROUNDOFF_ERROR || v > Matrix.ROUNDOFF_ERROR) {
-//						for (int k = 0; k < dim; k++)
-//							dC.put(ioffsC + k, dC.get() + v * dB.get());
-//					}
-//				}
-//			}		
-//			return;
-//		}
-//		
-//		int sdim2 = dim>>1, size = dim * dim, ssize = size>>2;		// next sublevel dimensions
-//		// offsets to middle row (half-way into submatrix) of current recursive level
-//		int hoffsA = dimA * sdim2, hoffsB = dimB * sdim2, hoffsC = dimC * sdim2;
-//		// the skips tell how many steps to skip to get to next row in the data during incremental operations
-//		int skipA = dimA - sdim2, skipB = dimB - sdim2, skipC = dimC - sdim2;
-//
-//		// A21 + A22 -> S1
-//		DoubleBuffer dS1 = dA.duplicate();
-//		dS1.position(offset);
-//		for (int i = 0, offsA21 = offsA + hoffsA, offsA22 = offsA21 + sdim2; i < sdim2; i++)  {
-//			for (int j = 0; j < sdim2; j++)	 dS1.put(dA.get(offsA21++) + dA.get(offsA22++));
-//			offsA21 += skipA; offsA22 += skipA;
-//		}
-//
-//		// B12 - B11 -> T1
-//		DoubleBuffer dT1 = dA.duplicate();
-//		int offsetT1 = offset + ssize;
-//		dT1.position(offsetT1);
-//		for (int i = 0, offsB11 = offsB, offsB12 = offsB + sdim2; i < sdim2; i++)  {
-//			for (int j = 0; j < sdim2; j++)	 dT1.put(dB.get(offsB12++) - dB.get(offsB11++));
-//			offsB12 += skipB; offsB11 += skipB;
-//		}
-//
-//		// S1 . T1 -> P5
-//		DoubleBuffer dP5 = dA.duplicate();
-//		int offsetP5 = offsetT1 + ssize;
-//		int[] subInfo3 = {truncP, sdim2, offset, offsetT1, offsetP5, sdim2, sdim2, sdim2, offset + ssize * 8};
-//		multiplyStrasWin2DB(dS1, dT1, dP5, subInfo3);
-//
-//		// B22 - T1 -> T2 (=T1)
-//		DoubleBuffer dT2 = dT1;
-//		dT2.position(offsetT1);
-//		for (int i = 0, offsB22 = offsB + hoffsB + sdim2, offs = offsetT1; i < sdim2; i++)  {
-//			for (int j = 0; j < sdim2; j++, offs++)	 dT2.put(dB.get(offsB22++) - dT1.get(offs++));
-//			offsB22 += skipB;
-//		}
-//
-//		// S1 - A11 -> S2 (=S1)
-//		DoubleBuffer dS2 = dS1;
-//		dS2.position(offset);
-//		for (int i = 0, offsA11 = offsA, offs = offset; i < sdim2; i++)  {
-//			for (int j = 0; j < sdim2; j++, offs++)	dS2.put(dS1.get(offs++) - dA.get(offsA11++));
-//			offsA11 += skipA;
-//		}
-//			
-//		// S2 . T2 -> P6
-//		DoubleBuffer dP6 = dA.duplicate();
-//		int offsetP6 = offsetP5 + ssize;
-//		subInfo[4] = offsetP6;
-//		multiplyStrasWin2DB(dS2, dT2, dP6, subInfo3);
-//
-//		// A12 - S2 -> S4
-//		DoubleBuffer dS4 = dA.duplicate();
-//		int offsetS4 = offsetP6 + ssize;
-//		dS2.position(offset);
-//		dS4.position(offsetS4);
-//		for (int i = 0, offsA12 = offsA + sdim2, offs = 0; i < sdim2; i++)  {
-//			for (int j = 0; j < sdim2; j++, offs++)	 dS4.put(dA.get(offsA12++) - dS2.get());
-//			offsA12 += skipA;
-//		}
-//
-//		// S4 . B22 -> P3
-//		DoubleBuffer dP3 = dA.duplicate();
-//		int[] subInfo5 = {truncP, sdim2, 0, offsB + hoffsB + sdim2, 0, sdim2, dimB, sdim2};
-//		multiplyStrasWin2DB(dS4, dB, dP3, subInfo5);
-//
-//		// A11 - A21 -> S3 (=S1=S2)
-//		double[] dS3 = dS2;
-//		for (int i = 0, offsA11 = offsA, offsA21 = offsA + hoffsA, offs = 0; i < sdim2; i++)  {
-//			for (int j = 0; j < sdim2; j++, offs++)	 dS3[offs] = dA[offsA11++] - dA[offsA21++];
-//			offsA11 += skipA; offsA21 += skipA;
-//		}
-//		
-//		// B22 - B12 -> T3 (=S4)
-//		double[] dT3 = dS4;
-//		for (int i = 0, offsB12 = offsB + sdim2, offsB22 = offsB12 + hoffsB, offs = 0; i < sdim2; i++)  {
-//			for (int j = 0; j < sdim2; j++, offs++)	 dT3[offs] = dB[offsB22++] - dB[offsB12++];
-//			offsB22 += skipB; offsB12 += skipB;
-//		}
-//
-//		// T2 - B21 -> T4 (=T1=T2)
-//		double[] dT4 = dT2;
-//		for (int i = 0, offsB21 = offsB + hoffsB, offs = 0; i < sdim2; i++)  {
-//			for (int j = 0; j < sdim2; j++, offs++)	 dT4[offs] = dT2[offs] - dB[offsB21++];
-//			offsB21 += skipB;
-//		}
-//
-//		// A11 . B11 -> P1
-//		int[] subInfo2 = {truncP, sdim2, offsA, offsB, 0, dimA, dimB, sdim2};
-//		double[] dP1 = (sdim2 == 2 ? buffer2x2StrasWin[6] : new double[ssize]);
-//		multiplyStrasWin2(dA, dB, dP1, subInfo2);
-//
-//		// S3 . T3 -> P7
-//		double[] dP7 = (sdim2 == 2 ? buffer2x2StrasWin[7] : new double[ssize]);
-//		multiplyStrasWin2(dS3, dT3, dP7, subInfo3);
-//
-//		// P1 + P6 -> U2 (=T3=S4)
-//		double[] dU2 = dT3;
-//		for (int i = 0, offs = 0; i < sdim2; i++)  {
-//			for (int j = 0; j < sdim2; j++, offs++)	dU2[offs] = dP1[offs] + dP6[offs];
-//		}
-//
-//		// A12 . B21 -> P2 (=P6)
-//		subInfo2[2] += sdim2;
-//		subInfo2[3] += hoffsB;
-//		double[] dP2 = dP6;
-//		multiplyStrasWin2(dA, dB, dP2, subInfo2);
-//
-//		// P1 + P2 -> C11
-//		for (int i = 0, offsC11 = offsC, offs = 0; i < sdim2; i++)  {
-//			for (int j = 0; j < sdim2; j++, offs++)	dC[offsC11++] = dP1[offs] + dP2[offs];
-//			offsC11 += skipC;
-//		}
-//
-//		// A22 . T4 -> P4 (=P2)
-//		double[] dP4 = dP2;
-//		subInfo2[2] = offsA + hoffsA + sdim2;
-//		subInfo2[3] = 0;
-//		subInfo2[5] = dimA;
-//		subInfo2[6] = sdim2;
-//		multiplyStrasWin2(dA, dT4, dP4, subInfo2);
-//							
-//		// U2 + P7 -> U3 (=T1=T2=T4)
-//		double[] dU3 = dT4;
-//		for (int i = 0, offs = 0; i < sdim2; i++)  {
-//			for (int j = 0; j < sdim2; j++, offs++)	dU3[offs] = dU2[offs] + dP7[offs];
-//		}
-//
-//		// U2 + P5 -> U4 (=S1=S2=S3)
-//		double[] dU4 = dS3;
-//		for (int i = 0, offs = 0; i < sdim2; i++)  {
-//			for (int j = 0; j < sdim2; j++, offs++)	dU4[offs] = dU2[offs] + dP5[offs];
-//		}
-//
-//		// U4 + P3 -> U5 (=T3=S4=U2), C12
-//		double[] dU5 = dU2;
-//		for (int i = 0, offsC12 = offsC + sdim2, offs = 0; i < sdim2; i++)  {
-//			for (int j = 0; j < sdim2; j++, offs++)	 dU5[offs] = dC[offsC12++] = dU4[offs] + dP3[offs];
-//			offsC12 += skipC; 
-//		}
-//
-//		// U3 - P4 -> C21
-//		for (int i = 0, offsC21 = offsC + hoffsC, offs = 0; i < sdim2; i++)  {
-//			for (int j = 0; j < sdim2; j++, offs++)	dC[offsC21++] = dU3[offs] - dP4[offs];
-//			offsC21 += skipC;
-//		}
-//
-//		// U3 + P5 -> C22
-//		for (int i = 0, offsC22 = offsC + hoffsC + sdim2, offs = 0; i < sdim2; i++)  {
-//			for (int j = 0; j < sdim2; j++, offs++)	dC[offsC22++] = dU3[offs] + dP5[offs];
-//			offsC22 += skipC; 
-//		}
-//		
-//		Matrix.mulAdopsSW_DEBUG += (23 + sdim2 * 31);
-//	}
 
 	
 	
@@ -1149,35 +909,64 @@ public class Matrix implements Cloneable {
 	// conditioning for precision and iterative methods: swap in the largest elements of rows into diagonal positions
 	// the constant vector c needs to be swapped as well
 	// method returns array "mutator" with the mutated indexes for facilitating reconstitution of the solved vector
-	public int[] conditionDiagonal(Matrix c, boolean doBitImage) {
+	public int[] conditionDiagonal(Matrix c, boolean swapMethod, boolean doBitImage) {
 		
 		if (M != N)					throw new RuntimeException("Matrix.conditionDiagonal(): Matrix not square.");
 		if (M < 1)					throw new RuntimeException("Matrix.conditionDiagonal(): Invalid matrix.");
 		if (M != c.M || c.N != 1)	throw new RuntimeException("Matrix.conditionDiagonal(): Invalid constant vector.");
 				
-		double[] data = this.data;
-		int[] mutator = new int[M];
-		for (int i = 0; i < M; i++) mutator[i] = i;
+		double[] data = this.data, newdata = new double[M*N];
+		int[] mutator = null;
+		if (swapMethod) {
+			mutator = new int[M];
+			for (int i = 0; i < M; i++) mutator[i] = i;
+		}
 		
 		for (int r1 = 0, m; r1 < M; r1++) {
 			int r1N = r1 * N;
 			double a_r1r1 = data[r1N + r1];
-			// find largest (absolute) element in current row
-			for (int r2 = 0; r2 < N; r2++)
-				if (r2 != r1) {
+			if (a_r1r1 < 0) a_r1r1 = -a_r1r1;
+			// find largest (absolute) element in current row (skip checking previous rows for swapMethod)
+			if (swapMethod) {
+				// apply method that swaps row r1 & row r2 if diagonals of both rows get larger on swapping 
+				for (int r2 = 0; r2 < N; r2++) {
+					if (r1 != r2) {
 					int r2N = r2 * N;
+
 					double a_r2r1 = data[r2N + r1], a_r1r2 = data[r1N + r2], a_r2r2 = data[r2N + r2];
-					// if both diagonal elements get larger on swapping r1 & r2, do swap
-					if ((a_r1r1 < a_r2r1 || a_r1r1 > -a_r2r1) && (a_r1r2 > a_r2r2 || a_r1r2 < -a_r2r2)) {
+					if ((a_r1r1 < a_r2r1 || a_r1r1 > -a_r2r1) && (a_r1r2 >= a_r2r2 || a_r1r2 <= -a_r2r2)) {
 						swap(r1, r2);
 						c.swap(r1, r2);					// swap matching elements in vector c
 						m = mutator[r1];				// swap indexes in mutator array
 						mutator[r1] = mutator[r2];
 						mutator[r2] = m;
 					}
+					}
 				}
+			} else {
+				// apply adding method which adds row r2 to r1 if it provides a larger value for diagonal element of row r1
+				int rMaxDiag = 0;
+				double vMaxDiag = 0;
+				// find the largest diagonal from all other rows than r1
+				for (int r2 = 0; r2 < N; r2++) {
+					if (r2 != r1) {
+						double a_r2r1 = data[r2 * N + r2];
+						if (a_r2r1 < 0) a_r2r1 = -a_r2r1;
+						if (vMaxDiag < a_r2r1) {
+							rMaxDiag = r2;
+							vMaxDiag = a_r2r1;
+						}
+					}
+				}
+				// add in that row into row r1 only if it had a larger diagonal
+				if (vMaxDiag > a_r1r1) {
+					int rMax = rMaxDiag * N;
+					for (int c1 = 0; c1 < N; c1++) newdata[r1N + c1] = data[r1N + c1] + data[rMax + c1];
+				}
+			}
 		}
-		if (DEBUG_LEVEL > 1) System.out.println(toString());
+		if (!swapMethod) this.data = newdata;
+		if (DEBUG_LEVEL > 1) System.out.println("conditionDiagonal():\n" + toString());
 		if (doBitImage) bitImage.make();
 		return mutator;
 	}
@@ -1297,10 +1086,110 @@ public class Matrix implements Cloneable {
 		x.bitImage = new BinBitImage(x);
 		return x;
 	}
+
 	
+	// return x = A^-1 b applying Gauss-Jordan method with full pivoting
+	// b[] supplies a list of constant vectors to produce results for
+	// if duplicate=true, result matrix and inverse matrix returned in Matrix array
+	// otherwise this matrix will transform into inverse, and supplied constant vectors into result vectors
+	public Matrix[] solveGaussJordan2(Matrix B, boolean duplicate) {
+		
+		if (M != N || B.M != N)	throw new RuntimeException("Matrix.solve(): Invalid matrix/vector dimensions.");
+
+		Matrix A = this, X = B;
+		Matrix[] XA = new Matrix[2];
+		if (duplicate) {
+			X = B.clone();
+			A = this.clone();
+		}
+		XA[0] = X;
+		XA[1] = A;
+		
+		double[] dataX = X.data, dataA = A.data;
+		// integer arrays indxc, indxr and ipiv do the bookkeeping on the pivoting
+		int[] indxc = new int[N], indxr = new int[N], iPiv = new int[N];
+		int iCol = 0, iRow = 0, XN = X.N;
+		double det = 1;
+		
+		// major loop of column reduction
+		for(int i = 0; i < N; i++) {
+			double vMax = 0;
+			for (int j = 0; j < N; j++) {
+				int jN = N * j;
+				if (iPiv[j] != 1)
+					for(int k = 0; k < N; k++) {
+						double v = dataA[jN + k];
+						if (v < 0) v = -v;
+						if (iPiv[k] == 0 && v >= vMax) {
+							vMax = v;
+							iRow = j;
+							iCol = k;
+						}
+					}
+			}
+			iPiv[iCol]++;
+			// currently the best pivot element is found, and we swap in it's row to the diagonal,
+			// columns are not swapped but relabelled: indxc[i], the column of ith pivot element
+			// is the one reduced, indxr[i] is the original row location of that pivot element,
+			// indxr[i] =/= indxc[i] implies column swap, with this bookkeeping the solution vectors
+			// come out correct while the inverse matrix is permutated
+			if (iRow != iCol) {
+				swap(iRow, iCol);
+				X.swap(iRow, iCol);
+				det = -det;
+			}
+			indxc[i] = iRow;
+			indxr[i] = iCol;
+			
+			// divide pivot row by pivot element
+			double pivInv = dataA[N * iCol + iCol];
+			// signal a singular matrix by returning null
+			if (pivInv > - ROUNDOFF_ERROR && pivInv < ROUNDOFF_ERROR) return null;
+			// the determinat is built up by multiplying in all the pivot divisors
+			det *= pivInv;
+			pivInv = 1.0 / pivInv;
+			int iColN = iCol * N, iColXN = iCol * X.N;
+			for (int l = 0; l < N; l++)		dataA[iColN + l] *= pivInv;
+			for (int l = 0; l < XN; l++)	dataX[iColXN + l] *= pivInv;
+			
+			for (int r = 0; r < N; r++)
+				// subtract pivot row from all rows except itself
+				if (r != iCol) {
+					int rN = r * N, rXN = r * XN;
+					double v = dataA[rN + iCol];
+					dataA[N * r + iCol] = 0;				// the column of the pivot gets zeroed out (except on pivot row)
+					for (int c = 0; c < N; c++)		dataA[rN + c] -= dataA[iColN + c] * v;
+					for (int c = 0; c < XN; c++)	dataX[rXN + c] -= dataX[iColXN + c] * v;
+				}
+		}
+		
+		// it is time to unpermutate the result vectors from the column swaps,
+		// by swapping columns in reverse order of their buildup
+		for (int l = N - 1; l >= 0; l--) {
+			if (indxr[l] != indxc[l]) {
+				for (int k = 0; k < N; k++) {
+					int kNrl = k * N + indxr[l], kNrc = k * N + indxc[l];
+					double v = dataA[kNrl];
+					dataA[kNrl] = dataA[kNrc];
+					dataA[kNrc] = v;
+				}
+				det = -det;
+			}
+		}
+
+		XA[1].det = det;	
+		XA[0].name = "X" + nameCount;
+		XA[1].name = this.name + "^-1";
+		if (DEBUG_LEVEL > 1) {
+			System.out.println("Gauss-Jordan full pivoting solver, result vectors:");
+			System.out.println(XA[0].toString());
+			System.out.println("Inverse matrix:");
+			System.out.println(XA[1].toString());
+		}
+		return XA;
+	}
 	
-	
-	// return x = A^-1 b applying Gauss-Jordan method, inverse of A returned in Ai
+	// return x = A^-1 b applying Gauss-Jordan method, inverse of A returned in Ai, solution vector x returned by method
 	public Matrix solveGaussJordan(Matrix c, Matrix Ai) {
 
 		if (M != N || c.M != N || c.N != 1)
@@ -1308,6 +1197,8 @@ public class Matrix implements Cloneable {
 		if (Ai == null) 	throw new RuntimeException("Matrix.solve(): Invalid inverse reference supplied.");
 
 		Matrix A = this.clone();
+		//int[] mutator = A.conditionDiagonal(c, true, false);		// get maximum values onto diagonal
+		//System.out.println(A.toString());
 		det = 1;
 		
 		Matrix x = c.clone();
@@ -1318,9 +1209,6 @@ public class Matrix implements Cloneable {
 		Ai.M = Ai.N = M;
 		double[] dataA = A.data, dataAi = Ai.data, datax = x.data;
 		
-		// shift major elements of matrix rows onto the diagonal
-		//int[] mutator = A.conditionDiagonal(c, false);
-		
 		// loop handles every case of subtracting current unitised row from all other rows
 		for (int r = 0; r < M; r++) {			
 
@@ -1328,7 +1216,7 @@ public class Matrix implements Cloneable {
 				int iN = i * N;
 				double div = dataA[iN + r];							// get divisor for current lined-up row of A, c, Ai structures
 				// divide only if row-dividing element isn't zero
-				if (div < -ROUNDOFF_ERROR || div > ROUNDOFF_ERROR) {
+				//if (div < -ROUNDOFF_ERROR || div > ROUNDOFF_ERROR) {
 					det *= div;
 					// division by zero case aborts method, indicating a singular matrix
 					//if (div > - ROUNDOFF_ERROR && div < ROUNDOFF_ERROR) return null;
@@ -1340,7 +1228,7 @@ public class Matrix implements Cloneable {
 						dataAi[iN + j] *= div;						// divide row in Ai (which moves towards an inverse of A)
 					}	
 					datax[i] *= div;								// divide input vector c
-				}
+				//}
 			}
 
 			int rN = r * N;
@@ -1350,6 +1238,8 @@ public class Matrix implements Cloneable {
 				for (int i = 0; i < M; i++) {
 					int iN = i * N;				
 					if (i != r) {									// don't subtract row r from itself!
+//						for (int j = r; j < N; j++) dataA[iN + j] -= dataA[rN + j];			// subtract from A
+//						for (int j = 0; j < N; j++) dataAi[iN + j] -= dataAi[rN + j];		// subtract from Ai
 						for (int j = 0; j < N; j++) {
 							dataA[iN + j] -= dataA[rN + j];			// subtract from A
 							dataAi[iN + j] -= dataAi[rN + j];		// subtract from Ai
@@ -1367,7 +1257,7 @@ public class Matrix implements Cloneable {
 			for (int j = 0; j < N; j++)	dataAi[rN + j] *= div;	// divide row r of Ai by a(ii), turning it into the inverse of A
 			datax[r] *= div;									// divide c(i) by a(ii), it will turn into solution vector x
 		}
-		Ai.det = 1 / det;
+		Ai.det = 1.0 / det;
 
 		// reconstitute/de-mutate vector x according to mutator indexes
 //		double[] dataxm = new double[M];
@@ -1375,8 +1265,12 @@ public class Matrix implements Cloneable {
 //		x.data = dataxm;
 		
 		if (DEBUG_LEVEL > 1) {
-			System.out.println("Gauss-Jordan solver:");
+			System.out.println("Gauss-Jordan solver, result vector:");
 			System.out.println(x.toString());
+			System.out.println("input matrix transformed to identity:");
+			System.out.println(A.toString());
+			System.out.println("input matrix inverse:");
+			System.out.println(Ai.toString());
 		}
 		return x;
 	}
@@ -1695,7 +1589,7 @@ public class Matrix implements Cloneable {
 	@Override
 	public String toString() {
 		StringBuilder sb = new StringBuilder();
-		System.out.println("matrix: " + this.name);
+		System.out.println("matrix: " + name);
 		if (data != null)
 			for (int i = 0; i < M; i++) {
 				if (sb.length() > 0) sb.append("\n");

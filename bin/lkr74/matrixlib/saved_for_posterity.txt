@@ -1,0 +1,202 @@
+	// the preallocated DirectBuffer version of Strassen-Winograd multiplier, using bufSWA, bufSWB, bufSWC pointers
+//	public static void multiplyStrasWin2DB(DoubleBuffer dA, DoubleBuffer dB, DoubleBuffer dC, int[] subInfo) {
+//
+//		int truncP = subInfo[0], dim = subInfo[1], offset = subInfo[8];
+//		int offsA = subInfo[2], offsB = subInfo[3], offsC = subInfo[4];
+//		int dimA = subInfo[5], dimB = subInfo[6], dimC = subInfo[7];
+//		Matrix.mulSW_DEBUG++;
+//		Matrix.mulFlopsSW_DEBUG += 4;
+//
+//		// if we reached base case of 2x2, return straight 2x2 multiplication
+//		if (dim == 2) {
+//			dA.position(offsA);
+//			dB.position(offsB);
+//			dC.position(offsC);
+//			double a11 = dA.get(), a12 = dA.get(), a21 = dA.get(offsA + dimA), a22 = dA.get(offsA + dimA + 1);
+//			double b11 = dB.get(), b12 = dB.get(), b21 = dB.get(offsB + dimB), b22 = dB.get(offsB + dimB + 1);
+//			dC.put(a11 * b11 + a12 * b21);
+//			dC.put(a11 * b12 + a12 * b22);
+//			dC.position(offsC + dimC);
+//			dC.put(a21 * b11 + a22 * b21);
+//			dC.put(a21 * b12 + a22 * b22);
+//			Matrix.mulFlopsSW_DEBUG += 8;
+//			Matrix.mulAdopsSW_DEBUG += 11;
+//			return;
+//		}
+//		
+//		// if we reached the recursion truncation point, multiply current submatrix with standard algorithm
+//		if (truncP >= dim) {
+//			Matrix.mulFlopsSW_DEBUG += dim * 2 + dim * dim + dim * dim * dim;
+//			Matrix.mulAdopsSW_DEBUG += dim * 2 + dim * dim + dim * dim * dim * 2;
+//			
+//			for (int i = 0; i < dim; i++) {
+//				int ioffsA = offsA + i * dimA, ioffsC = offsC + i * dimC;
+//				for (int j = 0; j < dim; j++) {
+//					dA.position(ioffsA + j);
+//					dB.position(offsB + j * dimB);
+//					dC.position(ioffsC);
+//					double v = dA.get();
+//					if (v < -Matrix.ROUNDOFF_ERROR || v > Matrix.ROUNDOFF_ERROR) {
+//						for (int k = 0; k < dim; k++)
+//							dC.put(ioffsC + k, dC.get() + v * dB.get());
+//					}
+//				}
+//			}		
+//			return;
+//		}
+//		
+//		int sdim2 = dim>>1, size = dim * dim, ssize = size>>2;		// next sublevel dimensions
+//		// offsets to middle row (half-way into submatrix) of current recursive level
+//		int hoffsA = dimA * sdim2, hoffsB = dimB * sdim2, hoffsC = dimC * sdim2;
+//		// the skips tell how many steps to skip to get to next row in the data during incremental operations
+//		int skipA = dimA - sdim2, skipB = dimB - sdim2, skipC = dimC - sdim2;
+//
+//		// A21 + A22 -> S1
+//		DoubleBuffer dS1 = dA.duplicate();
+//		dS1.position(offset);
+//		for (int i = 0, offsA21 = offsA + hoffsA, offsA22 = offsA21 + sdim2; i < sdim2; i++)  {
+//			for (int j = 0; j < sdim2; j++)	 dS1.put(dA.get(offsA21++) + dA.get(offsA22++));
+//			offsA21 += skipA; offsA22 += skipA;
+//		}
+//
+//		// B12 - B11 -> T1
+//		DoubleBuffer dT1 = dA.duplicate();
+//		int offsetT1 = offset + ssize;
+//		dT1.position(offsetT1);
+//		for (int i = 0, offsB11 = offsB, offsB12 = offsB + sdim2; i < sdim2; i++)  {
+//			for (int j = 0; j < sdim2; j++)	 dT1.put(dB.get(offsB12++) - dB.get(offsB11++));
+//			offsB12 += skipB; offsB11 += skipB;
+//		}
+//
+//		// S1 . T1 -> P5
+//		DoubleBuffer dP5 = dA.duplicate();
+//		int offsetP5 = offsetT1 + ssize;
+//		int[] subInfo3 = {truncP, sdim2, offset, offsetT1, offsetP5, sdim2, sdim2, sdim2, offset + ssize * 8};
+//		multiplyStrasWin2DB(dS1, dT1, dP5, subInfo3);
+//
+//		// B22 - T1 -> T2 (=T1)
+//		DoubleBuffer dT2 = dT1;
+//		dT2.position(offsetT1);
+//		for (int i = 0, offsB22 = offsB + hoffsB + sdim2, offs = offsetT1; i < sdim2; i++)  {
+//			for (int j = 0; j < sdim2; j++, offs++)	 dT2.put(dB.get(offsB22++) - dT1.get(offs++));
+//			offsB22 += skipB;
+//		}
+//
+//		// S1 - A11 -> S2 (=S1)
+//		DoubleBuffer dS2 = dS1;
+//		dS2.position(offset);
+//		for (int i = 0, offsA11 = offsA, offs = offset; i < sdim2; i++)  {
+//			for (int j = 0; j < sdim2; j++, offs++)	dS2.put(dS1.get(offs++) - dA.get(offsA11++));
+//			offsA11 += skipA;
+//		}
+//			
+//		// S2 . T2 -> P6
+//		DoubleBuffer dP6 = dA.duplicate();
+//		int offsetP6 = offsetP5 + ssize;
+//		subInfo[4] = offsetP6;
+//		multiplyStrasWin2DB(dS2, dT2, dP6, subInfo3);
+//
+//		// A12 - S2 -> S4
+//		DoubleBuffer dS4 = dA.duplicate();
+//		int offsetS4 = offsetP6 + ssize;
+//		dS2.position(offset);
+//		dS4.position(offsetS4);
+//		for (int i = 0, offsA12 = offsA + sdim2, offs = 0; i < sdim2; i++)  {
+//			for (int j = 0; j < sdim2; j++, offs++)	 dS4.put(dA.get(offsA12++) - dS2.get());
+//			offsA12 += skipA;
+//		}
+//
+//		// S4 . B22 -> P3
+//		DoubleBuffer dP3 = dA.duplicate();
+//		int[] subInfo5 = {truncP, sdim2, 0, offsB + hoffsB + sdim2, 0, sdim2, dimB, sdim2};
+//		multiplyStrasWin2DB(dS4, dB, dP3, subInfo5);
+//
+//		// A11 - A21 -> S3 (=S1=S2)
+//		double[] dS3 = dS2;
+//		for (int i = 0, offsA11 = offsA, offsA21 = offsA + hoffsA, offs = 0; i < sdim2; i++)  {
+//			for (int j = 0; j < sdim2; j++, offs++)	 dS3[offs] = dA[offsA11++] - dA[offsA21++];
+//			offsA11 += skipA; offsA21 += skipA;
+//		}
+//		
+//		// B22 - B12 -> T3 (=S4)
+//		double[] dT3 = dS4;
+//		for (int i = 0, offsB12 = offsB + sdim2, offsB22 = offsB12 + hoffsB, offs = 0; i < sdim2; i++)  {
+//			for (int j = 0; j < sdim2; j++, offs++)	 dT3[offs] = dB[offsB22++] - dB[offsB12++];
+//			offsB22 += skipB; offsB12 += skipB;
+//		}
+//
+//		// T2 - B21 -> T4 (=T1=T2)
+//		double[] dT4 = dT2;
+//		for (int i = 0, offsB21 = offsB + hoffsB, offs = 0; i < sdim2; i++)  {
+//			for (int j = 0; j < sdim2; j++, offs++)	 dT4[offs] = dT2[offs] - dB[offsB21++];
+//			offsB21 += skipB;
+//		}
+//
+//		// A11 . B11 -> P1
+//		int[] subInfo2 = {truncP, sdim2, offsA, offsB, 0, dimA, dimB, sdim2};
+//		double[] dP1 = (sdim2 == 2 ? buffer2x2StrasWin[6] : new double[ssize]);
+//		multiplyStrasWin2(dA, dB, dP1, subInfo2);
+//
+//		// S3 . T3 -> P7
+//		double[] dP7 = (sdim2 == 2 ? buffer2x2StrasWin[7] : new double[ssize]);
+//		multiplyStrasWin2(dS3, dT3, dP7, subInfo3);
+//
+//		// P1 + P6 -> U2 (=T3=S4)
+//		double[] dU2 = dT3;
+//		for (int i = 0, offs = 0; i < sdim2; i++)  {
+//			for (int j = 0; j < sdim2; j++, offs++)	dU2[offs] = dP1[offs] + dP6[offs];
+//		}
+//
+//		// A12 . B21 -> P2 (=P6)
+//		subInfo2[2] += sdim2;
+//		subInfo2[3] += hoffsB;
+//		double[] dP2 = dP6;
+//		multiplyStrasWin2(dA, dB, dP2, subInfo2);
+//
+//		// P1 + P2 -> C11
+//		for (int i = 0, offsC11 = offsC, offs = 0; i < sdim2; i++)  {
+//			for (int j = 0; j < sdim2; j++, offs++)	dC[offsC11++] = dP1[offs] + dP2[offs];
+//			offsC11 += skipC;
+//		}
+//
+//		// A22 . T4 -> P4 (=P2)
+//		double[] dP4 = dP2;
+//		subInfo2[2] = offsA + hoffsA + sdim2;
+//		subInfo2[3] = 0;
+//		subInfo2[5] = dimA;
+//		subInfo2[6] = sdim2;
+//		multiplyStrasWin2(dA, dT4, dP4, subInfo2);
+//							
+//		// U2 + P7 -> U3 (=T1=T2=T4)
+//		double[] dU3 = dT4;
+//		for (int i = 0, offs = 0; i < sdim2; i++)  {
+//			for (int j = 0; j < sdim2; j++, offs++)	dU3[offs] = dU2[offs] + dP7[offs];
+//		}
+//
+//		// U2 + P5 -> U4 (=S1=S2=S3)
+//		double[] dU4 = dS3;
+//		for (int i = 0, offs = 0; i < sdim2; i++)  {
+//			for (int j = 0; j < sdim2; j++, offs++)	dU4[offs] = dU2[offs] + dP5[offs];
+//		}
+//
+//		// U4 + P3 -> U5 (=T3=S4=U2), C12
+//		double[] dU5 = dU2;
+//		for (int i = 0, offsC12 = offsC + sdim2, offs = 0; i < sdim2; i++)  {
+//			for (int j = 0; j < sdim2; j++, offs++)	 dU5[offs] = dC[offsC12++] = dU4[offs] + dP3[offs];
+//			offsC12 += skipC; 
+//		}
+//
+//		// U3 - P4 -> C21
+//		for (int i = 0, offsC21 = offsC + hoffsC, offs = 0; i < sdim2; i++)  {
+//			for (int j = 0; j < sdim2; j++, offs++)	dC[offsC21++] = dU3[offs] - dP4[offs];
+//			offsC21 += skipC;
+//		}
+//
+//		// U3 + P5 -> C22
+//		for (int i = 0, offsC22 = offsC + hoffsC + sdim2, offs = 0; i < sdim2; i++)  {
+//			for (int j = 0; j < sdim2; j++, offs++)	dC[offsC22++] = dU3[offs] + dP5[offs];
+//			offsC22 += skipC; 
+//		}
+//		
+//		Matrix.mulAdopsSW_DEBUG += (23 + sdim2 * 31);
+//	}

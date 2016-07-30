@@ -119,7 +119,7 @@ public class MatrixApp {
 						0,0,3,0,0,0,3,
 						0,6,0,0,0,0,0};
 		double[] d5 = {	1,2,3,
-						0,2,1,
+						3,2,1,
 						2,1,3};
 		double[] d10 = {1,2,3,4,5,6,7,8,7,6,
 						2,2,3,4,5,6,7,8,7,6,
@@ -157,9 +157,10 @@ public class MatrixApp {
 //		Matrix D8 = new Matrix("D8", 8, 8, d11);
 //		D8.convergent();
 //		Matrix d7 = new Matrix("d8", 8, 1, d);
-//		D8.conditionDiagonal(d7, false);
+//		D8.conditionDiagonal(d7, false, false);		// test method with add method and don't create a bitimage
 //		D8.convergent();
 //		System.out.println(d7.toString());
+
 //		
 //		Matrix D2 = new Matrix("D2", 5, 5, d2);
 //		Matrix x5 = new Matrix("x5", 5, 1, d8);
@@ -176,25 +177,21 @@ public class MatrixApp {
 
 		Matrix D5i = new Matrix("D5i", 3, 3);
 		Matrix c2 = new Matrix("c2", 3, 1, d9), x6 = null;
+		Matrix[] XA = null;
 		Matrix D5 = new Matrix("A", 3, 3, d5);
 		Matrix[] UVl = D5.factorise();
 		x6 = D5.solve(c2);
 		if (UVl != null)	x6 = c2.solveCrout(UVl[0], UVl[1]);
 		else				System.out.println("Crout solver: nonfactorisable matrix.");
 
-
+		x6 = D5.solveGaussJordan(c2, D5i);
+		
 		tstart = System.nanoTime();
 		System.out.println(D5.toString());
 		for (int i = 0; i < iters; i++)
-			x6 = D5.solveGaussJordan(c2, D5i);
+			XA = D5.solveGaussJordan2(c2, false);
 		tend = System.nanoTime();
-		if (x6 == null)
-			System.out.println("Singular matrix.");
-		else {
-		    System.out.printf("solveGaussJordan() averaged %.1f ns\n", (double)(tend - tstart)/iters);
-		    System.out.println("Resulting determinant: " + D5.det);
-		    System.out.println(D5i.toString());
-		}
+		System.out.printf("solveGaussJordan2() averaged %.1f ns\n", (double)(tend - tstart)/iters);
 		if(1==1) return;
 
 		Matrix Q1 = new Matrix("Q1", 128, 128, Matrix.Type.Random), Q11;
@@ -209,7 +206,7 @@ public class MatrixApp {
 		    System.out.println("Mults: " + Matrix.mulFlops_DEBUG);
 			tstart = System.nanoTime();
 			for (int i = 0; i < iters; i++)
-				Q22 = Matrix.multiplyStrasWin(Q2, Q2, 8, false);
+				Q22 = Matrix.multiplyStrasWin(Q2, Q2, 8);
 			tend = System.nanoTime();
 		    System.out.printf("multiplyStrasWin() averaged %.1f ns\n", (double)(tend - tstart)/iters);
 		    System.out.println("Mults: " + Matrix.mulFlopsSW_DEBUG);
