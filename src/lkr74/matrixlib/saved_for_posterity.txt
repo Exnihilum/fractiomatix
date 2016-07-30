@@ -1,3 +1,81 @@
+	private static DoubleBuffer bufSWA, bufSWB, bufSWC;	// preallocated DirectBuffer for operations upto specific matrix size
+	
+	// method preallocates a DirectBuffer for a matrix operation of a certain size with a certain recursion cutoff
+	public static boolean allocateStrasWin(int Mreqsize, int truncP) {
+
+		if (Mreqsize < 2) throw new RuntimeException("Matrix.allocateStrasWin(): Invalid matrix dimensions.");
+		if (truncP < 2) throw new RuntimeException("Matrix.allocateStrasWin(): Invalid truncation point.");
+		if (truncP > Mreqsize) truncP = Mreqsize;
+		
+		int Msize = 2, memSize = 0;
+		// do 2^(n+1) until we reach truncation point (to make sure we'll encompass the smallest submatrix size)
+		for (; Msize < truncP; Msize <<= 1);		
+		for (; Msize < Mreqsize; Msize <<= 1)		// do 2^(n+1) until we reach or excel the provided matrix size
+			memSize += truncP * truncP * 8;			// we need 8 allocations per recursion level/submatrix
+		memSize += Msize * Msize * 2;				// Matrix A & B will also be copied to direct buffer
+		
+		bufSWA = ByteBuffer.allocateDirect(memSize * 8).asDoubleBuffer();
+		if (DEBUG_LEVEL > 2)
+	        System.out.println("bufSW is direct: " + bufSWA.isDirect() + "and has " + (bufSWA.hasArray() ? "a" : "no") + "backing array.");
+		return true;
+	}
+
+
+
+
+	public static Matrix multiplyStrasWin(Matrix A, Matrix B, int truncP, boolean useDBversion) {
+		
+		if (A.M < 1 || A.N < 1 || B.M < 1 || B.N < 1) throw new RuntimeException("Matrix.multiply(): Invalid matrix dimensions.");
+		if (A.N != B.M) throw new RuntimeException("Matrix.multiply(): Nonmatching matrix dimensions.");
+		mulSW_DEBUG = mulFlopsSW_DEBUG = mulAdopsSW_DEBUG = 0;
+				
+		// squarify and expand matrices to nearest 2^n size
+		int majorM = A.M > A.N ? A.M : A.N, newM;
+		for (newM = 2; newM < majorM; newM <<= 1);		// do 2^(n+1) until we reach or excel major size of the matrices
+		if (A.M != A.N || newM != majorM) {
+			A = A.rescale(0, 0, newM, newM, false);		// no BitImage needed for transient data
+			B = B.rescale(0, 0, newM, newM, false);
+		}
+		if (truncP > newM) truncP = newM;				// truncation point can't be larger than the matrix
+
+		String newname;
+		if (Matrix.DEBUG_LEVEL > 1) newname = "(" + A.name + "." + B.name + ")";
+		else						newname = "W" + Matrix.nameCount++;
+		Matrix C = new Matrix(newname, newM, newM, Matrix.Type.Null);
+		
+		if (useDBversion) {
+			int Msize = newM * newM;
+			bufSWA.get(A.data, 0, Msize);
+			bufSWA.reset();
+			bufSWB = bufSWA.duplicate();
+			bufSWC = bufSWA.duplicate();
+			bufSWB.position(Msize).mark();
+			bufSWB.get(B.data, Msize, Msize);
+			bufSWB.reset();
+			bufSWC.position(Msize << 1).mark();
+			// at start, offsA,offsB,offsC point to A, B, C matrix data offsets, the submatrices offset points beyond those three
+			int[] subInfo = {truncP, newM, 0, Msize, Msize << 1, newM, newM, newM, Msize * 3};
+			//multiplyStrasWin2DB(bufSWA, bufSWB, bufSWC, subInfo);
+			bufSWC.reset();
+			bufSWC.put(C.data, Msize << 1, Msize);
+		} else {
+
+			buffer2x2StrasWin = new double[8][truncP > 16 ? 16*16 : truncP*truncP];
+			
+			// subInfo carries along following data:
+			// (truncP) the matrix size truncation point when standard multiplicator is used instead
+			// (dim) the current submatrix dimension 
+			// 3x offsets into the flat datafields, 3x the matrix width of the datafields
+			int[] subInfo = {truncP, newM, 0, 0, 0, newM, newM, newM};
+			multiplyStrasWin2(A.data, B.data, C.data, subInfo);
+		}
+		if (DEBUG_LEVEL > 1) System.out.println(C.toString());
+		return C;
+
+	}
+
+
+
 	// the preallocated DirectBuffer version of Strassen-Winograd multiplier, using bufSWA, bufSWB, bufSWC pointers
 //	public static void multiplyStrasWin2DB(DoubleBuffer dA, DoubleBuffer dB, DoubleBuffer dC, int[] subInfo) {
 //
