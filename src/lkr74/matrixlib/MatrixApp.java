@@ -93,7 +93,7 @@ public class MatrixApp {
 	public static void main(String[] args) {
 				
 		double[] d = {1, 0, 3, 0, 5, 0, 0, 1, 3};
-		double[] d8 = {1,2,3,1,2}, d9 = {12,24,36};
+		double[] d8 = {1,2,3,1,2}, d9 = {12,24,36,5,6,7}, d9b = {12,5,24,6,36,7};
 		double[] d2 = {	5,1,2,0,4,
 						1,4,2,1,3,
 						2,2,5,4,0,
@@ -119,7 +119,7 @@ public class MatrixApp {
 						0,0,3,0,0,0,3,
 						0,6,0,0,0,0,0};
 		double[] d5 = {	1,2,3,
-						3,2,1,
+						0,2,1,
 						2,1,3};
 		double[] d10 = {1,2,3,4,5,6,7,8,7,6,
 						2,2,3,4,5,6,7,8,7,6,
@@ -186,6 +186,7 @@ public class MatrixApp {
 
 		x6 = D5.solveGaussJordan(c2, D5i);
 		
+		c2 = new Matrix("c2", 3, 2, d9b);
 		tstart = System.nanoTime();
 		System.out.println(D5.toString());
 		for (int i = 0; i < iters; i++)

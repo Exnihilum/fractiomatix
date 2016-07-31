@@ -1089,6 +1089,8 @@ public class Matrix implements Cloneable {
 
 	
 	// return x = A^-1 b applying Gauss-Jordan method with full pivoting
+	// adapted from NUMERICAL RECIPES IN C: THE ART OF SCIENTIFIC COMPUTING (ISBN 0-521-43108-5)
+	// added determinant computation into this algorithm
 	// b[] supplies a list of constant vectors to produce results for
 	// if duplicate=true, result matrix and inverse matrix returned in Matrix array
 	// otherwise this matrix will transform into inverse, and supplied constant vectors into result vectors
@@ -1136,7 +1138,6 @@ public class Matrix implements Cloneable {
 			if (iRow != iCol) {
 				swap(iRow, iCol);
 				X.swap(iRow, iCol);
-				det = -det;
 			}
 			indxc[i] = iRow;
 			indxr[i] = iCol;
@@ -1144,7 +1145,7 @@ public class Matrix implements Cloneable {
 			// divide pivot row by pivot element
 			double pivInv = dataA[N * iCol + iCol];
 			// signal a singular matrix by returning null
-			if (pivInv > - ROUNDOFF_ERROR && pivInv < ROUNDOFF_ERROR) return null;
+			if (pivInv > -ROUNDOFF_ERROR && pivInv < ROUNDOFF_ERROR) return null;
 			// the determinat is built up by multiplying in all the pivot divisors
 			det *= pivInv;
 			pivInv = 1.0 / pivInv;
@@ -1157,27 +1158,29 @@ public class Matrix implements Cloneable {
 				if (r != iCol) {
 					int rN = r * N, rXN = r * XN;
 					double v = dataA[rN + iCol];
-					dataA[N * r + iCol] = 0;				// the column of the pivot gets zeroed out (except on pivot row)
+					dataA[rN + iCol] = 0;				// the column of the pivot gets zeroed out (except on pivot row)
 					for (int c = 0; c < N; c++)		dataA[rN + c] -= dataA[iColN + c] * v;
 					for (int c = 0; c < XN; c++)	dataX[rXN + c] -= dataX[iColXN + c] * v;
 				}
 		}
 		
-		// it is time to unpermutate the result vectors from the column swaps,
+		// reverse-permutation the result vectors from the column swaps,
 		// by swapping columns in reverse order of their buildup
+		// (note: the original code seems to contain a mistake here)
 		for (int l = N - 1; l >= 0; l--) {
 			if (indxr[l] != indxc[l]) {
-				for (int k = 0; k < N; k++) {
+				for (int k = 0; k < XN; k++) {
 					int kNrl = k * N + indxr[l], kNrc = k * N + indxc[l];
-					double v = dataA[kNrl];
-					dataA[kNrl] = dataA[kNrc];
-					dataA[kNrc] = v;
+					double v = dataX[kNrl];
+					dataX[kNrl] = dataX[kNrc];
+					dataX[kNrc] = v;
 				}
 				det = -det;
 			}
 		}
 
-		XA[1].det = det;	
+		if (duplicate)	this.det = det;			// the determinant belongs to the untransformed matrix, which is preserved if duplicate=true
+		else			XA[0].det = det;		// if input matrix is transformed, return determinant in solution vectors matrix
 		XA[0].name = "X" + nameCount;
 		XA[1].name = this.name + "^-1";
 		if (DEBUG_LEVEL > 1) {
