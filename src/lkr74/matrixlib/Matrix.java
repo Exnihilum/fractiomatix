@@ -347,7 +347,8 @@ public class Matrix implements Cloneable {
 		}
 		det = -det;						// determinant is inverted by row swapping
 		if (DEBUG_LEVEL > 2) System.out.println("swap:\n" + this.toString());
-		bitImage.swapRows(r1, r2);		// swap bitImage rows
+		if (bitImage != null)
+			bitImage.swapRows(r1, r2);		// swap bitImage rows
 	}
 
 
@@ -824,11 +825,11 @@ public class Matrix implements Cloneable {
 	
 	
 	
-	// factorises matrix into two diagonal matrices U and V, good for the Crout linear solving method:
+	// factorises/decomposes matrix into two diagonal matrices U and V, useful for the Crout linear solving method:
 	//		uuu			v..
 	// U:	.uu		v:	vv.
 	//		..u			vvv
-	public Matrix[] factorise() {
+	public Matrix[] decomposeLU() {
 		
 		if (M != N)	throw new RuntimeException("Matrix.factorise(): Matrix not square.");
 		if (M < 1)	throw new RuntimeException("Matrix.factorise(): Invalid matrix.");
@@ -872,6 +873,12 @@ public class Matrix implements Cloneable {
 		}
 		return lUV;
 	}
+	
+	
+//	public Matrix[] decomposeLUpivoting() {
+//		double[] v = new double[N];
+//		
+//	}
 	
 	
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1025,7 +1032,7 @@ public class Matrix implements Cloneable {
 	
 	// return x = A^-1 b, assuming A is square and has full rank
 	// taken from http://introcs.cs.princeton.edu/java/95linear/Matrix.java.html
-	public Matrix solve(Matrix rhs) {
+	public Matrix solveGaussPartPivoting(Matrix rhs) {
 		if (M != N || rhs.M != N || rhs.N != 1)
 			throw new RuntimeException("Matrix.solve(): Invalid matrix/vector dimensions.");
 
@@ -1040,9 +1047,11 @@ public class Matrix implements Cloneable {
 
 			// find pivot row and swap
 			int max = i;
-			double vabs = Math.abs(dataA[max * N + i]);
-			for (int j = i + 1; j < N; j++)
-				if (Math.abs(dataA[j * N + i]) > vabs) max = j;
+			double vAbs = dataA[iN + i];
+			for (int j = i + 1; j < N; j++) {
+				double v = dataA[j * N + i];
+				if (v > vAbs || v < -vAbs) max = j;
+			}
 			A.swap(i, max);
 			b.swap(i, max);
 
@@ -1050,19 +1059,20 @@ public class Matrix implements Cloneable {
 			double dAi = dataA[iN + i];
 			if (dAi < ROUNDOFF_ERROR && dAi > -ROUNDOFF_ERROR) return null;
 
-					// pivot within b
-					for (int j = i + 1; j < N; j++)
-						datab[j] -= datab[i] * dataA[j * N + i] / dAi;
+			// pivot within b
+			dAi = 1.0 / dAi;
+			for (int j = i + 1; j < N; j++)
+				datab[j] -= datab[i] * dataA[j * N + i] * dAi;
 
-					// pivot within A
-					for (int j = i + 1; j < N; j++) {
-						double p = dataA[j * M + i] / dAi;
-						int jN = j * N;
-						for (int k = i + 1; k < N; k++) {
-							dataA[jN + k] -= dataA[iN + k] * p;
-						}
-						dataA[jN + i] = 0.0;
-					}
+			// pivot within A
+			for (int j = i + 1; j < N; j++) {
+				double p = dataA[j * M + i] * dAi;
+				int jN = j * N;
+				for (int k = i + 1; k < N; k++) {
+					dataA[jN + k] -= dataA[iN + k] * p;
+				}
+				dataA[jN + i] = 0.0;
+			}
 		}
 
 		String newname;
@@ -1094,7 +1104,7 @@ public class Matrix implements Cloneable {
 	// b[] supplies a list of constant vectors to produce results for
 	// if duplicate=true, result matrix and inverse matrix returned in Matrix array
 	// otherwise this matrix will transform into inverse, and supplied constant vectors into result vectors
-	public Matrix[] solveGaussJordan2(Matrix B, boolean duplicate) {
+	public Matrix[] solveGaussJordanFullPivoting(Matrix B, boolean duplicate) {
 		
 		if (M != N || B.M != N)	throw new RuntimeException("Matrix.solve(): Invalid matrix/vector dimensions.");
 
@@ -1130,7 +1140,7 @@ public class Matrix implements Cloneable {
 					}
 			}
 			iPiv[iCol]++;
-			// currently the best pivot element is found, and we swap in it's row to the diagonal,
+			// if a better pivot element is found, then we swap in it's row to the diagonal,
 			// columns are not swapped but relabelled: indxc[i], the column of ith pivot element
 			// is the one reduced, indxr[i] is the original row location of that pivot element,
 			// indxr[i] =/= indxc[i] implies column swap, with this bookkeeping the solution vectors
@@ -1142,7 +1152,6 @@ public class Matrix implements Cloneable {
 			indxc[i] = iRow;
 			indxr[i] = iCol;
 			
-			// divide pivot row by pivot element
 			double pivInv = dataA[N * iCol + iCol];
 			// signal a singular matrix by returning null
 			if (pivInv > -ROUNDOFF_ERROR && pivInv < ROUNDOFF_ERROR) return null;
@@ -1150,22 +1159,29 @@ public class Matrix implements Cloneable {
 			det *= pivInv;
 			pivInv = 1.0 / pivInv;
 			int iColN = iCol * N, iColXN = iCol * X.N;
+			// divide pivot row by pivot element
 			for (int l = 0; l < N; l++)		dataA[iColN + l] *= pivInv;
 			for (int l = 0; l < XN; l++)	dataX[iColXN + l] *= pivInv;
-			
+
+			if (DEBUG_LEVEL > 2) {
+				System.out.println("iCol: " + iCol + " pivot: " + 1.0/pivInv);
+				System.out.println(A.toString());
+			}
+
 			for (int r = 0; r < N; r++)
 				// subtract pivot row from all rows except itself
 				if (r != iCol) {
 					int rN = r * N, rXN = r * XN;
 					double v = dataA[rN + iCol];
+					if (DEBUG_LEVEL > 2) System.out.println("v:" + v);
 					dataA[rN + iCol] = 0;				// the column of the pivot gets zeroed out (except on pivot row)
 					for (int c = 0; c < N; c++)		dataA[rN + c] -= dataA[iColN + c] * v;
 					for (int c = 0; c < XN; c++)	dataX[rXN + c] -= dataX[iColXN + c] * v;
 				}
+			if (DEBUG_LEVEL > 2) System.out.println(A.toString());
 		}
 		
-		// reverse-permutation the result vectors from the column swaps,
-		// by swapping columns in reverse order of their buildup
+		// reverse-permutate the result vectors from the column swaps, by swapping columns in reverse order of their buildup
 		// (note: the original code seems to contain a mistake here)
 		for (int l = N - 1; l >= 0; l--) {
 			if (indxr[l] != indxc[l]) {
@@ -1186,11 +1202,10 @@ public class Matrix implements Cloneable {
 		if (DEBUG_LEVEL > 1) {
 			System.out.println("Gauss-Jordan full pivoting solver, result vectors:");
 			System.out.println(XA[0].toString());
-			System.out.println("Inverse matrix:");
-			System.out.println(XA[1].toString());
 		}
 		return XA;
 	}
+	
 	
 	// return x = A^-1 b applying Gauss-Jordan method, inverse of A returned in Ai, solution vector x returned by method
 	public Matrix solveGaussJordan(Matrix c, Matrix Ai) {
@@ -1200,8 +1215,6 @@ public class Matrix implements Cloneable {
 		if (Ai == null) 	throw new RuntimeException("Matrix.solve(): Invalid inverse reference supplied.");
 
 		Matrix A = this.clone();
-		//int[] mutator = A.conditionDiagonal(c, true, false);		// get maximum values onto diagonal
-		//System.out.println(A.toString());
 		det = 1;
 		
 		Matrix x = c.clone();
@@ -1215,41 +1228,67 @@ public class Matrix implements Cloneable {
 		// loop handles every case of subtracting current unitised row from all other rows
 		for (int r = 0; r < M; r++) {			
 
-			for (int i = 0; i < M; i++) {
-				int iN = i * N;
-				double div = dataA[iN + r];							// get divisor for current lined-up row of A, c, Ai structures
-				// divide only if row-dividing element isn't zero
-				//if (div < -ROUNDOFF_ERROR || div > ROUNDOFF_ERROR) {
-					det *= div;
-					// division by zero case aborts method, indicating a singular matrix
-					//if (div > - ROUNDOFF_ERROR && div < ROUNDOFF_ERROR) return null;
-					div = 1.0 / div;
-	
-					// go along the lined-up row of A, c, Ai structures, dividing by current element
-					for (int j = 0; j < N; j++) {
-						dataA[iN + j] *= div;						// divide row in A (which moves towards Identity matrix)
-						dataAi[iN + j] *= div;						// divide row in Ai (which moves towards an inverse of A)
-					}	
-					datax[i] *= div;								// divide input vector c
-				//}
+			// find highest value for current diagonal element and swap in it's row
+			double vMax = ROUNDOFF_ERROR;
+			int rPivot = r;
+			for (int r2 = r; r2 < M; r2++) {
+				double v = dataA[N * r2 + r];
+				if (DEBUG_LEVEL > 2) System.out.println(r+ " " + v + " " + vMax);
+				if (v < 0) v = -v;
+				if (v > vMax) { vMax = v; rPivot = r2; }
+			}
+			if (vMax <= ROUNDOFF_ERROR) return null;				// got a singular matrix, abort
+			if (r != rPivot) {										// another row had highest value for current diagonal element, swap it in
+				A.swap(r, rPivot);
+				x.swap(r, rPivot);
+				Ai.swap(r, rPivot);
+				det = -det;
+				if (DEBUG_LEVEL > 2) {
+					System.out.println("Swapped in row " + rPivot + " into pivot row " + r);
+					System.out.println(A.toString());
+				}
 			}
 
-			int rN = r * N;
-			// for every row i in the lined-up A, c, Ai structures, subtract row r from row i, both above and below r
-			// subtract only if dividing element wasn't zero
-			//if (dataA[rN] < -ROUNDOFF_ERROR || dataA[rN] > ROUNDOFF_ERROR)
-				for (int i = 0; i < M; i++) {
-					int iN = i * N;				
-					if (i != r) {									// don't subtract row r from itself!
-//						for (int j = r; j < N; j++) dataA[iN + j] -= dataA[rN + j];			// subtract from A
-//						for (int j = 0; j < N; j++) dataAi[iN + j] -= dataAi[rN + j];		// subtract from Ai
-						for (int j = 0; j < N; j++) {
-							dataA[iN + j] -= dataA[rN + j];			// subtract from A
-							dataAi[iN + j] -= dataAi[rN + j];		// subtract from Ai
-						}
-						datax[i] -= datax[r];						// subtract from c
-					}
+
+			for (int i = 0; i < M; i++) {							// the diagonal element column unitising loop
+				int iN = i * N;
+				double div = dataA[iN + r];							// get divisor for current lined-up row of A, c, Ai structures
+				if (div < -ROUNDOFF_ERROR || div > ROUNDOFF_ERROR) {
+					det *= div;
+					div = 1.0 / div;
+					// go along the lined-up row of A, c, Ai structures, dividing by current element
+					for (int j = 0; j < N; j++) {
+						dataA[iN + j] *= div;							// divide row in A (which moves towards Identity matrix)
+						dataAi[iN + j] *= div;							// divide row in Ai (which moves towards an inverse of A)
+					}	
+					datax[i] *= div;									// divide input vector c
+				} else {
+					int rN = r * N;
+					det *= dataA[rN + r] + dataA[iN + r];
+					div = 1.0 / dataA[rN + r];
+					for (int j = 0; j < N; j++) {
+						dataA[iN + j] = (dataA[iN + j] + dataA[rN + j]) * div;	// divide row in A (which moves towards Identity matrix)
+						dataAi[iN + j] = (dataAi[iN + j] + dataAi[rN + j]) * div;	// divide row in Ai (which moves towards an inverse of A)
+					}	
+					datax[i] += datax[r] * div;		// divide input vector c
 				}
+			}
+			if (DEBUG_LEVEL > 2) System.out.println(A.toString());
+
+			int rN = r * N;
+			// for every row i in the lined-up A, c, Ai structures, subtract row (of diagonal element) r from row i, both above and below r
+			for (int i = 0; i < M; i++) {
+				int iN = i * N;				
+				// don't subtract row r from itself
+				if (i != r) {
+					for (int j = 0; j < N; j++) {
+						dataA[iN + j] -= dataA[rN + j];				// subtract from A
+						dataAi[iN + j] -= dataAi[rN + j];			// subtract from Ai
+					}
+					datax[i] -= datax[r];							// subtract from c
+				}
+			}
+			if (DEBUG_LEVEL > 2) System.out.println(A.toString());
 		}
 		
 		// finally, divide all rows by a'(ii) for a final normalising, this finally turns A into an Identity matrix
@@ -1257,18 +1296,17 @@ public class Matrix implements Cloneable {
 			int rN = r * N;
 			det *= dataA[rN + r];
 			double div = 1.0 / dataA[rN + r];
-			for (int j = 0; j < N; j++)	dataAi[rN + j] *= div;	// divide row r of Ai by a(ii), turning it into the inverse of A
+			for (int j = 0; j < N; j++)	{
+				dataA[rN + j] *= div;
+				dataAi[rN + j] *= div;	// divide row r of Ai by a(ii), turning it into the inverse of A
+			}
 			datax[r] *= div;									// divide c(i) by a(ii), it will turn into solution vector x
 		}
-		Ai.det = 1.0 / det;
+		A.det = 1;					// |I| = 1
+		Ai.det = 1.0 / det;			// |A^-1| = 1 / |A|
 
-		// reconstitute/de-mutate vector x according to mutator indexes
-//		double[] dataxm = new double[M];
-//		for (int i = 0; i < M; i++) dataxm[mutator[i]] = datax[i];
-//		x.data = dataxm;
-		
 		if (DEBUG_LEVEL > 1) {
-			System.out.println("Gauss-Jordan solver, result vector:");
+			System.out.println("Gauss-Jordan partial pivoting solver with inverse matrix calculation, result vector:");
 			System.out.println(x.toString());
 			System.out.println("input matrix transformed to identity:");
 			System.out.println(A.toString());

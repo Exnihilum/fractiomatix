@@ -161,11 +161,11 @@ public class MatrixApp {
 //		D8.convergent();
 //		System.out.println(d7.toString());
 
-//		
-//		Matrix D2 = new Matrix("D2", 5, 5, d2);
-//		Matrix x5 = new Matrix("x5", 5, 1, d8);
-//		double eigenvalue = Matrix.eigenPowerMethod(D2, x5, 0.01, 100);
-//		System.out.println("Eigenvalue: " + eigenvalue + "\n");
+		
+		Matrix D2 = new Matrix("D2", 5, 5, d2);
+		Matrix x5 = new Matrix("x5", 5, 1, d8);
+		double eigenvalue = Matrix.eigenPowerMethod(D2, x5, 0.01, 100);
+		System.out.println("Eigenvalue: " + eigenvalue + "\n");
 		
 		Matrix D20 = new Matrix("Dd", 10, 10, d20);
 		System.out.println(D20.diagonality());
@@ -179,8 +179,8 @@ public class MatrixApp {
 		Matrix c2 = new Matrix("c2", 3, 1, d9), x6 = null;
 		Matrix[] XA = null;
 		Matrix D5 = new Matrix("A", 3, 3, d5);
-		Matrix[] UVl = D5.factorise();
-		x6 = D5.solve(c2);
+		Matrix[] UVl = D5.decomposeLU();
+		x6 = D5.solveGaussPartPivoting(c2);
 		if (UVl != null)	x6 = c2.solveCrout(UVl[0], UVl[1]);
 		else				System.out.println("Crout solver: nonfactorisable matrix.");
 
@@ -190,7 +190,7 @@ public class MatrixApp {
 		tstart = System.nanoTime();
 		System.out.println(D5.toString());
 		for (int i = 0; i < iters; i++)
-			XA = D5.solveGaussJordan2(c2, false);
+			XA = D5.solveGaussJordanFullPivoting(c2, false);
 		tend = System.nanoTime();
 		System.out.printf("solveGaussJordan2() averaged %.1f ns\n", (double)(tend - tstart)/iters);
 		if(1==1) return;
@@ -320,7 +320,7 @@ public class MatrixApp {
 
 		Matrix A = new Matrix("A3", csrA.M, csrA.N, Matrix.Type.Null);
 		A = csrA.clone();
-		Matrix x = A.solve(b);
+		Matrix x = A.solveGaussPartPivoting(b);
 
 		Matrix.multiply(A, x);
 		
