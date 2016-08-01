@@ -4,7 +4,8 @@ Mathematical code repository for matrices and specific combinatorial problems of
 Included are methods for processing flat-array matrices, both ordinary row/column and CSR matrices.
 Polymorphic methods getData(), getDataRef(), putData(), putDataRef() allow bringing in data from both ordinary and CSR packing into any algorithm (CSRMatrix class extends Matrix class), the basis data order will naturally be the row/column one.
 
-Included are a Gaussian elimination with partial pivoting, 2 versions of Gauss-Jordan solver (oene with partial pivoting and inverse matrix generation, one faster/leaner with full pivoting and destruction of original matrix), a Crout solver with LU decomposition.
+Included are a Gaussian elimination with partial pivoting, 2 versions of Gauss-Jordan solver (one with partial pivoting and inverse matrix generation, one faster/leaner with full pivoting and destruction of original matrix), a Crout solver with LU decomposition.
+A finder of largest eigenvalue & vector included (the simple Power Method). Will try out implementing full eigenvalue finders further on.
 
 I've implemented in Java the infamous O(n^2.783) Strassen-Winograd matrix multiplicator (which coincidentally would have to be taking on quite big matrices to be worth the bother, as it is changing stack levels and array context all the time. I've included a little speed test in the main() method). Eventually I will change the operations to a preallocated fixed array for all array operations, but I doubt it will gain any major speed improvement, as I suspect the allocations in Java happen in nearly O(1) time when a lot of free memory is available, as I have in these test cases. Perhaps getting rid of Java's constant array zeroing will give a little gain. So it's very low priority indeed.
 
