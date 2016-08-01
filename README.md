@@ -1,6 +1,9 @@
 # fractiomatix
 Mathematical code repository for matrices and specific combinatorial problems of interest.
 
+Included are methods for processing flat-array matrices, both ordinary row/column and CSR matrices.
+Polymorphic overloaded methods getData(), getDataRef(), putData(), putDataRef() allow bringing in data from both ordinary and CSR packing into any algorithm (CSRMatrix class extends Matrix class), the basis data order will naturally be the row/column one.
+
 There is a dependency on [jfreechart] (https://github.com/jfree/jfreechart) for drawing routines.
 
 Current contents:
@@ -62,11 +65,12 @@ Current contents:
     				public static void multiplyStrasWin2(double[] dA, double[] dB, double[] dC, int[] subInfo)
     				public boolean equals(Matrix B)
     				public int diagonality()
-    				public Matrix[] factorise()
+    				public Matrix[] decomposeLU()
     				public boolean convergent()
-    				public int[] conditionDiagonal(Matrix c, boolean doBitImage)
+    				public int[] conditionDiagonal(Matrix c, boolean swapMethod, boolean doBitImage)
     				public void doGaussElimination()
-    				public Matrix solve(Matrix rhs)
+    				public Matrix solveGaussPartPivoting(Matrix rhs)
+    				public Matrix[] solveGaussJordanFullPivoting(Matrix B, boolean duplicate)
     				public Matrix solveGaussJordan(Matrix c, Matrix Ai)
     				public Matrix solveCrout(Matrix U, Matrix V)
     				public boolean hasZeroDeterminant(boolean thoroughTest)
