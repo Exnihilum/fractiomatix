@@ -2,7 +2,7 @@
 Mathematical code repository for matrices and specific combinatorial problems of interest.
 
 Included are methods for processing flat-array matrices, both ordinary row/column and CSR matrices.
-Polymorphic overloaded methods getData(), getDataRef(), putData(), putDataRef() allow bringing in data from both ordinary and CSR packing into any algorithm (CSRMatrix class extends Matrix class), the basis data order will naturally be the row/column one.
+Polymorphic methods getData(), getDataRef(), putData(), putDataRef() allow bringing in data from both ordinary and CSR packing into any algorithm (CSRMatrix class extends Matrix class), the basis data order will naturally be the row/column one.
 
 There is a dependency on [jfreechart] (https://github.com/jfree/jfreechart) for drawing routines.
 
@@ -99,9 +99,9 @@ Current contents:
     				public Matrix transpose(boolean copy)
     				public static boolean equal(CSRMatrix S, CSRMatrix T)
     				public void swap(int r1, int r2)
-    				public static CSRMatrix add(CSRMatrix S, CSRMatrix T)	
-				public static CSRMatrix subtract(CSRMatrix S, CSRMatrix T, boolean subtract)
-				public static CSRMatrix addSub(CSRMatrix S, CSRMatrix T, boolean subtract)
+    				public static CSRMatrix add(CSRMatrix S, CSRMatrix T)
+    				public static CSRMatrix subtract(CSRMatrix S, CSRMatrix T, boolean subtract)
+    				public static CSRMatrix addSub(CSRMatrix S, CSRMatrix T, boolean subtract)
     				public static CSRMatrix multiply(CSRMatrix S, CSRMatrix T)
     				public String toString()
     
