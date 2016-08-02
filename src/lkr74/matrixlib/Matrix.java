@@ -37,6 +37,7 @@ public class Matrix implements Cloneable {
 	protected boolean rowAspectSparsest = true;	// indicates whether row or column aspect is most sparse for determinant analysis
 	protected int detSign = 1;					// tells sign of the determinant, according to heuristics of analyseRowsColumns() 
 	protected int[][] detAnalysis = null;		// used by analyseRowsColumns() for determinant finding heuristics
+	protected int[] mutator = null;				// used to index mutated rows for certain algorithms
 	protected BinBitImage bitImage;
 	
 	// multithreading variables
@@ -140,6 +141,7 @@ public class Matrix implements Cloneable {
 		A.status = status;
 		if (data != null) A.putDataRef(getData());
 		A.bitImage = bitImage.clone(A);
+		if (mutator != null) A.mutator = mutator.clone();
 		if (Matrix.DEBUG_LEVEL > 2) System.out.println(this.toString());
 		return A;
 	}
@@ -147,6 +149,7 @@ public class Matrix implements Cloneable {
 	public void zero() {
 		for (int i = 0, MN = M * N; i < MN; i++) data[i] = 0;
 		bitImage.zero();
+		for (int i = 0; i < M + 1; i++) mutator[i] = 0;
 	}
 
 	public Matrix eliminateRowColumn(int r, int c, boolean makeBitImage) {
@@ -824,62 +827,7 @@ public class Matrix implements Cloneable {
 	}
 	
 	
-	
-	// factorises/decomposes matrix into two diagonal matrices U and V, useful for the Crout linear solving method:
-	//		uuu			v..
-	// U:	.uu		v:	vv.
-	//		..u			vvv
-	public Matrix[] decomposeLU() {
-		
-		if (M != N)	throw new RuntimeException("Matrix.factorise(): Matrix not square.");
-		if (M < 1)	throw new RuntimeException("Matrix.factorise(): Invalid matrix.");
 
-		// all diagonal elements must be nonzero
-		for (int d = 0; d < M; d++) {
-			double v = data[d * M + d];
-			if (v > -ROUNDOFF_ERROR && v < ROUNDOFF_ERROR) return null;
-		}
-			
-		Matrix[] lUV = new Matrix[2];
-		lUV[0] = new Matrix("U" + nameCount, M, N, Matrix.Type.Null);
-		lUV[1] = new Matrix("V" + nameCount, M, N, Matrix.Type.Null);
-		double[] dataU = lUV[0].data, dataV = lUV[1].data;
-
-		for (int c = 0; c < N; c++) {
-			
-			// calculate u(r,c)
-			if (c == 0)	dataU[0] = data[0];
-			else
-				for (int r = 0; r <= c; r++) {
-					int rN = r * N;
-					double vuSum = 0;
-					for (int k = 0; k < r; k++)
-						vuSum += dataV[rN + k] * dataU[k * N + c];
-					dataU[rN + c] = data[rN + c] - vuSum;
-				}
-			
-			// calculate v(r,c)
-			double uDiag = 1.0 / dataU[c * N + c];
-			for (int r = c; r < N; r++) {
-				int rN = r * N;
-				double vuSum = 0;
-				if (c == 0) dataV[rN] = data[rN];
-				else {
-					for (int k = 0; k < c; k++)
-						vuSum += dataV[rN + k] * dataU[k * N + c];
-					dataV[rN + c] = (data[rN + c] - vuSum) * uDiag;
-				}
-			}
-		}
-		return lUV;
-	}
-	
-	
-//	public Matrix[] decomposeLUpivoting() {
-//		double[] v = new double[N];
-//		
-//	}
-	
 	
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
 	//			LINEAR SYSTEM SOLVING METHODS
@@ -914,18 +862,17 @@ public class Matrix implements Cloneable {
 	
 	
 	// conditioning for precision and iterative methods: swap in the largest elements of rows into diagonal positions
-	// the constant vector c needs to be swapped as well
-	// method returns array "mutator" with the mutated indexes for facilitating reconstitution of the solved vector
-	public int[] conditionDiagonal(Matrix c, boolean swapMethod, boolean doBitImage) {
+	// the constant vector c needs to be swapped as well, if set to null it is ignored
+	// method constructs array "mutator" with the mutated indexes for facilitating reconstitution of the solved vector
+	public void conditionDiagonal(Matrix c, boolean swapMethod, boolean doBitImage) {
 		
-		if (M != N)					throw new RuntimeException("Matrix.conditionDiagonal(): Matrix not square.");
-		if (M < 1)					throw new RuntimeException("Matrix.conditionDiagonal(): Invalid matrix.");
-		if (M != c.M || c.N != 1)	throw new RuntimeException("Matrix.conditionDiagonal(): Invalid constant vector.");
+		if (M != N)									throw new RuntimeException("Matrix.conditionDiagonal(): Matrix not square.");
+		if (M < 1)									throw new RuntimeException("Matrix.conditionDiagonal(): Invalid matrix.");
+		if (c != null && (M != c.M || c.N != 1))	throw new RuntimeException("Matrix.conditionDiagonal(): Invalid constant vector.");
 				
 		double[] data = this.data, newdata = new double[M*N];
-		int[] mutator = null;
 		if (swapMethod) {
-			mutator = new int[M];
+			mutator = new int[M + 1];
 			for (int i = 0; i < M; i++) mutator[i] = i;
 		}
 		
@@ -943,7 +890,7 @@ public class Matrix implements Cloneable {
 					double a_r2r1 = data[r2N + r1], a_r1r2 = data[r1N + r2], a_r2r2 = data[r2N + r2];
 					if ((a_r1r1 < a_r2r1 || a_r1r1 > -a_r2r1) && (a_r1r2 >= a_r2r2 || a_r1r2 <= -a_r2r2)) {
 						swap(r1, r2);
-						c.swap(r1, r2);					// swap matching elements in vector c
+						if (c != null) c.swap(r1, r2);	// swap matching elements in vector c
 						m = mutator[r1];				// swap indexes in mutator array
 						mutator[r1] = mutator[r2];
 						mutator[r2] = m;
@@ -957,7 +904,7 @@ public class Matrix implements Cloneable {
 				// find the largest diagonal from all other rows than r1
 				for (int r2 = 0; r2 < N; r2++) {
 					if (r2 != r1) {
-						double a_r2r1 = data[r2 * N + r2];
+						double a_r2r1 = data[r2 * N + r1];
 						if (a_r2r1 < 0) a_r2r1 = -a_r2r1;
 						if (vMaxDiag < a_r2r1) {
 							rMaxDiag = r2;
@@ -965,17 +912,19 @@ public class Matrix implements Cloneable {
 						}
 					}
 				}
-				// add in that row into row r1 only if it had a larger diagonal
-				if (vMaxDiag > a_r1r1) {
+				// move over into newdata the row with max-value in diagonal element position added with row of the current diagonal element
+				//if (vMaxDiag > a_r1r1) {
 					int rMax = rMaxDiag * N;
-					for (int c1 = 0; c1 < N; c1++) newdata[r1N + c1] = data[r1N + c1] + data[rMax + c1];
-				}
+					for (int c1 = 0; c1 < N; c1++) {
+						newdata[r1N + c1] += data[r1N + c1] + data[rMax + c1];
+						if (c != null) c.data[r1] += c.data[rMaxDiag];
+					}
+				//}
 			}
 		}
 		if (!swapMethod) this.data = newdata;
 		if (DEBUG_LEVEL > 1) System.out.println("conditionDiagonal():\n" + toString());
 		if (doBitImage) bitImage.make();
-		return mutator;
 	}
 	
 	
@@ -1318,20 +1267,82 @@ public class Matrix implements Cloneable {
 	
 	
 	
-	public Matrix solveCrout(Matrix U, Matrix V) {
+	// factorises/decomposes matrix into two diagonal matrices U and V, useful for the LU backsubstitution linear solving method:
+	//		uuu			v..
+	// U:	.uu		L:	vv.
+	//		..u			vvv
+	public Matrix[] decomposeLU(Matrix c) {
+		
+		if (M != N)	throw new RuntimeException("Matrix.decomposeLU(): Matrix not square.");
+		if (M < 1)	throw new RuntimeException("Matrix.decomposeLU(): Invalid matrix.");
+
+//		System.out.println(this.toString());
+//		conditionDiagonal(c, true, false);
+		
+		// all diagonal elements must be nonzero
+		for (int d = 0; d < M; d++) {
+			double v = data[d * M + d];
+			if (v > -ROUNDOFF_ERROR && v < ROUNDOFF_ERROR) return null;
+		}
+			
+		Matrix[] lLU = new Matrix[2];
+		lLU[0] = new Matrix("L" + nameCount, M, N, Matrix.Type.Null);
+		lLU[1] = new Matrix("U" + nameCount, M, N, Matrix.Type.Null);
+		double[] dataL = lLU[0].data, dataU = lLU[1].data;
+
+		for (int c1 = 0; c1 < N; c1++) {
+			
+			// calculate u(r,c)
+			if (c1 == 0)	dataU[0] = data[0];
+			else
+				for (int r = 0; r <= c1; r++) {
+					int rN = r * N;
+					double vuSum = 0;
+					for (int k = 0; k < r; k++)
+						vuSum += dataL[rN + k] * dataU[k * N + c1];
+					dataU[rN + c1] = data[rN + c1] - vuSum;
+				}
+			
+			// calculate v(r,c)
+			double uDiag = 1.0 / dataU[c1 * N + c1];
+			for (int r = c1; r < N; r++) {
+				int rN = r * N;
+				double vuSum = 0;
+				if (c1 == 0) dataL[rN] = data[rN];
+				else {
+					for (int k = 0; k < c1; k++)
+						vuSum += dataL[rN + k] * dataU[k * N + c1];
+					dataL[rN + c1] = (data[rN + c1] - vuSum) * uDiag;
+				}
+			}
+		}
+		
+		if (DEBUG_LEVEL > 1) {
+			System.out.println("decomposeLU() result:");
+			System.out.println(lLU[0].toString());
+			System.out.println(lLU[1].toString());
+		}
+		return lLU;
+	}
+
+	
+	// method takes the factorised L & U triangular matrices applying them on this constant vector to solve
+	// a linear system where only the constant vector is changing, the matrix coefficients assumed to be fixed
+	// method returns the solution vector x
+	public Matrix backSubstituteLU(Matrix L, Matrix U) {
 		
 		Matrix cp = new Matrix("c'", U.M, 1, Matrix.Type.Null);					// c' needs to be generated from input constant vector c
 		String newname;
-		if (Matrix.DEBUG_LEVEL > 1) newname = "x((VU)^-1*" + this.name + ")";
+		if (Matrix.DEBUG_LEVEL > 1) newname = "x((LU)^-1*" + this.name + ")";
 		else						newname = "x" + nameCount++;
 		Matrix x = new Matrix(newname, U.M, 1, Matrix.Type.Null);									// the solution vector x
-		double[] dataU = U.data, dataV = V.data, datacp = cp.data, datax = x.data;
+		double[] dataU = U.data, dataV = L.data, datacp = cp.data, datax = x.data;
 
 		// loop handles every element of c, c', V, U and x
 		// c'(r) = (c(r) - sum(v(r,k) * c'(k))) / v(r,r)
 		datacp[0] = data[0] / dataV[0];
 		for (int r = 1; r < M; r++) {
-			int rN = V.N * r;
+			int rN = L.N * r;
 			double sum = 0;
 			for (int k = 0; k < r; k++) sum += dataV[rN + k] * datacp[k];
 			datacp[r] = (data[r] - sum) / dataV[rN + r];
@@ -1348,12 +1359,155 @@ public class Matrix implements Cloneable {
 		}
 
 		if (DEBUG_LEVEL > 1) {
-			System.out.println("Crout solver:");
+			System.out.println("backSubstituteLU solver:");
 			System.out.println(x.toString());
 		}
 		return x;	
 	}
 	
+	
+	// LU decompose with pivoting and record of permutations in mutator array, which also
+	// returns the +1 or -1 at the end of array, signifying even/odd number of permutations
+	// adapted from NUMERICAL RECIPES IN C: THE ART OF SCIENTIFIC COMPUTING (ISBN 0-521-43108-5)
+	// the decompose is stored directly in current matrix, unless copy = true, then a copy is returned
+	Matrix decomposeLU2(boolean copy) {
+		
+		if (M != N)	throw new RuntimeException("Matrix.decomposeLU2(): Matrix not square.");
+		if (M < 1)	throw new RuntimeException("Matrix.decomposeLU2(): Invalid matrix.");
+		int[] mutatorLU = null;
+		Matrix LU = null;
+		double[] dataLU = data;
+		if (copy) {
+			LU = clone();
+			LU.name = "LU" + nameCount;
+			dataLU = LU.data;
+			if (mutator == null) mutatorLU = LU.mutator = new int[M + 1];
+		} else {
+			name = "LU" + nameCount;			// this matrix will be modified, change it's name
+			mutatorLU = mutator = new int[M + 1];
+		}
+		
+		double[] vv = new double[M];
+		int d = 1;								// every permutation toggles sign of d
+		
+		for (int i = 0; i < M; i++) {			// looping over rows getting scaling factor of every row, putting it in vv
+			int iN = i * N;
+			double vMax = 0;
+			for (int j = 0; j < M; j++) {
+				double v = dataLU[iN + j];
+				if (v < -vMax || v > vMax) vMax = (v < 0 ? -v : v);
+			}
+			// if singular matrix found, return null
+			if (vMax > -ROUNDOFF_ERROR && vMax < ROUNDOFF_ERROR) return null;
+			vv[i] = 1.0 / vMax;											// save scaling factor
+		}
+		
+		for (int j = 0; j < M; j++) {
+			int jN = j * N;
+			for (int i = 0; i < j; i++) {
+				int iN = i * N;
+				double sum = dataLU[iN + j];
+				for (int k = 0; k < i; k++) sum -= dataLU[iN + k] * dataLU[k * N + j];
+				dataLU[iN + j] = sum;
+			}
+			
+			int iMax = 0;
+			double vMax = 0;											// vMax will store the largest pivot element found
+			for (int i = j; i < M; i++) {
+				int iN = i * N;
+				double sum = dataLU[iN + j];
+				for (int k = 0; k < j; k++) sum -= dataLU[iN + k] * dataLU[k * N + j];
+				dataLU[iN + j] = sum;
+				double v = vv[i] * (sum < 0 ? -sum : sum);
+				// have we found a better pivot than the best so far?
+				if (v >= vMax) { vMax = v; iMax = i; }
+			}
+			if (j != iMax) {											// test if there's a better pivot and we need to swap rows
+				if (copy) LU.swap(iMax, j); else swap(iMax, j);			// yes
+				d = -d;
+				vv[iMax] = vv[j];										// also change scale factor
+			}
+			mutatorLU[j] = iMax;
+			// zero at pivot element implies a singular matrix, but some applications can get by with tweaking away the zero
+			if (dataLU[jN + j] == 0) dataLU[jN + j] = ROUNDOFF_ERROR;
+			if (j < M - 1) {
+				double v = 1.0 / dataLU[jN + j];
+				for (int i = j + 1; i < N; i++) dataLU[i * N + j] *= v;	// divide column by pivot element
+			}
+		}
+		
+		// put d at end of mutator array
+		mutatorLU[M] = d;
+		
+		if (DEBUG_LEVEL > 1) {
+			System.out.println("decomposeLU2() result:");
+			System.out.println(copy ? LU.toString() : this.toString());
+			System.out.println(Arrays.toString(mutatorLU));
+		}
+		if (copy) return LU; else return this;
+	}
+	
+	
+	// method takes the factorised L & U triangular matrices using them to solve a linear system
+	// where only the constant vector is changing, the matrix coefficients assumed to be fixed
+	// adapted from NUMERICAL RECIPES IN C: THE ART OF SCIENTIFIC COMPUTING (ISBN 0-521-43108-5)
+	// the triangular matrices L & U come here in a combined form in matrix LU, split by 1:s in the diagonal
+	// matrix A, LU & vector b are the input, matrix array with solution vector and LU matrix is the return value
+	// if LU is null, then the method calls decomposeLU2() with A, if A is null then LU is used
+	// method optimisation takes into account that b might contain many leading zero elements
+	public static Matrix[] backSubstituteLU2(Matrix A, Matrix LU, Matrix b, boolean copy) {
+		
+		if (A == null && LU == null || b == null) throw new RuntimeException("Matrix.backSubstituteLU2(): Null matrices/vector.");
+		if (b.N != 1 || b.M != (A == null ? LU.M : A.M))	throw new RuntimeException("Matrix.backSubstituteLU2(): Invalid constant vector.");			
+		Matrix[] bLU = new Matrix[2];
+		
+		// a LU = null tells algorithm to create a new LU decompose, which will be returned in the matrix array
+		if (LU == null) {
+			if (A.M != A.N)	throw new RuntimeException("Matrix.decomposeLU2(): Matrix A not square.");			
+			if (A.M < 1)	throw new RuntimeException("Matrix.decomposeLU2(): Invalid matrix.");
+			// copy A into a LU matrix and decompose LU, if copy=false it will destroy matrix A returning it as LU
+			bLU[1] = A.decomposeLU2(copy);
+			// decompose failed on a singular matrix, return null
+			if (bLU[1] == null)	return null;		
+		} else
+			bLU[1] = LU;
+		
+		// if copy=true, do not return solution vector in b vector, but in a copy
+		if (copy) bLU[0] = b.clone(); else bLU[0] = b;
+		if (Matrix.DEBUG_LEVEL > 1) bLU[0].name = "x((" + bLU[1].name + ")^-1*" + b.name + ")";
+		else						bLU[0].name = "x" + nameCount++;
+
+		double[] dataLU = bLU[1].data, datab = bLU[0].data;
+		
+		int ii = -1, N = bLU[1].N;							// when ii > 0 it will become an index of first nonvanishing element of b
+		int[] mutatorLU = bLU[1].mutator;
+		double sum = 0;
+		
+		for (int i = 0; i < N; i++) {						
+			int iN = i * N, ip = mutatorLU[i];				// the permutations of decomposition stage need to be unpermuted during the passes
+			sum = datab[ip];
+			datab[ip] = datab[i];
+			if (ii >= 0)
+				for (int j = ii; j <= i - 1; j++) sum -= dataLU[iN + j] * datab[j];
+			else
+				if (sum < -ROUNDOFF_ERROR || sum > ROUNDOFF_ERROR)
+					ii = i;						// nonzero element found, we'll have to do the sums in loop above from now on
+			datab[i] = sum;
+		}
+		for (int i = N - 1; i >= 0; i--) {					// backsubstitution pass
+			int iN = i * N;
+			sum = datab[i];
+			for (int j = i + 1; j < N; j++) sum -= dataLU[iN + j] * datab[j];
+			datab[i] = sum / dataLU[iN + i];				// store an element of solution vector X
+		}
+		
+		if (DEBUG_LEVEL > 1) {
+			System.out.println("backSubstituteLU2 solver:");
+			System.out.println(bLU[0].toString());
+			System.out.println(bLU[1].toString());
+		}
+		return bLU;
+	}
 	
 	
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1630,7 +1784,7 @@ public class Matrix implements Cloneable {
 	@Override
 	public String toString() {
 		StringBuilder sb = new StringBuilder();
-		System.out.println("matrix: " + name);
+		System.out.println(((M == 1 || N == 1) ? "vector: " :"matrix: ") + name + (M == 1 ? "^T" : ""));
 		if (data != null)
 			for (int i = 0; i < M; i++) {
 				if (sb.length() > 0) sb.append("\n");

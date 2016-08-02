@@ -179,10 +179,15 @@ public class MatrixApp {
 		Matrix c2 = new Matrix("c2", 3, 1, d9), x6 = null;
 		Matrix[] XA = null;
 		Matrix D5 = new Matrix("A", 3, 3, d5);
-		Matrix[] UVl = D5.decomposeLU();
 		x6 = D5.solveGaussPartPivoting(c2);
-		if (UVl != null)	x6 = c2.solveCrout(UVl[0], UVl[1]);
-		else				System.out.println("Crout solver: nonfactorisable matrix.");
+
+		Matrix c2b = c2.clone();
+		Matrix[] lLU = D5.decomposeLU(c2b);
+		if (lLU != null)	x6 = c2b.backSubstituteLU(lLU[0], lLU[1]);
+		else				System.out.println("backSubstituteLU solver: nonfactorisable matrix.");
+		
+		Matrix[] bLU = Matrix.backSubstituteLU2(D5, null, c2, true);
+		if (bLU == null) System.out.println("backSubstituteLU2() received singular matrix.");
 
 		x6 = D5.solveGaussJordan(c2, D5i);
 		
@@ -192,7 +197,7 @@ public class MatrixApp {
 		for (int i = 0; i < iters; i++)
 			XA = D5.solveGaussJordanFullPivoting(c2, false);
 		tend = System.nanoTime();
-		System.out.printf("solveGaussJordan2() averaged %.1f ns\n", (double)(tend - tstart)/iters);
+		System.out.printf("solveGaussJordanFullPivoting() averaged %.1f ns\n", (double)(tend - tstart)/iters);
 		if(1==1) return;
 
 		Matrix Q1 = new Matrix("Q1", 128, 128, Matrix.Type.Random), Q11;
@@ -241,14 +246,6 @@ public class MatrixApp {
 				Matrix.determinantLaplace(G, 2);
 			tend = System.nanoTime();
 		    System.out.printf("determinantLaplaceR2() singlethread averaged %.1f ns\n", (double)(tend - tstart)/iters);
-			System.out.println("determinant: " + G.det);
-			System.out.println("recursions: " + Matrix.detL_DEBUG + "\n");
-			G.makeThreaded();
-			tstart = System.nanoTime();
-			for (int i = 0; i < iters; i++)
-				Matrix.determinantLaplace(G, 3);
-			tend = System.nanoTime();
-		    System.out.printf("determinantLaplaceR3() multithread averaged of %.1f ns\n", (double)(tend - tstart)/iters);
 			System.out.println("determinant: " + G.det);
 			System.out.println("recursions: " + Matrix.detL_DEBUG + "\n");
 		}
