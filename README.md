@@ -1,6 +1,16 @@
 # fractiomatix
 Mathematical code repository for matrices and specific combinatorial problems of interest.
 
+Included are methods for processing flat-array matrices, both ordinary row/column and CSR matrices.
+Polymorphic methods getData(), getDataRef(), putData(), putDataRef() allow bringing in data from both ordinary and CSR packing into any algorithm (CSRMatrix class extends Matrix class), the basis data order will naturally be the row/column one.
+
+Included are a Gaussian elimination with partial pivoting, 2 versions of Gauss-Jordan solver (one with partial pivoting and inverse matrix generation, one faster/leaner with full pivoting and destruction of original matrix), a Crout solver with LU decomposition.
+A finder of largest eigenvalue & vector included (the simple Power Method). Will try out implementing full eigenvalue finders further on.
+
+I've implemented in Java the infamous O(n^2.783) Strassen-Winograd matrix multiplicator (which coincidentally would have to be taking on quite big matrices to be worth the bother, as it is changing stack levels and array context all the time. I've included a little speed test in the main() method). Eventually I will change the operations to a preallocated fixed array for all array operations, but I doubt it will gain any major speed improvement, as I suspect the allocations in Java happen in nearly O(1) time when a lot of free memory is available, as I have in these test cases. Perhaps getting rid of Java's constant array zeroing will give a little gain. So it's very low priority indeed.
+
+I am currently more interested in sparse-matrix fast-solving methods for physical applications. I'd like to be able to import 3D meshes into Java from ex. FBX format, decompose into tetrahedral volumes and run electromagnetic field simulations and stress/strain/displacement simulations with support for (hopefully) anisotropic materials.
+
 There is a dependency on [jfreechart] (https://github.com/jfree/jfreechart) for drawing routines.
 
 Current contents:
@@ -62,11 +72,12 @@ Current contents:
     				public static void multiplyStrasWin2(double[] dA, double[] dB, double[] dC, int[] subInfo)
     				public boolean equals(Matrix B)
     				public int diagonality()
-    				public Matrix[] factorise()
+    				public Matrix[] decomposeLU()
     				public boolean convergent()
-    				public int[] conditionDiagonal(Matrix c, boolean doBitImage)
+    				public int[] conditionDiagonal(Matrix c, boolean swapMethod, boolean doBitImage)
     				public void doGaussElimination()
-    				public Matrix solve(Matrix rhs)
+    				public Matrix solveGaussPartPivoting(Matrix rhs)
+    				public Matrix[] solveGaussJordanFullPivoting(Matrix B, boolean duplicate)
     				public Matrix solveGaussJordan(Matrix c, Matrix Ai)
     				public Matrix solveCrout(Matrix U, Matrix V)
     				public boolean hasZeroDeterminant(boolean thoroughTest)
@@ -95,9 +106,9 @@ Current contents:
     				public Matrix transpose(boolean copy)
     				public static boolean equal(CSRMatrix S, CSRMatrix T)
     				public void swap(int r1, int r2)
-    				public static CSRMatrix add(CSRMatrix S, CSRMatrix T)	
-  				public static CSRMatrix subtract(CSRMatrix S, CSRMatrix T, boolean subtract)
-  				public static CSRMatrix addSub(CSRMatrix S, CSRMatrix T, boolean subtract)
+    				public static CSRMatrix add(CSRMatrix S, CSRMatrix T)
+    				public static CSRMatrix subtract(CSRMatrix S, CSRMatrix T, boolean subtract)
+    				public static CSRMatrix addSub(CSRMatrix S, CSRMatrix T, boolean subtract)
     				public static CSRMatrix multiply(CSRMatrix S, CSRMatrix T)
     				public String toString()
     
