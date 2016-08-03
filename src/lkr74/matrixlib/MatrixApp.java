@@ -67,11 +67,11 @@ public class MatrixApp {
 					case -1:	M2 = M0.clone(); break;							// copy from RC to CRS
 					case -2:	Matrix.multiply(M0, M1); break;					// RC multiply
 					case -3:	result = M0.equals(M1); break;					// RC equality
-					case -4:	Matrix.add(M0, M1); break;						// RC add
+					case -4:	Matrix.add(M0, M1, true); break;				// RC add
 					case 1:		M0 = M3.clone(); break;							// copy from CRS to RC
 					case 2:		CSRMatrix.multiply(M2, M3); break;				// CRS multiply
 					case 3:		M2.equals(M3); break;							// CRS equality
-					case 4:		CSRMatrix.add(M2, M3); break;					// CRS add
+					case 4:		CSRMatrix.add(M2, M3, true); break;				// CRS add
 					}
 			    testRuns[tcnt++][r] = (System.nanoTime() - start) / ITERATIONS;
 			}
@@ -94,6 +94,7 @@ public class MatrixApp {
 				
 		double[] d = {1, 0, 3, 0, 5, 0, 0, 1, 3};
 		double[] d8 = {1,2,3,1,2}, d9 = {12,24,36,5,6,7}, d9b = {12,5,24,6,36,7};
+		double[] d1i = {1,2,3,4,5,6,7,8};
 		double[] d2 = {	5,1,2,0,4,
 						1,4,2,1,3,
 						2,2,5,4,0,
@@ -121,6 +122,9 @@ public class MatrixApp {
 		double[] d5 = {	1,2,3,
 						0,2,1,
 						2,1,3};
+		double[] gs = {	1,1,1,
+						2,1,0,
+						5,1,3};
 		double[] d10 = {1,2,3,4,5,6,7,8,7,6,
 						2,2,3,4,5,6,7,8,7,6,
 						3,3,3,4,5,6,7,8,7,6,
@@ -131,16 +135,16 @@ public class MatrixApp {
 						8,8,8,8,8,8,8,8,7,6,
 						7,7,7,7,7,7,7,7,7,6,
 						6,6,6,6,6,6,6,6,6,6};
-		double[] d20 = {1,0,0,0,0,0,0,0,0,0,
-						0,0,0,0,0,0,0,0,0,0,
-						0,0,1,0,0,0,0,0,0,0,
-						0,0,0,2,0,0,0,0,0,0,
-						0,0,0,0,3,0,0,0,0,0,
-						0,0,0,2,0,0,0,0,0,0,
-						0,0,0,0,0,0,1,0,0,0,
-						0,0,0,0,0,0,0,2,1,0,
-						0,0,0,0,0,0,0,0,7,0,
-						0,0,0,0,0,0,0,0,0,8};
+		double[] d20 = {1,-3, 0, 0, 0, 0, 0, 0, 0, 0,
+						0,-4,-3, 0, 0, 0, 0, 0, 0, 0,
+						0, 0, 1, 0, 0, 0, 0, 0, 8, 0,
+						0, 0, 0, 2,-2, 0, 0, 0, 0, 0,
+						0, 0, 0, 0, 3, 0, 0, 0, 0, 0,
+						0, 0, 0, 0, 0, 2, 0, 0, 0, 0,
+						0, 0, 0, 0, 0, 0, 1, 0, 0, 0,
+						0, 0, 0, 0, 0, 0, 9, 2, 1, 0,
+						0, 0, 0, 0,-3, 0, 0, 2, 7, 0,
+						0, 0, 0, 0, 0, 0, 0, 0, 0, 8};
 		double[] d11 = {1,2,3,4,5,6,7,8,
 						2,2,3,4,5,6,7,8,
 						3,3,3,4,5,6,7,8,
@@ -161,13 +165,22 @@ public class MatrixApp {
 //		D8.convergent();
 //		System.out.println(d7.toString());
 
+		Matrix GS = new Matrix("gs", 3, 3, gs, null);
+		System.out.println(GS.toString());
+		Matrix O1 = GS.orthogonalise(true);
+		System.out.println(O1.toString());
+		GS.transpose(false);
+		O1 = GS.orthogonalise(true);
+		System.out.println(O1.toString());
 		
-		Matrix D2 = new Matrix("D2", 5, 5, d2);
-		Matrix x5 = new Matrix("x5", 5, 1, d8);
+		Matrix D2 = new Matrix("D2", 5, 5, d2, null);
+
+
+		Matrix x5 = new Matrix("x5", 5, 1, d8, null);
 		double eigenvalue = Matrix.eigenPowerMethod(D2, x5, 0.01, 100);
 		System.out.println("Eigenvalue: " + eigenvalue + "\n");
 		
-		Matrix D20 = new Matrix("Dd", 10, 10, d20);
+		Matrix D20 = new Matrix("Dd", 10, 10, d20, null);
 		System.out.println(D20.diagonality());
 		
 		int iters = 1;
@@ -176,9 +189,9 @@ public class MatrixApp {
 		Matrix.DEBUG_LEVEL = 2;
 
 		Matrix D5i = new Matrix("D5i", 3, 3);
-		Matrix c2 = new Matrix("c2", 3, 1, d9), x6 = null;
+		Matrix c2 = new Matrix("c2", 3, 1, d9, null), x6 = null;
 		Matrix[] XA = null;
-		Matrix D5 = new Matrix("A", 3, 3, d5);
+		Matrix D5 = new Matrix("A", 3, 3, d5, null);
 		x6 = D5.solveGaussPartPivoting(c2);
 
 		Matrix c2b = c2.clone();
@@ -189,9 +202,15 @@ public class MatrixApp {
 		Matrix[] bLU = Matrix.backSubstituteLU2(D5, null, c2, true);
 		if (bLU == null) System.out.println("backSubstituteLU2() received singular matrix.");
 
-		x6 = D5.solveGaussJordan(c2, D5i);
+		D20 = new Matrix("D", 10, 10, d20, null);
+		Matrix D20i = new Matrix("D", 10, 10, Matrix.Type.Null);
+		Matrix b10 = new Matrix("b", 10, 1, d10, null);
+		x6 = D20.solveGaussJordanDO(b10, D20i);
+		if (x6 == null) System.out.println("solveGaussJordan() returned singular matrix.");
+		//x6 = D5.solveGaussJordan(c2, D5i);
+		System.out.println("Determinant: " + D20.det);
 		
-		c2 = new Matrix("c2", 3, 2, d9b);
+		c2 = new Matrix("c2", 3, 2, d9b, null);
 		tstart = System.nanoTime();
 		System.out.println(D5.toString());
 		for (int i = 0; i < iters; i++)
@@ -223,16 +242,16 @@ public class MatrixApp {
 		if(1==1) return;
 		
 		// test if multiplication of rescaled matrices produce same results as unexpanded ones
-		Matrix S1 = new Matrix("S1", 6, 5, d2);
+		Matrix S1 = new Matrix("S1", 6, 5, d2, null);
 		S1 = Matrix.multiply(S1, S1.transpose(true));
-		S1 = new Matrix("S1", 6, 5, d2);
+		S1 = new Matrix("S1", 6, 5, d2, null);
 		S1 = S1.rescale(0, 0, 6, 6, true);
 		S1 = Matrix.multiply(S1, S1.transpose(true));
 		if(1==1) return;
 		
-		Matrix A1 = new Matrix("A1", 9, 9, d3);
+		Matrix A1 = new Matrix("A1", 9, 9, d3, null);
 		A1 = Matrix.multiply(2, A1);
-		Matrix A2 = new Matrix("A2", 9, 7, d4);
+		Matrix A2 = new Matrix("A2", 9, 7, d4, null);
 		//A2.transpose();
 		Matrix A3 = Matrix.multiply(A1, A2);
 
@@ -260,14 +279,14 @@ public class MatrixApp {
 		if(1==1) return;
 
 		// test out CRSMatrix conversion and access
-		Matrix O = new Matrix("O", 9, 7, d3);
+		Matrix O = new Matrix("O", 9, 7, d3, null);
 		O.transpose(false);
-		Matrix R = new Matrix("R", 9, 7, d3);
+		Matrix R = new Matrix("R", 9, 7, d3, null);
 		//G = Matrix.multiply(O, R);
 		G = G.eliminateRowColumn(6, 6, true);
 
 		// test centering method for Matrix
-		Matrix P = Matrix.center(G);
+		Matrix P = G.center(true);
 
 		BinBitImage.compact(d2, O.bitImage.data[0], 0);
 		System.out.println(BinBitImage.binBitToString());
@@ -281,7 +300,7 @@ public class MatrixApp {
 		System.out.println("(3,1): " + csrO.valueOf(3, 1));
 		System.out.println("(1,0): " + csrO.valueOf(1, 0));
 		
-		Matrix D = new Matrix("D", 3, 3, d);
+		Matrix D = new Matrix("D", 3, 3, d, null);
 
 		D.doGaussElimination();
 		CSRMatrix csrA = new CSRMatrix("A2", 5, 5,  Matrix.Type.Random);
