@@ -144,9 +144,10 @@ public class Matrix implements Cloneable {
 //		A.name = name;
 //		A.M = M; A.N = N;
 //		A.status = status;
-//		A.data = data; A.idata = idata;
-//		if (bitImage != null) A.bitImage = bitImage.clone(A);
-//		if (mutator != null) A.mutator = mutator.clone();
+		if (data != null) A.data = data.clone();
+		if (idata != null) A.idata = idata.clone();
+		if (bitImage != null) A.bitImage = bitImage.clone(A);
+		if (mutator != null) A.mutator = mutator.clone();
 		if (Matrix.DEBUG_LEVEL > 2) System.out.println(this.toString());
 		return A;
 	}
@@ -1403,12 +1404,18 @@ public class Matrix implements Cloneable {
 		if (M != N || c.M != N || c.N != 1)
 			throw new RuntimeException("Matrix.solveGaussJordan(): Invalid matrix/vector dimensions.");
 
+		DEBUG_LEVEL--;
+		
 		// create initial solution vector
 		Matrix x = new Matrix("x", M, 1, Matrix.Type.Random), xOld = null;
 		double[] datac = c.data, datax = x.data;
+		// current iteration error & previous iteration error
+		double cuErr = 0, prErr = 0;
+		boolean converges = true;
 		
 		// do the refining iterations
-		for (int i = 0; i < itersMax; i++) {
+		int i = 0;
+		for (; i < itersMax; i++) {
 			
 			xOld = x.clone();
 			// do Gauss-Seidel iteration step over every row
@@ -1416,19 +1423,29 @@ public class Matrix implements Cloneable {
 
 				double sumCurr = 0;
 				for (int c1 = 0; c1 < r; c1++) {
-					sumCurr += data[r * N + c1] * datax[r];
+					sumCurr += data[r * N + c1] * datax[c1];
 				}
 				double sumPrev = 0;
 				for (int c1 = r + 1; c1 < M; c1++) {
-					sumPrev += data[r * N + c1] * datax[r];
+					sumPrev += data[r * N + c1] * datax[c1];
 				}
 				datax[r] = (datac[r] - sumCurr - sumPrev) / data[r * N + r];
 			}
 			// check error vector length between previous & current solution vector
-			if (xOld.subtract(x, false).absLength(0) <= maxError) break;		// error below maxError, stop iteration
+			System.out.println("Error: " + cuErr + ", error diff: " + (cuErr - prErr));
+			prErr = cuErr;
+			cuErr = xOld.subtract(x, false).absLength(0);
+			if (i > 1 && cuErr - prErr > 0) { converges = false; break; }
+			if (cuErr <= maxError && cuErr >= -maxError) break;		// error below maxError, stop iteration, quit with result
 		}
 		
-		if (DEBUG_LEVEL > 2) System.out.println(x.toString());
+		DEBUG_LEVEL++;
+		if (DEBUG_LEVEL > 1) {
+			if (!converges || i >= itersMax)
+							System.out.println("Gauss-Seidel iterator solver won't converge.");
+			else			System.out.println("Gauss-Seidel iterator solver done in " + i + "iterations.");
+			System.out.println(x.toString());
+		}	
 		return x;
 	}
 	

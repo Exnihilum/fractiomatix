@@ -105,7 +105,7 @@ public class MatrixApp {
 	public static void main(String[] args) {
 				
 		double[] d = {1, 0, 3, 0, 5, 0, 0, 1, 3};
-		double[] d8 = {1,2,3,1,2}, d9 = {12,24,36,5,6,7}, d9b = {12,5,24,6,36,7};
+		double[] d8 = {1,2,3,1,2}, d9 = {12,24,36,5,6,7}, d9b = {12,5,24,6,36,7}, v1 = {8,15,19};
 		double[] d1i = {1,2,3,4,5,6,7,8};
 		double[] d2 = {	5,1,2,0,4,
 						1,4,2,1,3,
@@ -137,6 +137,9 @@ public class MatrixApp {
 		double[] gs = {	1,1,1,
 						2,1,0,
 						5,1,3};
+		double[] cn = {	3,1,8,
+						1,4,2,
+						2,1,5};
 		double[] d10 = {1,2,3,4,5,6,7,8,7,6,
 						2,2,3,4,5,6,7,8,7,6,
 						3,3,3,4,5,6,7,8,7,6,
@@ -194,12 +197,15 @@ public class MatrixApp {
 		// Test method that finds diagonal bandwidth of a sparse matrix
 		System.out.println(new Matrix("Dd", 10, 10, d20, null).diagonality());
 		
-		int iters = 10;
+		int iters = 100;
 		long tstart, tend;
 
 		// Test partial pivoting Gauss solver
 		Matrix D5 = new Matrix("A", 3, 3, d5, null);
 		Matrix x6 = D5.solveGaussPP(new Matrix("c2", 3, 1, d9, null));
+		
+		Matrix CN = new Matrix("N", 3, 3, cn, null);
+		x6 = CN.solveGaussSeidel(new Matrix("v1", 3, 1, v1, null), 100, 0.1);
 
 		// Test Crout LU decomposer and LU back substitution solver for systems with constant coefficients
 		Matrix[] lLU = D5.decomposeLU();
