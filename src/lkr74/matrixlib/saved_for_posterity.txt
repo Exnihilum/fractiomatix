@@ -278,3 +278,73 @@
 //		
 //		Matrix.mulAdopsSW_DEBUG += (23 + sdim2 * 31);
 //	}
+
+
+
+
+
+	// conditioning for precision and iterative methods: swap in the largest elements of rows into diagonal positions
+	// the constant vector c needs to be swapped as well, if set to null it is ignored
+	// method constructs array "mutator" with the mutated indexes for facilitating reconstitution of the solved vector
+	public void conditionDiagonal(Matrix c, boolean swapMethod, boolean doBitImage) {
+		
+		if (M != N)									throw new RuntimeException("Matrix.conditionDiagonal(): Matrix not square.");
+		if (M < 1)									throw new RuntimeException("Matrix.conditionDiagonal(): Invalid matrix.");
+		if (c != null && (M != c.M || c.N != 1))	throw new RuntimeException("Matrix.conditionDiagonal(): Invalid constant vector.");
+				
+		double[] data = this.data, newdata = new double[M*N];
+		if (swapMethod) {
+			mutator = new int[M + 1];
+			for (int i = 0; i < M; i++) mutator[i] = i;
+		}
+		
+		for (int r1 = 0, m; r1 < M; r1++) {
+			int r1N = r1 * N;
+			double a_r1r1 = data[r1N + r1];
+			if (a_r1r1 < 0) a_r1r1 = -a_r1r1;
+			// find largest (absolute) element in current row (skip checking previous rows for swapMethod)
+			if (swapMethod) {
+				// apply method that swaps row r1 & row r2 if diagonals of both rows get larger on swapping 
+				for (int r2 = 0; r2 < N; r2++) {
+					if (r1 != r2) {
+					int r2N = r2 * N;
+
+					double a_r2r1 = data[r2N + r1], a_r1r2 = data[r1N + r2], a_r2r2 = data[r2N + r2];
+					if ((a_r1r1 < a_r2r1 || a_r1r1 > -a_r2r1) && (a_r1r2 >= a_r2r2 || a_r1r2 <= -a_r2r2)) {
+						swap(r1, r2);
+						if (c != null) c.swap(r1, r2);	// swap matching elements in vector c
+						m = mutator[r1];				// swap indexes in mutator array
+						mutator[r1] = mutator[r2];
+						mutator[r2] = m;
+					}
+					}
+				}
+			} else {
+				// apply adding method which adds row r2 to r1 if it provides a larger value for diagonal element of row r1
+				int rMaxDiag = 0;
+				double vMaxDiag = 0;
+				// find the largest diagonal from all other rows than r1
+				for (int r2 = 0; r2 < N; r2++) {
+					if (r2 != r1) {
+						double a_r2r1 = data[r2 * N + r1];
+						if (a_r2r1 < 0) a_r2r1 = -a_r2r1;
+						if (vMaxDiag < a_r2r1) {
+							rMaxDiag = r2;
+							vMaxDiag = a_r2r1;
+						}
+					}
+				}
+				// move over into newdata the row with max-value in diagonal element position added with row of the current diagonal element
+				//if (vMaxDiag > a_r1r1) {
+					int rMax = rMaxDiag * N;
+					for (int c1 = 0; c1 < N; c1++) {
+						newdata[r1N + c1] += data[r1N + c1] + data[rMax + c1];
+						if (c != null) c.data[r1] += c.data[rMaxDiag];
+					}
+				//}
+			}
+		}
+		if (!swapMethod) this.data = newdata;
+		if (DEBUG_LEVEL > 1) System.out.println("conditionDiagonal():\n" + toString());
+		if (doBitImage) bitImage.make();
+	}

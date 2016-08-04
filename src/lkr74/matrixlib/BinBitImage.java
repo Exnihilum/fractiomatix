@@ -21,7 +21,7 @@ public class BinBitImage {
 	private static DoubleBuffer binBitD;
 	private static IntBuffer binBitI;
 
-	private static int DEBUG_LEVEL = 0;
+	static int DEBUG_LEVEL = 0;
 
 	// everything that needs to be statically set up at load time for the Matrix class is done here
 	{
@@ -45,7 +45,9 @@ public class BinBitImage {
 	// call this method when the dimensions of bitImage haven't changed and data can be directly overwritten
 	public void make() {
 		
-		double[] dataM = M.getData();		// get data in Matrix row-column format from matrix subclass's native format
+		// get data in Matrix row-column format from matrix subclass's native format
+		double[][] dataSet = M.getData();		
+		double[] dataM = dataSet[0], idataM = dataSet[1];		
 		// 8x8 matrix fits perfectly into a long
 		long bitset = 0;
 		if (M.M < 9 && M.N < 9) {
@@ -53,9 +55,13 @@ public class BinBitImage {
 			// sets bits linearly along the bitset, first row-col in lowest/rightmost position
 			for (int i = 0; i < M.M; i++) {
 				int irow = i * M.N;
-				for (int j=0; j < M.N; j++)
-					if (dataM[irow + j] < -ROUNDOFF_ERROR || dataM[irow + j] > ROUNDOFF_ERROR)
+				for (int j=0; j < M.N; j++) {
+					if (dataM != null && !Matrix.nearZero(dataM[irow + j]))
 						bitset |= (0x1L<<(irow + j));
+					else
+					if (idataM != null && !Matrix.nearZero(idataM[irow + j]))
+						bitset |= (0x1L<<(irow + j));					
+				}
 			}
 			data[0] = bitset;
 			bitSets = 0;
@@ -71,24 +77,31 @@ public class BinBitImage {
 			// go through this row processing 64 elements at a time, find all non-zeroes and set their bit
 			for (int j = 0; j < (sets<<6); j += 64) {
 				bitset = 0;
-				int ij1 = iN + j;
-				for (int k = 0; k < 64; k++)
-					if (dataM[ij1 + k] > ROUNDOFF_ERROR || dataM[ij1 + k] < -ROUNDOFF_ERROR)
-						bitset |= (0x1L<<k);
+				if (dataM != null) {
+					for (int k = 0, ij1 = iN + j; k < 64; k++, ij1++)
+						if (!Matrix.nearZero(dataM[ij1])) bitset |= (0x1L<<k);
+				}
+				if (idataM != null) {
+					for (int k = 0, ij1 = iN + j; k < 64; k++, ij1++)
+						if (!Matrix.nearZero(idataM[ij1])) bitset |= (0x1L<<k);
+				}
 				data[i * bitSets + (j>>6)] = bitset;
 			}
 			bitset = 0;
 			int j = sets << 6;
-			int ij1 = iN + j;
 			// this takes care of a remainder of this row's elements that didn't fit into previous 64-element parcels
-			for (int k = 0; k < rest; k++)
-				if (dataM[ij1 + k] > ROUNDOFF_ERROR || dataM[ij1 + k] < -ROUNDOFF_ERROR)
-					bitset |= (0x1<<k);
+			if (dataM != null) 
+				for (int k = 0, ij1 = iN + j; k < rest; k++, ij1++)
+					if (!Matrix.nearZero(dataM[ij1])) bitset |= (0x1<<k);
+			if (idataM != null) 
+				for (int k = 0, ij1 = iN + j; k < rest; k++, ij1++)
+					if (!Matrix.nearZero(idataM[ij1])) bitset |= (0x1<<k);
+			
 			// also need checking if there WAS any remainder, to avoid out of bounds exception!
 			if (rest > 0) data[i * bitSets + sets] = bitset;
 		}
 		
-		if (Matrix.DEBUG_LEVEL > 1) System.out.println(this.toString());
+		if (BinBitImage.DEBUG_LEVEL > 1) System.out.println(this.toString());
 	}
 	
 	public BinBitImage clone(Matrix M) {

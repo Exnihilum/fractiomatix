@@ -1,7 +1,5 @@
 package lkr74.matrixlib;
 
-import java.nio.ByteBuffer;
-import java.nio.DoubleBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -17,9 +15,6 @@ public class Matrix implements Cloneable {
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	static final double ROUNDOFF_ERROR = 1e-8;
-	static final int IDENTITY_MATRIX = 1;
-	static final int RC_MATRIX = 1<<1;
-	static final int CSR_MATRIX = 1<<2;
 	static final int SINGULAR_MATRIX = 1<<8;
 	static final boolean REAL = false;
 	static final boolean IMAGINARY = true;
@@ -87,8 +82,7 @@ public class Matrix implements Cloneable {
 		this.name = name;
 		this.M = M;
 		this.N = N;
-		this.putData(data);
-		if (idata != null) this.iputData(idata);
+		this.putData(data, idata);
 		bitImage = new BinBitImage(this);
 	}
 
@@ -123,37 +117,51 @@ public class Matrix implements Cloneable {
 		taskNum = 0;
 	}
 
-	public void makeThreaded() { this.threaded = true; }		// activate multithreading flag for this matrix
-	public void makeNonThreaded() { this.threaded = false; }	// deactivate multithreading flag for this matrix
-
-	public double[] getDataRef() { return data; }
-	public double[] getData() { return data.clone(); }
-	public void putDataRef(double[] data) { this.data = data; }
-	public void putData(double[] data) { this.data = data.clone(); }
-
-	public double[] igetDataRef() { return idata; }
-	public double[] igetData() { return idata.clone(); }
-	public void iputDataRef(double[] idata) { this.idata = idata; }
-	public void iputData(double[] idata) { this.idata = idata.clone(); }
+	public double[][] getDataRef() {
+		double[][] dataSet = new double[2][];
+		dataSet[0] = data;
+		dataSet[1] = idata;
+		return dataSet;
+	}
+	public double[][] getData() {
+		double[][] dataSet = new double[2][];
+		dataSet[0] = (data != null ? data.clone() : null);
+		dataSet[1] = (idata != null ? idata.clone() : null);
+		return dataSet;
+	}
+	public void putDataRef(double[] data, double[] idata) { this.data = data; this.idata = idata; }
+	public void putData(double[] data, double[] idata) {
+		this.data = (data != null ? data.clone() : null);
+		this.idata = (idata != null ? idata.clone() : null);
+	}
 
 	
-	// polymorphic clone operation will deconvert from other formats into row-column through overridden getData() method
 	@Override
 	public Matrix clone() {
 		Object O = null;
 		try { O = super.clone(); } catch (CloneNotSupportedException e) { e.printStackTrace(); }
 		Matrix A = (Matrix) O;
-		A.name = name;
-		A.M = M;
-		A.N = N;
-		A.status = status;
-		if (data != null) A.putDataRef(getData());
-		if (idata != null) A.iputDataRef(igetData());
-		A.bitImage = bitImage.clone(A);
-		if (mutator != null) A.mutator = mutator.clone();
+//		A.name = name;
+//		A.M = M; A.N = N;
+//		A.status = status;
+//		A.data = data; A.idata = idata;
+//		if (bitImage != null) A.bitImage = bitImage.clone(A);
+//		if (mutator != null) A.mutator = mutator.clone();
 		if (Matrix.DEBUG_LEVEL > 2) System.out.println(this.toString());
 		return A;
 	}
+
+	// this clone operation will deconvert from other formats into row-column through overridden getData() method
+	public Matrix cloneMatrix() {
+		double[][] dataSet = getDataRef();
+		Matrix A = new Matrix(name, M, N, dataSet[0], dataSet[1]);
+		A.status = status;
+		if (bitImage != null) A.bitImage = bitImage.clone(A);
+		if (mutator != null) A.mutator = mutator.clone();
+		if (Matrix.DEBUG_LEVEL > 2) System.out.println(A.toString());
+		return A;
+	}
+	
 
 	public void zero() {
 		if (data != null) for (int i = 0, MN = M * N; i < MN; i++) data[i] = 0;
@@ -179,9 +187,11 @@ public class Matrix implements Cloneable {
 		for (int i = 0, ii = 0; i < M; i++) {
 			if (i != r) {
 				int iiAN = ii * A.N, iN = i * N;
+				// real-valued matrix case
 				if (idata == null) {
 					for (int j = 0, jj = 0; j < N; j++)
 						if (j != c) A.data[iiAN + jj++] = data[iN + j];
+				// complex-valued matrix case
 				} else {
 					for (int j = 0, jj = 0; j < N; j++)
 						if (j != c) {
@@ -198,7 +208,9 @@ public class Matrix implements Cloneable {
 	}
 
 	public double valueOf(int r, int c) { return data[r * N + c]; }
+	
 	public double[] ivalueOf(int r, int c) {
+		if (data == null || idata == null) throw new RuntimeException("Matrix.valueOf(): Unallocated datafields.");
 		double[] iv = new double[2];
 		int rNc = r * N + c;
 		iv[0] = data[rNc]; iv[1] = idata[rNc];
@@ -207,29 +219,35 @@ public class Matrix implements Cloneable {
 
 	public void valueTo(int r, int c, double v) {
 		data[r * N + c] = v;
-		if (v < -ROUNDOFF_ERROR || v > ROUNDOFF_ERROR)
+		if (!nearZero(v))
 			bitImage.setBit(r, c);				// set the corresponding bit in bitImage if value is nonzero
 	}
 	public void ivalueTo(int r, int c, double[] iv) {
+		if (data == null || idata == null) throw new RuntimeException("Matrix.ivalueTo(): Unallocated datafields.");
 		int rNc = r * N + c;
 		data[rNc] = iv[0]; idata[rNc] = iv[1];
-		if (iv[0] < -ROUNDOFF_ERROR || iv[0] > ROUNDOFF_ERROR || iv[1] < -ROUNDOFF_ERROR || iv[1] > ROUNDOFF_ERROR)
+		if (!nearZero(iv[0]) || !nearZero(iv[1]))
 			bitImage.setBit(r, c);					// set the corresponding bit in bitImage if value is nonzero
 	}
 
-	public Matrix identity(int s) { return new Matrix("I", s, s, Type.Identity); }
 	
+	public Matrix identity(int s) { return new Matrix("I", s, s, Type.Identity); }
+
+	
+	// polymorphic matrix centering method will numerically center the matrix, columnwise
 	public Matrix center(boolean copy) {
 		Matrix Ac = this;
 		if (copy) Ac = clone();
-		double[] dataAc = Ac.data;
+		double[][] dataSet = Ac.getDataRef();
+		double[] dataAc = dataSet[0];
 		for (int j = 0; j < N; j++) {
 			double avg = 0;
 			for (int i = 0, iNj = j; i < M; i++, iNj += N) avg += dataAc[iNj];
 			avg /= (double)M;
 			for (int i = 0, iNj = j; i < M; i++, iNj += N) dataAc[iNj] -= avg;
 		}
-		if (Ac.idata != null) {
+		dataAc = dataSet[1];
+		if (dataAc != null) {
 			double[] idataAc = Ac.idata;
 			for (int j = 0; j < N; j++) {
 				double avg = 0;
@@ -279,7 +297,7 @@ public class Matrix implements Cloneable {
 	
 	public Matrix rescale(int Mi, int Ni, int Mo, int No, boolean doBitImage) {
 		
-		if (Mi > Mo || Ni > No) throw new RuntimeException("Matrix.getData(): Invalid data subset size.");
+		if (Mi > Mo || Ni > No) throw new RuntimeException("Matrix.rescale(): Invalid data subset size.");
 		int newM = Mo - Mi, newN = No - Ni;
 		
 		String newname;
@@ -317,7 +335,7 @@ public class Matrix implements Cloneable {
 		
 		if (copy) An = this.clone();
 		double r11 = An.absLength(0);										// r11 := ||x1||
-		if (r11 > -ROUNDOFF_ERROR && r11 < ROUNDOFF_ERROR) return null;		// null vector found, abort
+		if (nearZero(r11)) return null;										// null vector found, abort
 
 		int M = An.M, N = An.N;
 		Matrix Q = new Matrix("q", M, N, Matrix.Type.Null);
@@ -333,7 +351,7 @@ public class Matrix implements Cloneable {
 					An.data[kNj] -= rij * Q.data[kNi];						// q^ := q^ - rij*qi
 			}
 			double rjj = An.absLength(j);									// rjj := ||q^||
-			if (rjj > -ROUNDOFF_ERROR && rjj < ROUNDOFF_ERROR) return null;	// null vector found, abort
+			if (nearZero(rjj)) return null;									// null vector found, abort
 			rjj = 1.0 / rjj;
 			for (int r = 0, rN = j; r < M; r++, rN += N)
 				Q.data[rN] = An.data[rN] * rjj;								// qj := q^ / rjj
@@ -357,7 +375,8 @@ public class Matrix implements Cloneable {
 			return;		// 1x1 matrix, nothing to analyse
 		}
 
-		double[] data = getDataRef();
+		double[][] dataSet = getDataRef();
+		double[] data = dataSet[0], idata = dataSet[1];		// get real & imaginary parts of data
 		detSign = 1;
 		rowAspectSparsest = true;
 		int signR = 1, signC = 1;
@@ -373,12 +392,14 @@ public class Matrix implements Cloneable {
 		for (int i = 0, iend = zRIdx.length; i < iend; i++) zRIdx[i] = i;
 		for (int i = 0, iend = zCIdx.length; i < iend; i++) zCIdx[i] = i;
 		
-		double v;
 		for (int i = 0; i < M; i++) {
 			int iN = N * i;
-			for (int j = 0; j < N; j++) {
-				v = data[iN + j];
-				if (v <= ROUNDOFF_ERROR && v >= -ROUNDOFF_ERROR) { zRCount[i]++; zCCount[j]++; }
+			if (idata != null) {
+				for (int j = 0; j < N; j++)
+					if (nearZero(data[iN + j]) || nearZero(idata[iN + j])) { zRCount[i]++; zCCount[j]++; }
+			} else {
+				for (int j = 0; j < N; j++)
+					if (nearZero(data[iN + j])) { zRCount[i]++; zCCount[j]++; }
 			}
 		}
 		
@@ -428,7 +449,7 @@ public class Matrix implements Cloneable {
 	
 	
 	// swap two rows of matrix
-	public void swap(int r1, int r2) {
+	public void swapRows(int r1, int r2) {
 		double temp;
 		for (int i = 0, or1 = r1 * N, or2 = r2 * N; i < N; i++, or1++, or2++) {
 			temp = data[or1]; data[or1] = data[or2]; data[or2] = temp;
@@ -453,22 +474,27 @@ public class Matrix implements Cloneable {
 		// given a non-square matrix, reallocate new data field
 		if (M != N) {
 			if (copy) T = new Matrix(name + "^T", N, M);
+			else name = name + "^T"; 
+					
 			double[] newdata = new double[N * M], inewdata = null;
 			if (idata != null) inewdata = new double[N * M];
 			
 			for (int i = 0; i < M; i++) {
 				int iN = i * N;
-				for (int j = 0, jMi = i, iNj = iN; j < N; j++, jMi += M, iNj++) newdata[jMi] = data[iNj];
+				for (int j = 0, jMi = i, iNj = iN; j < N; j++, jMi += M, iNj++)
+					newdata[jMi] = data[iNj];
 				if (idata != null)
 					for (int j = 0, jMi = i, iNj = iN; j < N; j++, jMi += M, iNj++) inewdata[jMi] = idata[iNj];
 			}
 			
 			T.data = newdata;
+			T.status = status;
 			T.idata = inewdata;
-			if (DEBUG_LEVEL > 1) System.out.println(T.toString());
+			if (!copy) { int temp = T.M; T.M = T.N; T.N = temp; } // swap row & column count if we're not making a new matrix
 			T.bitImage = new BinBitImage(T);
 		} else {
 			if (copy) { T = this.clone(); T.name = T.name + "^T"; }
+			else name = name + "^T";
 			double[] dataT = T.data, idataT = T.idata;
 			
 			// the approach for a square matrix
@@ -489,74 +515,79 @@ public class Matrix implements Cloneable {
 	
 	
 	// normalises the matrix/vector/transposevector A, for a matrix the columns are normalised individually
-	public static void normalise(Matrix A) {
+	public Matrix normalise(boolean copy) {
 
-		if (A.M < 1 || A.N < 1) throw new RuntimeException("Matrix.normalise(): Invalid matrix dimensions.");
+		if (M < 1 || N < 1) throw new RuntimeException("Matrix.normalise(): Invalid matrix dimensions.");
+		Matrix C;
+		double[] dataC = null;
+		if (copy) C = this.clone(); else C = this;
+		double[][] dataSet = C.getDataRef();
+		dataC = dataSet[0];
 
-		double[] data = A.data;
-		if (A.M > 1)
+		if (M > 1)
 			// if we're not dealing with a transposed vector
-			for (int c = 0, N = A.N, M = A.M; c < N; c++) {
+			for (int c = 0; c < N; c++) {
 				double norm = 0, sq;
 				for (int r = 0; r < M; r++) {
-					sq = data[r * N + c];
-					norm += sq * sq;	// Euclidean norm ||A||2
+					sq = dataC[r * N + c];
+					norm += sq * sq;									// Euclidean norm ||A||2
 				}
-				norm = Math.sqrt(norm);
-				for (int r = 0; r < M; r++) data[r * N + c] /= norm;	// normalise
+				norm = 1.0 / Math.sqrt(norm);
+				for (int r = 0; r < M; r++) dataC[r * N + c] *= norm;	// normalise
 			}
 		else {
 			double norm = 0, sq;
-			for (int c = 0, N = A.N; c < N; c++) {
-				sq = data[c];
-				norm += sq * sq;	// Euclidean norm ||A||2
+			for (int c = 0; c < N; c++) {
+				sq = dataC[c];
+				norm += sq * sq;										// Euclidean norm ||A||2
 			}
 			norm = Math.sqrt(norm);
-			for (int c = 0, N = A.N; c < N; c++) data[c] /= norm;		// normalise
+			for (int c = 0; c < N; c++) dataC[c] /= norm;		// normalise
 		}
-		if (DEBUG_LEVEL > 1) System.out.println(A.toString());
+		
+		if (DEBUG_LEVEL > 1) System.out.println(this.toString());
+		return C;
 	}
 
 	
+	public Matrix add(Matrix B, boolean copy) { return addSub(B, false, copy); }
+	public Matrix subtract(Matrix B, boolean copy) { return addSub(B, true, copy); }
 	
-	// polymorphic add will do A+B returning resultant C of matrix type A, or add directly to A if clone = false
+	// polymorphic addSub will do A+B or A-B returning resultant C of matrix type A, or add/subtract directly to A if clone = false
 	// the data from both matrices are gotten through the polymorphic method getDataRef()
-	public static Matrix add(Matrix A, Matrix B, boolean copy) {
+	public Matrix addSub(Matrix B, boolean subtract, boolean copy) {
 		
-		if (B.M != A.M || B.N != A.N)
-			throw new RuntimeException("Matrix.add(): Nonmatching matrix dimensions.");
-		double[] dataA = A.getDataRef(), dataB = B.getDataRef(), dataC;
+		if (B.M != M || B.N != N) throw new RuntimeException("Matrix.addSub(): Nonmatching matrix dimensions.");
+		
+		// bring in data from input matrices to the superclass format for adding
+		double[][] dataSet = getDataRef();
+		double[] dataA = dataSet[0], idataA = dataSet[1];
+		dataSet = B.getDataRef();
+		double[] dataB = dataSet[0], idataB = dataSet[1], dataC, idataC;
 		Matrix C;
-		if (copy) C = A.clone(); else C = A;
-		dataC = C.getDataRef();
+		if (copy) {
+			C = this.cloneMatrix(); 					// cloneMatrix() will bring data back into superclass format
+			dataC = C.data; idataC = C.idata;
+		} else {
+			C = this; 
+			dataC = dataA; idataC = idataA;
+		}
 		
-		if (Matrix.DEBUG_LEVEL > 1) C.name = "(" + A.name + "+" + B.name + ")";
-		else						C.name = "A" + nameCount++;
+		C.name = (Matrix.DEBUG_LEVEL > 1 ? "(" + name + (subtract?"-":"+") + B.name + ")" : "A" + nameCount++);
 		
-		for (int i = 0, MN = A.M * A.N; i < MN; i++) dataC[i] = dataA[i] + dataB[i];
-		C.putDataRef(dataC);
-		if (DEBUG_LEVEL > 1) System.out.println(C.toString());
-		C.bitImage.make();
-		return C;		
-	}
-
-	
-	
-	// polymorphic subtract will do A-B returning resultant C of matrix type A
-	public static Matrix subtract(Matrix A, Matrix B, boolean copy) {
+		if (subtract)	for (int i = 0, MN = M * N; i < MN; i++) dataC[i] = dataA[i] - dataB[i];
+		else			for (int i = 0, MN = M * N; i < MN; i++) dataC[i] = dataA[i] + dataB[i];
+		// case tree takes care of situation when any of dataA/dataB/dataC can be null array
+		if (idataB != null) {
+			if (idataA != null) {
+				// there is imaginary data in A and B, make sure C has buffer allocated
+				if (idataC == null) C.idata = new double[M * N];
+				if (subtract)	for (int i = 0, MN = M * N; i < MN; i++) idataC[i] = idataA[i] - idataB[i];
+				else			for (int i = 0, MN = M * N; i < MN; i++) idataC[i] = idataA[i] + idataB[i];
+			} else idataC = idataB.clone();
+		} else
+			if (idataA != null && idataC != idataA) idataC = idataA.clone();
 		
-		if (B.M != A.M || B.N != A.N)
-			throw new RuntimeException("Matrix.subtract(): Nonmatching matrix dimensions.");
-		double[] dataA = A.getDataRef(), dataB = B.getDataRef(), dataC;
-		Matrix C;
-		if (copy) C = A.clone(); else C = A;
-		dataC = C.getDataRef();
-		
-		if (Matrix.DEBUG_LEVEL > 1) C.name = "(" + A.name + "-" + B.name + ")";
-		else						C.name = "A" + nameCount++;
-		
-		for (int i = 0, MN = A.M * A.N; i < MN; i++) dataC[i] = dataA[i] - dataB[i];
-		C.putDataRef(dataC);
 		if (DEBUG_LEVEL > 1) System.out.println(C.toString());
 		C.bitImage.make();
 		return C;		
@@ -620,57 +651,58 @@ public class Matrix implements Cloneable {
 	}
 	
 	// polymorphic matrix product will do AB = C
-	public static Matrix multiply(Matrix A, Matrix B) {
+	public Matrix multiply(Matrix B) {
 
-		if (A.M < 1 || A.N < 1 || B.M < 1 || B.N < 1) 	throw new RuntimeException("Matrix.multiply(): Invalid matrix dimensions.");
-		if (A.N != B.M) 								throw new RuntimeException("Matrix.multiply(): Nonmatching matrix dimensions.");
-		mulFlops_DEBUG = A.M * 2 + A.M * A.N;	// counts number of multiplications
+		int aM = M, aN = N, bM = B.M, bN = B.N;
+		if (aM < 1 || aN < 1 || bM < 1 || bN < 1) 	throw new RuntimeException("Matrix.multiply(): Invalid matrix dimensions.");
+		if (aN != bM) 								throw new RuntimeException("Matrix.multiply(): Nonmatching matrix dimensions.");
+		mulFlops_DEBUG = aM * 2 + aM * aN;			// counts number of multiplications
 		
-		double[] dataA = A.getDataRef(), dataB = B.getDataRef();
-		double[] dataC = new double[A.M * B.N];
+		double[] dataA = this.getDataRef()[0], dataB = B.getDataRef()[0];
 		
-		String newname;
-		if (Matrix.DEBUG_LEVEL > 1) newname = "(" + A.name + "." + B.name + ")";
-		else						newname = "P" + nameCount++;
-		Matrix C = new Matrix(newname, A.M, B.N);
+		String newname = (Matrix.DEBUG_LEVEL > 1 ? "(" + name + "." + B.name + ")" : "P" + nameCount++);
+		Matrix C = new Matrix(newname, aM, bN);
+		double[] dataC = C.data = new double[aM * bN];
 
-		for (int i = 0; i < A.M; i++) {
-			int iN = i * A.N, iCN = C.N * i;
-			for (int j = 0; j < A.N; j++) {
-				int jBN = j * B.N;
+		for (int i = 0; i < aM; i++) {
+			int iN = i * aN, iCN = C.N * i;
+			for (int j = 0; j < aN; j++) {
+				int jBN = j * bN;
 				double v = dataA[iN + j];
-				if (v < -ROUNDOFF_ERROR || v > ROUNDOFF_ERROR) { // optimisation for sparse matrices
-					for (int k = 0; k < B.N; k++)
-						dataC[iCN + k] += v * dataB[jBN + k];
-					mulFlops_DEBUG += B.N;
+				if (!nearZero(v)) { 					// optimisation for sparse matrices
+					for (int k1 = iCN, k2 = jBN, k1End = iCN + bN; k1 < k1End; k1++, k2++)
+						dataC[k1] += v * dataB[k2];
+//					for (int k = 0; k < B.N; k++)
+//						dataC[iCN + k] += v * dataB[jBN + k];
+					mulFlops_DEBUG += bN;
 				}
 			}
 		}		
-		C.putDataRef(dataC);
+
 		if (DEBUG_LEVEL > 1) System.out.println(C.toString());
-		C.bitImage = new BinBitImage(C);		// bitImage needs full reconstitution
+		C.bitImage = new BinBitImage(C);				// bitImage needs full reconstitution
 		return C;
 	}
 	
-	// multiplies/scales matrix with a value, bitimage will be unchanged (multiplying with zero is meaningless)
-	public static Matrix multiply(double v, Matrix A) {
-		if (A.M < 1 || A.N < 1)
-			throw new RuntimeException("Matrix.multiply(): Invalid matrix dimensions.");
 	
-		double[] dataA = A.getDataRef();
-		double[] dataC = new double[A.M * A.N];
+	
+	// multiplies/scales matrix with a value, bitimage will be unchanged (multiplying with zero is meaningless)
+	public Matrix multiply(double v, boolean copy) {
 		
-		String newname;
-		if (Matrix.DEBUG_LEVEL > 1) newname = "s*" + A.name;
-		else						newname = "S" + nameCount++;
-		Matrix C = new Matrix(newname, A.M, A.N);
-
-		for (int i = 0, M = A.M; i < M; i++) {
-			int iN = i * A.N;
-			for (int j = 0, N = A.N; j < N; j++) dataC[iN + j] = v * dataA[iN + j];
-		}
+		if (M < 1 || N < 1) throw new RuntimeException("Matrix.multiply(): Invalid matrix dimensions.");
+	
+		Matrix C = this;
+		double[] dataA = null, dataC = null;
+		if (copy) {
+			String newname = (Matrix.DEBUG_LEVEL > 1 ? "s*" + name : "S" + nameCount++);
+			C = new Matrix(newname, M, N, Matrix.Type.Null);
+			dataC = C.data;
+		} else 
+			dataA = dataC = this.getDataRef()[0];		
 		
-		C.putDataRef(dataC);
+		for (int i = 0, MN = M * N; i < MN; i++) dataC[i] = v * dataA[i];
+		
+		C.data = dataC;
 		if (DEBUG_LEVEL > 1) System.out.println(C.toString());
 		return C;
 	}
@@ -745,7 +777,7 @@ public class Matrix implements Cloneable {
 				for (int j = 0; j < dim; j++) {
 					int joffsB = offsB + j * dimB;
 					double v = dA[ioffsA + j];
-					if (v < -Matrix.ROUNDOFF_ERROR || v > Matrix.ROUNDOFF_ERROR)
+					if (!nearZero(v))
 						for (int k = 0; k < dim; k++)
 							dC[ioffsC + k] += v * dB[joffsB + k];
 				}
@@ -904,20 +936,35 @@ public class Matrix implements Cloneable {
 	// polymorphic comparer
 	public boolean equals(Matrix B) {
 		
-		if (B.M != this.M || B.N != this.N) return false;
+		if (B.M != M || B.N != N) return false;
 		
-		// compare bitImages directly to mask out inequalities
-		if (!this.bitImage.equals(B.bitImage)) return false;
+		// compare bitImages directly for bitwise inequalities
+		if (!bitImage.equals(B.bitImage)) return false;
 		
-		double[] data1 = getDataRef(), data2 = B.getDataRef();
-		for (int i = 0; i < bitImage.data.length; i++) {
-			if (!BinBitImage.compare(data1, data2, bitImage.data[i])) return false;
-		}
+		double[][] dataSet = getDataRef();
+		double[] dataA = dataSet[0], idataA = dataSet[1];
+		dataSet = B.getDataRef();
+		double[] dataB = dataSet[0], idataB = dataSet[1];
+
+		for (int i = 0; i < bitImage.data.length; i++)
+			if (!BinBitImage.compare(dataA, dataB, bitImage.data[i])) return false;
+
 		// ordinary cell-by-cell comparison
 //		for (int i = 0; i < A.M; i++)
 //			for (int j = 0; j < A.N; j++)
 //				if (dataA[i * A.N + j] != dataB[i * A.N + j]) return false;
-		return true;		
+
+		if (idataA != null) {
+			if (idataB != null) {
+				for (int i = 0; i < bitImage.data.length; i++)
+					if (!BinBitImage.compare(idataA, idataB, bitImage.data[i])) return false;
+			// one matrix having imaginary data while the other not constitutes inequality
+			} else return false;
+		}
+		// both matrices lacking imaginary data (while passing real-value test) constitutes equality
+		if (idataB == null) return true;
+		// one matrix having imaginary data while the other not constitutes inequality
+		return false;		
 	}
 
 	
@@ -931,16 +978,14 @@ public class Matrix implements Cloneable {
 			int rN = r * N, rNsym = symOffs - rN;
 			for (int i = 0, rNi = rN, rNsymi = rNsym; i < r - width; i++, rNi++, rNsymi--) {
 				// is element non-zero?
-				if (	data[rNi] > ROUNDOFF_ERROR || data[rNi] < -ROUNDOFF_ERROR ||
-						data[rNsymi] > ROUNDOFF_ERROR || data[rNsymi] <-ROUNDOFF_ERROR) {
+				if (!nearZero(data[rNi]) || !nearZero(data[rNsymi])) {
 					// found the first/farthest-out element of this row, break out of loop
 					if (r - i > width) width = r - i;
 					break;
 				}
 				if (idata != null) {
 					// is imaginary element non-zero?
-					if (	idata[rNi] > ROUNDOFF_ERROR || idata[rNi] < -ROUNDOFF_ERROR ||
-							idata[rNsymi] > ROUNDOFF_ERROR || idata[rNsymi] <-ROUNDOFF_ERROR) {
+					if (!nearZero(idata[rNi]) || !nearZero(idata[rNsymi])) {
 						// found the first/farthest-out element of this row, break out of loop
 						if (r - i > width) width = r - i;
 						break;
@@ -986,82 +1031,15 @@ public class Matrix implements Cloneable {
 	}
 	
 	
-	// conditioning for precision and iterative methods: swap in the largest elements of rows into diagonal positions
-	// the constant vector c needs to be swapped as well, if set to null it is ignored
-	// method constructs array "mutator" with the mutated indexes for facilitating reconstitution of the solved vector
-	public void conditionDiagonal(Matrix c, boolean swapMethod, boolean doBitImage) {
-		
-		if (M != N)									throw new RuntimeException("Matrix.conditionDiagonal(): Matrix not square.");
-		if (M < 1)									throw new RuntimeException("Matrix.conditionDiagonal(): Invalid matrix.");
-		if (c != null && (M != c.M || c.N != 1))	throw new RuntimeException("Matrix.conditionDiagonal(): Invalid constant vector.");
-				
-		double[] data = this.data, newdata = new double[M*N];
-		if (swapMethod) {
-			mutator = new int[M + 1];
-			for (int i = 0; i < M; i++) mutator[i] = i;
-		}
-		
-		for (int r1 = 0, m; r1 < M; r1++) {
-			int r1N = r1 * N;
-			double a_r1r1 = data[r1N + r1];
-			if (a_r1r1 < 0) a_r1r1 = -a_r1r1;
-			// find largest (absolute) element in current row (skip checking previous rows for swapMethod)
-			if (swapMethod) {
-				// apply method that swaps row r1 & row r2 if diagonals of both rows get larger on swapping 
-				for (int r2 = 0; r2 < N; r2++) {
-					if (r1 != r2) {
-					int r2N = r2 * N;
-
-					double a_r2r1 = data[r2N + r1], a_r1r2 = data[r1N + r2], a_r2r2 = data[r2N + r2];
-					if ((a_r1r1 < a_r2r1 || a_r1r1 > -a_r2r1) && (a_r1r2 >= a_r2r2 || a_r1r2 <= -a_r2r2)) {
-						swap(r1, r2);
-						if (c != null) c.swap(r1, r2);	// swap matching elements in vector c
-						m = mutator[r1];				// swap indexes in mutator array
-						mutator[r1] = mutator[r2];
-						mutator[r2] = m;
-					}
-					}
-				}
-			} else {
-				// apply adding method which adds row r2 to r1 if it provides a larger value for diagonal element of row r1
-				int rMaxDiag = 0;
-				double vMaxDiag = 0;
-				// find the largest diagonal from all other rows than r1
-				for (int r2 = 0; r2 < N; r2++) {
-					if (r2 != r1) {
-						double a_r2r1 = data[r2 * N + r1];
-						if (a_r2r1 < 0) a_r2r1 = -a_r2r1;
-						if (vMaxDiag < a_r2r1) {
-							rMaxDiag = r2;
-							vMaxDiag = a_r2r1;
-						}
-					}
-				}
-				// move over into newdata the row with max-value in diagonal element position added with row of the current diagonal element
-				//if (vMaxDiag > a_r1r1) {
-					int rMax = rMaxDiag * N;
-					for (int c1 = 0; c1 < N; c1++) {
-						newdata[r1N + c1] += data[r1N + c1] + data[rMax + c1];
-						if (c != null) c.data[r1] += c.data[rMaxDiag];
-					}
-				//}
-			}
-		}
-		if (!swapMethod) this.data = newdata;
-		if (DEBUG_LEVEL > 1) System.out.println("conditionDiagonal():\n" + toString());
-		if (doBitImage) bitImage.make();
-	}
-	
-	
 	
 	// does Gauss elimination, returns false if matrix was singular
 	// taken from http://introcs.cs.princeton.edu/java/95linear/Matrix.java.html
-	public boolean doGaussElimination() {
+	public boolean doGaussEliminationPP() {
 
-		if (M != N) throw new RuntimeException("Matrix.doGaussElimination(): Matrix not square.");
+		if (M != N) throw new RuntimeException("Matrix.doGaussEliminationPP(): Matrix not square.");
 
 		// get a copy of matrix data field
-		double[] data = getData();
+		double[] data = getDataRef()[0];
 
 		// Gaussian elimination with partial pivoting
 		for (int i = 0; i < N; i++) {
@@ -1074,13 +1052,10 @@ public class Matrix implements Cloneable {
 				if (Math.abs(data[j * N + i]) > vabs)	max = j;
 			}
 			// swap rows i & max
-			swap(i, max);
+			swapRows(i, max);
 
 			// singular
-			if (data[iN + i] <= ROUNDOFF_ERROR && data[iN + i] >= -ROUNDOFF_ERROR) {
-				status |= SINGULAR_MATRIX;
-				return false;
-			}
+			if (nearZero(data[iN + i])) { status |= SINGULAR_MATRIX; return false; }
 
 			// pivot within A
 			double iival = data[iN + i];
@@ -1094,7 +1069,7 @@ public class Matrix implements Cloneable {
 			}
 		}
 		// the matrix will have a changed data field & bitImage
-		putDataRef(data);
+		putDataRef(data, null);
 		if (DEBUG_LEVEL > 1) {
 			System.out.println("Gaussian elimination:");
 			System.out.println(this.toString());
@@ -1106,13 +1081,13 @@ public class Matrix implements Cloneable {
 	
 	// return x = A^-1 b, assuming A is square and has full rank
 	// taken from http://introcs.cs.princeton.edu/java/95linear/Matrix.java.html
-	public Matrix solveGaussPartPivoting(Matrix rhs) {
+	public Matrix solveGaussPP(Matrix rhs) {
 		if (M != N || rhs.M != N || rhs.N != 1)
-			throw new RuntimeException("Matrix.solve(): Invalid matrix/vector dimensions.");
+			throw new RuntimeException("Matrix.solveGaussPP(): Invalid matrix/vector dimensions.");
 
-		// create copies of the data
-		Matrix A = this.clone();
-		Matrix b = new Matrix("b", N, 1, rhs.data, null);
+		// create copies of the data, bring it into native matrix format
+		Matrix A = this.cloneMatrix();
+		Matrix b = new Matrix("b", N, 1, rhs.getDataRef()[0], null);
 		double[] dataA = A.data, datab = b.data;
 
 		// Gaussian elimination with partial pivoting
@@ -1126,12 +1101,12 @@ public class Matrix implements Cloneable {
 				double v = dataA[jNi];
 				if (v > vAbs || v < -vAbs) max = j;
 			}
-			A.swap(i, max);
-			b.swap(i, max);
+			A.swapRows(i, max);
+			b.swapRows(i, max);
 
 			// if matrix is singular, return null
 			double dAi = dataA[iN + i];
-			if (dAi <= ROUNDOFF_ERROR && dAi >= -ROUNDOFF_ERROR) return null;
+			if (nearZero(dAi)) { status |= SINGULAR_MATRIX; return null; }
 
 			// pivot within b
 			dAi = 1.0 / dAi;
@@ -1175,20 +1150,17 @@ public class Matrix implements Cloneable {
 	// adapted from NUMERICAL RECIPES IN C: THE ART OF SCIENTIFIC COMPUTING (ISBN 0-521-43108-5)
 	// added determinant computation into this algorithm
 	// b[] supplies a list of constant vectors to produce results for
-	// if duplicate=true, result matrix and inverse matrix returned in Matrix array
-	// otherwise this matrix will transform into inverse, and supplied constant vectors into result vectors
-	public Matrix[] solveGaussJordanFullPivoting(Matrix B, boolean duplicate) {
+	// if copy = true, result matrix copy returned in Matrix array, supplied matrix is preserved
+	// otherwise the supplied constant vectors transform into result vectors and supplied matrix is destroyed
+	public Matrix solveGaussJordanFP(Matrix B, boolean copy) {
 		
-		if (M != N || B.M != N)	throw new RuntimeException("Matrix.solve(): Invalid matrix/vector dimensions.");
+		if (M != N || B.M != N)	throw new RuntimeException("Matrix.solveGaussJordanFP(): Invalid matrix/vector dimensions.");
 
 		Matrix A = this, X = B;
-		Matrix[] XA = new Matrix[2];
-		if (duplicate) {
+		if (copy) {
 			X = B.clone();
 			A = this.clone();
 		}
-		XA[0] = X;
-		XA[1] = A;
 		
 		double[] dataX = X.data, dataA = A.data;
 		// integer arrays indxc, indxr and ipiv do the bookkeeping on the pivoting
@@ -1202,7 +1174,7 @@ public class Matrix implements Cloneable {
 			for (int j = 0; j < N; j++) {
 				int jN = N * j;
 				if (iPiv[j] != 1)
-					for(int k = 0, jNk = jN; k < N; k++) {
+					for(int k = 0; k < N; k++) {
 						double v = dataA[jN++];
 						if (v < 0) v = -v;
 						if (iPiv[k] == 0 && v >= vMax) {
@@ -1219,15 +1191,15 @@ public class Matrix implements Cloneable {
 			// indxr[i] =/= indxc[i] implies column swap, with this bookkeeping the solution vectors
 			// come out correct while the inverse matrix is permutated
 			if (iRow != iCol) {
-				swap(iRow, iCol);
-				X.swap(iRow, iCol);
+				swapRows(iRow, iCol);
+				X.swapRows(iRow, iCol);
 			}
 			indxc[i] = iRow;
 			indxr[i] = iCol;
 			
 			double pivInv = dataA[N * iCol + iCol];
 			// signal a singular matrix by returning null
-			if (pivInv >= -ROUNDOFF_ERROR && pivInv <= ROUNDOFF_ERROR) return null;
+			if (nearZero(pivInv)) { status |= SINGULAR_MATRIX; return null; }
 			// the determinat is built up by multiplying in all the pivot divisors
 			det *= pivInv;
 			pivInv = 1.0 / pivInv;
@@ -1268,26 +1240,25 @@ public class Matrix implements Cloneable {
 			}
 		}
 
-		if (duplicate)	this.det = det;			// the determinant belongs to the untransformed matrix, which is preserved if duplicate=true
-		else			XA[0].det = det;		// if input matrix is transformed, return determinant in solution vectors matrix
-		XA[0].name = "X" + nameCount;
-		XA[1].name = this.name + "^-1";
+		if (copy)	this.det = det;				// the determinant belongs to the untransformed matrix, which is preserved if duplicate=true
+		else			X.det = det;			// if input matrix is transformed, return determinant in solution vectors matrix
+		X.name = "X" + nameCount;
 		if (DEBUG_LEVEL > 1) {
 			System.out.println("Gauss-Jordan full pivoting solver, result vectors:");
-			System.out.println(XA[0].toString());
+			System.out.println(X.toString());
 		}
-		return XA;
+		return X;
 	}
 	
 	
-	// return x = A^-1 b applying Gauss-Jordan method, inverse of A returned in Ai, solution vector x returned by method
+	// return x = A^-1 b with Gauss-Jordan partial pivoting method, inverse of A returned in Ai, returns solution vector x
 	// this method checks if matrix is sparse to a diagonal band and changes row processing width to the
 	// maximum overlap of the diagonal bands
-	public Matrix solveGaussJordanDO(Matrix c, Matrix Ai) {
+	public Matrix solveGaussJordanPPDO(Matrix c, Matrix Ai) {
 
 		if (M != N || c.M != N || c.N != 1)
-							throw new RuntimeException("Matrix.solveGaussJordan(): Invalid matrix/vector dimensions.");
-		if (Ai == null) 	throw new RuntimeException("Matrix.solveGaussJordan(): Invalid inverse reference supplied.");
+							throw new RuntimeException("Matrix.solveGaussJordanPPDO(): Invalid matrix/vector dimensions.");
+		if (Ai == null) 	throw new RuntimeException("Matrix.solveGaussJordanPPDO(): Invalid inverse reference supplied.");
 
 		Matrix A = this.clone();
 		det = 1;
@@ -1318,12 +1289,12 @@ public class Matrix implements Cloneable {
 				if (DEBUG_LEVEL > 2) System.out.println(r2 + " " + v + " " + vMax);
 			}
 			if (vMax <= ROUNDOFF_ERROR)
-				return null;										// got a singular matrix, abort
+				{ status |= SINGULAR_MATRIX; return null; }			// got a singular matrix, abort
 			
 			if (r != rPivot) {										// another row had highest value for current diagonal element, swap it in
-				A.swap(r, rPivot);
-				x.swap(r, rPivot);
-				Ai.swap(r, rPivot);
+				A.swapRows(r, rPivot);
+				x.swapRows(r, rPivot);
+				Ai.swapRows(r, rPivot);
 				det = -det;
 				if (DEBUG_LEVEL > 2) {
 					System.out.println("Swapped in row " + rPivot + " into pivot row " + r);
@@ -1337,7 +1308,7 @@ public class Matrix implements Cloneable {
 			for (int i = iStart; i <= iEnd; i++) {						// the diagonal element column unitising loop
 				int iN = i * N;
 				double div = dataA[iN + r];								// get divisor for current lined-up row of A, c, Ai structures
-				if (div < -ROUNDOFF_ERROR || div > ROUNDOFF_ERROR) {
+				if (!nearZero(div)) {
 					det *= div;
 					div = 1.0 / div;
 					// go along the lined-up row of A, c, Ai structures, dividing by current element
@@ -1405,9 +1376,9 @@ public class Matrix implements Cloneable {
 			div = 1.0 / div;
 			
 			dataA[rN + r] *= div;									// A is almost an identity matrix, just one element to divide
-			for (int j = rN, jEnd = j + N; j < jEnd; j++)	{
+			for (int j = rN, jEnd = j + N; j < jEnd; j++)
 				dataAi[j] *= div;									// divide row r of Ai by a(ii), turning it into the inverse of A
-			}
+
 			datax[r] *= div;										// divide c(i) by a(ii), it will turn into solution vector x
 		}
 		A.det = 1;													// |I| = 1
@@ -1426,8 +1397,46 @@ public class Matrix implements Cloneable {
 	}
 
 	
-	// return x = A^-1 b applying Gauss-Jordan method, inverse of A returned in Ai, solution vector x returned by method
-	public Matrix solveGaussJordan(Matrix c, Matrix Ai) {
+	
+	public Matrix solveGaussSeidel(Matrix c, int itersMax, double maxError) {
+		
+		if (M != N || c.M != N || c.N != 1)
+			throw new RuntimeException("Matrix.solveGaussJordan(): Invalid matrix/vector dimensions.");
+
+		// create initial solution vector
+		Matrix x = new Matrix("x", M, 1, Matrix.Type.Random), xOld = null;
+		double[] datac = c.data, datax = x.data;
+		
+		// do the refining iterations
+		for (int i = 0; i < itersMax; i++) {
+			
+			xOld = x.clone();
+			// do Gauss-Seidel iteration step over every row
+			for (int r = 0; r < M; r++) {
+
+				double sumCurr = 0;
+				for (int c1 = 0; c1 < r; c1++) {
+					sumCurr += data[r * N + c1] * datax[r];
+				}
+				double sumPrev = 0;
+				for (int c1 = r + 1; c1 < M; c1++) {
+					sumPrev += data[r * N + c1] * datax[r];
+				}
+				datax[r] = (datac[r] - sumCurr - sumPrev) / data[r * N + r];
+			}
+			// check error vector length between previous & current solution vector
+			if (xOld.subtract(x, false).absLength(0) <= maxError) break;		// error below maxError, stop iteration
+		}
+		
+		if (DEBUG_LEVEL > 2) System.out.println(x.toString());
+		return x;
+	}
+	
+	
+	
+	// return x = A^-1 b with Gauss-Jordan partial pivoting method, inverse of A returned in Ai, returns solution vector x
+	// this method is like solveGaussJordanPP() minus optimisations for diagonal-sparse matrices
+	public Matrix solveGaussJordanPP(Matrix c, Matrix Ai) {
 
 		if (M != N || c.M != N || c.N != 1)
 							throw new RuntimeException("Matrix.solveGaussJordan(): Invalid matrix/vector dimensions.");
@@ -1458,11 +1467,11 @@ public class Matrix implements Cloneable {
 				if (DEBUG_LEVEL > 2) System.out.println(r2 + " " + v + " " + vMax);
 			}
 			if (vMax <= ROUNDOFF_ERROR)
-				return null;										// got a singular matrix, abort
+				{ status |= SINGULAR_MATRIX; return null; }			// got a singular matrix, abort
 			if (r != rPivot) {										// another row had highest value for current diagonal element, swap it in
-				A.swap(r, rPivot);
-				x.swap(r, rPivot);
-				Ai.swap(r, rPivot);
+				A.swapRows(r, rPivot);
+				x.swapRows(r, rPivot);
+				Ai.swapRows(r, rPivot);
 				det = -det;
 				if (DEBUG_LEVEL > 2) {
 					System.out.println("Swapped in row " + rPivot + " into pivot row " + r);
@@ -1473,7 +1482,7 @@ public class Matrix implements Cloneable {
 			for (int i = 0; i < M; i++) {							// the diagonal element column unitising loop
 				int iN = i * N;
 				double div = dataA[iN + r];							// get divisor for current lined-up row of A, c, Ai structures
-				if (div < -ROUNDOFF_ERROR || div > ROUNDOFF_ERROR) {
+				if (!nearZero(div)) {
 					det *= div;
 					div = 1.0 / div;
 					// go along the lined-up row of A, c, Ai structures, dividing by current element
@@ -1542,19 +1551,14 @@ public class Matrix implements Cloneable {
 	//		uuu			v..
 	// U:	.uu		L:	vv.
 	//		..u			vvv
-	public Matrix[] decomposeLU(Matrix c) {
+	public Matrix[] decomposeLU() {
 		
 		if (M != N)	throw new RuntimeException("Matrix.decomposeLU(): Matrix not square.");
 		if (M < 1)	throw new RuntimeException("Matrix.decomposeLU(): Invalid matrix.");
 
-//		System.out.println(this.toString());
-//		conditionDiagonal(c, true, false);
-		
 		// all diagonal elements must be nonzero
-		for (int d = 0; d < M; d++) {
-			double v = data[d * M + d];
-			if (v >= -ROUNDOFF_ERROR && v <= ROUNDOFF_ERROR) return null;
-		}
+		for (int d = 0; d < M; d++)
+			if (nearZero(data[d * M + d])) { status |= SINGULAR_MATRIX; return null; }
 			
 		Matrix[] lLU = new Matrix[2];
 		lLU[0] = new Matrix("L" + nameCount, M, N, Matrix.Type.Null);
@@ -1667,9 +1671,8 @@ public class Matrix implements Cloneable {
 				double v = dataLU[iN + j];
 				if (v < -vMax || v > vMax) vMax = (v < 0 ? -v : v);
 			}
-			// if singular matrix found, return null
-			if (vMax >= -ROUNDOFF_ERROR && vMax <= ROUNDOFF_ERROR) return null;
-			vv[i] = 1.0 / vMax;											// save scaling factor
+			if (nearZero(vMax)) { status |= SINGULAR_MATRIX; return null; }	// if singular matrix found, return null
+			vv[i] = 1.0 / vMax;												// save scaling factor
 		}
 		
 		for (int j = 0; j < M; j++) {
@@ -1693,13 +1696,16 @@ public class Matrix implements Cloneable {
 				if (v >= vMax) { vMax = v; iMax = i; }
 			}
 			if (j != iMax) {											// test if there's a better pivot and we need to swap rows
-				if (copy) LU.swap(iMax, j); else swap(iMax, j);			// yes
+				if (copy) LU.swapRows(iMax, j); else swapRows(iMax, j);			// yes
 				d = -d;
 				vv[iMax] = vv[j];										// also change scale factor
 			}
 			mutatorLU[j] = iMax;
 			// zero at pivot element implies a singular matrix, but some applications can get by with tweaking away the zero
-			if (dataLU[jN + j] == 0) dataLU[jN + j] = ROUNDOFF_ERROR;
+			if (dataLU[jN + j] == 0) {
+				status |= SINGULAR_MATRIX;
+				dataLU[jN + j] = ROUNDOFF_ERROR;
+			}
 			if (j < M - 1) {
 				double v = 1.0 / dataLU[jN + j];
 				for (int i = j + 1; i < N; i++) dataLU[i * N + j] *= v;	// divide column by pivot element
@@ -1739,7 +1745,7 @@ public class Matrix implements Cloneable {
 			// copy A into a LU matrix and decompose LU, if copy=false it will destroy matrix A returning it as LU
 			bLU[1] = A.decomposeLU2(copy);
 			// decompose failed on a singular matrix, return null
-			if (bLU[1] == null)	return null;		
+			if (bLU[1] == null)	return null;	
 		} else
 			bLU[1] = LU;
 		
@@ -1761,8 +1767,7 @@ public class Matrix implements Cloneable {
 			if (ii >= 0)
 				for (int j = ii; j <= i - 1; j++) sum -= dataLU[iN + j] * datab[j];
 			else
-				if (sum < -ROUNDOFF_ERROR || sum > ROUNDOFF_ERROR)
-					ii = i;						// nonzero element found, we'll have to do the sums in loop above from now on
+				if (!nearZero(sum)) ii = i;					// nonzero element found, we'll have to do the sums in loop above from now on
 			datab[i] = sum;
 		}
 		for (int i = N - 1; i >= 0; i--) {					// backsubstitution pass
@@ -1781,8 +1786,7 @@ public class Matrix implements Cloneable {
 				if (ii >= 0)
 					for (int j = ii; j <= i - 1; j++) sum -= dataLU[iN + j] * databi[j];
 				else
-					if (sum < -ROUNDOFF_ERROR || sum > ROUNDOFF_ERROR)
-						ii = i;								// nonzero element found, we'll have to do the sums in loop above from now on
+					if (!nearZero(sum)) ii = i;				// nonzero element found, we'll have to do the sums in loop above from now on
 				databi[i] = sum;
 			}
 			for (int i = N - 1; i >= 0; i--) {				// backsubstitution pass
@@ -1810,7 +1814,7 @@ public class Matrix implements Cloneable {
 	// helper method that does quick zero determinant heuristics on the matrix/submatrix
 	public boolean hasZeroDeterminant(boolean thoroughTest) {
 		// Cacc accumulates sums along the columns during the horisontal passes
-		double[] data = getDataRef(), Cacc = new double[N], Racc = new double[M];
+		double[] data = getDataRef()[0], Cacc = new double[N], Racc = new double[M];
 		// Racc accumulates sum along the row
 		double v;
 		for (int i = 0; i < M; i++) {
@@ -1821,25 +1825,25 @@ public class Matrix implements Cloneable {
 				Cacc[j] += v;
 			}
 			// found zero row, determinant = 0
-			if (Racc[i] <= ROUNDOFF_ERROR && Racc[i] >= -ROUNDOFF_ERROR) return true;
+			if (nearZero(Racc[i])) return true;
 		}
 		
 		// check presense of zero columns
 		for (int j = 0; j < N; j++) {
 			// found zero column, determinant = 0
-			if (Cacc[j] <= ROUNDOFF_ERROR && Cacc[j] >= -ROUNDOFF_ERROR) return true;
+			if (nearZero(Cacc[j])) return true;
 			double caccj = Cacc[j];
 			
 			if (thoroughTest) {
 				// test finding two columns that are equal
 				for (int i = j+1; i < N; i++) {
 					double diff = Cacc[i] - caccj;
-					if (diff <= ROUNDOFF_ERROR && diff >= -ROUNDOFF_ERROR) {
+					if (nearZero(diff)) {
 						// sums of two columns were equal, test individual values
 						for (int ct = 0; ct < M;) {
 							int ctN = ct * N;
 							double diff2 = data[ctN + j] - data[ctN + i];
-							if (diff2 < -ROUNDOFF_ERROR || diff2 > ROUNDOFF_ERROR)
+							if (!nearZero(diff2))
 								break;
 							if (++ct >= M) return true;		// columns were equal, determinant = 0
 						}
@@ -1854,12 +1858,11 @@ public class Matrix implements Cloneable {
 			double raccj = Racc[j];
 			for (int i = j + 1; i < M; i++) {
 				double diff = Racc[i] - raccj;
-				if (diff <= ROUNDOFF_ERROR && diff >= -ROUNDOFF_ERROR) {
+				if (nearZero(diff)) {
 					// sums of two rows were equal, test individual values
 					for (int ct = 0; ct < N;) {
 						double diff2 = data[i * N + ct] - data[j * N + ct];
-						if (diff2 < -ROUNDOFF_ERROR || diff2 > ROUNDOFF_ERROR)
-							break;
+						if (!nearZero(diff2)) break;
 						if (++ct >= N) return true;		// columns were equal, determinant = 0
 					}
 				}
@@ -1877,7 +1880,7 @@ public class Matrix implements Cloneable {
 		
 		if (M.M != M.N) throw new RuntimeException("Matrix.determinantLaplace(): Nonsquare matrix.");
 		if (M.M < 1 || M.N < 1) throw new RuntimeException("Matrix.determinantLaplace(): Invalid matrix.");
-		if (M.M == 1 && M.N == 1) return M.getDataRef()[0];
+		if (M.M == 1 && M.N == 1) return M.getDataRef()[0][0];
 		Matrix.detL_DEBUG = 0;
 		M.det = 0;
 		
@@ -1916,7 +1919,7 @@ public class Matrix implements Cloneable {
 		
 		// counts number of times we've entered the method recursively
 		Matrix.detL_DEBUG++;
-		double[] data = M.getDataRef();
+		double[] data = M.getDataRef()[0];
 		// base case: 2x2 matrix solves directly, end of recursion
 		if (M.N == 2)
 			return data[0] * data[3] - data[1] * data[2];
@@ -1924,9 +1927,9 @@ public class Matrix implements Cloneable {
 		double det = 0;		// determinant is accumulated here
 		// basecase: 3x3 matrix solves directly, end of recursion
 		if (M.N == 3) {
-			if (data[0] > ROUNDOFF_ERROR || data[0] < -ROUNDOFF_ERROR) det += data[0] * (data[4] * data[8] - data[5] * data[7]);
-			if (data[1] > ROUNDOFF_ERROR || data[1] < -ROUNDOFF_ERROR) det -= data[1] * (data[3] * data[8] - data[5] * data[6]);
-			if (data[2] > ROUNDOFF_ERROR || data[2] < -ROUNDOFF_ERROR) det += data[2] * (data[3] * data[7] - data[4] * data[6]);
+			if (!nearZero(data[0])) det += data[0] * (data[4] * data[8] - data[5] * data[7]);
+			if (!nearZero(data[1])) det -= data[1] * (data[3] * data[8] - data[5] * data[6]);
+			if (!nearZero(data[2])) det += data[2] * (data[3] * data[7] - data[4] * data[6]);
 			return det;
 		}
 
@@ -1936,7 +1939,7 @@ public class Matrix implements Cloneable {
 		// for every column
 		for (int j = 0; j < M.N; j++) {
 			// if multiplicand is not zero (this test makes sparse matrices very fast to calculate)
-			if (data[j] < -ROUNDOFF_ERROR || data[j] > ROUNDOFF_ERROR) {
+			if (!nearZero(data[j])) {
 				// recursively call determinantLaplace() on row/column-eliminated submatrices
 				det +=  (((j + 2) & 1) == 0 ? 1 : -1) * data[j] * determinantLaplaceR1(M.eliminateRowColumn(0, j, false), true);
 			}
@@ -1951,7 +1954,7 @@ public class Matrix implements Cloneable {
 	public boolean hasZeroDeterminant2(int[][] activec, int columns) {
 
 		int topb = M - columns;
-		double[] data = getDataRef();
+		double[] data = getDataRef()[0];
 		// Cacc accumulates sums along the columns during the horisontal passes, Racc accumulates sums along the rows
 		double[] Cacc = new double[N], Racc = new double[M];
 		double v;
@@ -1965,14 +1968,11 @@ public class Matrix implements Cloneable {
 				Cacc[j] += v;
 			}
 			// found zero row, determinant = 0
-			if (Racc[i] <= ROUNDOFF_ERROR && Racc[i] >= -ROUNDOFF_ERROR) return true;
+			if (nearZero(Racc[i])) return true;
 		}
 		
 		// check presense of zero columns
-		for (int j = 0; j < columns; j++) {
-			// found zero column, determinant = 0
-			if (Cacc[j] <= ROUNDOFF_ERROR && Cacc[j] >= -ROUNDOFF_ERROR) return true;	
-		}
+		for (int j = 0; j < columns; j++) if (nearZero(Cacc[j])) return true; // found zero column, determinant = 0
 		return false;
 	}
 	
@@ -1983,7 +1983,7 @@ public class Matrix implements Cloneable {
 	public static double determinantLaplaceR2(Matrix M, int[][] activec, int columns) {
 		
 		Matrix.detL_DEBUG++;
-		double[] data = M.getDataRef();
+		double[] data = M.getDataRef()[0];
 		int tofs1, tofs2, topb = M.M - columns;
 		
 		// get 2x2 base case row offsets tofs1 & tofs2 from detAnalysis if it has been created
@@ -2020,7 +2020,7 @@ public class Matrix implements Cloneable {
 			
 			double v = data[tofs1 + ac - 1];
 			// don't care recursing if we're multiplying with a zero value
-			if (v < -ROUNDOFF_ERROR || v > ROUNDOFF_ERROR)
+			if (!nearZero(v))
 				det += (((j + 2) & 1) == 0 ? 1 : -1) * v * determinantLaplaceR2(M, activec, columns - 1);
 
 			// restore increment list for the higher recursive stage
@@ -2037,13 +2037,13 @@ public class Matrix implements Cloneable {
 
 	// the Power Method will find the dominating eigenvalue and eigenvector of matrix A, given initial guess vector y
 	// eigenvalue is returned by method, eigenvector is returned in y
-	public static double eigenPowerMethod(Matrix A, Matrix y, double thetaError, int iters) {
+	public double eigenPowerValue(Matrix y, double thetaError, int iters) {
 		
-		if (y.M < 2 || y.N != 1) 	throw new RuntimeException("Matrix.eigenPowerMethod(): Invalid guess vector.");
-		if (A.M != A.N)				throw new RuntimeException("Matrix.eigenPowerMethod(): Matrix not square.");
-		if (A.N != y.M)				throw new RuntimeException("Matrix.eigenPowerMethod(): Matrix-vector dimensionality mismatch.");
+		if (y.M < 2 || y.N != 1) 	throw new RuntimeException("Matrix.eigenPowerValue(): Invalid guess vector.");
+		if (M != N)					throw new RuntimeException("Matrix.eigenPowerValue(): Matrix not square.");
+		if (N != y.M)				throw new RuntimeException("Matrix.eigenPowerValue(): Matrix-vector dimensionality mismatch.");
 
-		if (DEBUG_LEVEL > 1) System.out.println("Matrix to search: \n" + A.toString());
+		if (DEBUG_LEVEL > 1) System.out.println("Matrix to search: \n" + toString());
 		
 		int debug_lvl = DEBUG_LEVEL, k;
 		DEBUG_LEVEL = 0;
@@ -2055,11 +2055,11 @@ public class Matrix implements Cloneable {
 		// do maximum "iters" iterations
 		for (k = 0; k < iters; k++) {
 	
-			v = Matrix.multiply(A, y);
+			v = this.multiply(y);
 			oldtheta = theta;
 			theta = v.absLength(0);
 			if (DEBUG_LEVEL > 1) System.out.println(theta);
-			y = Matrix.multiply(1.0 / theta, v);
+			y = v.multiply(1.0 / theta, false);
 
 			if (oldtheta - theta >= -thetaError && oldtheta - theta <= thetaError) break;		// attained eigenvalue precision?
 		}
@@ -2073,12 +2073,34 @@ public class Matrix implements Cloneable {
 	
 	
 	
+	///////////////////////////////////////////////////////////////////////////////////////////////////////////
+	//			INLINE/SHORTFORM METHODS
+	///////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	public static boolean nearZero(double v) { return (v < -ROUNDOFF_ERROR || v > ROUNDOFF_ERROR ? false : true); }
+	
 	// get complex modulus of imaginary value
 	double complexM(double r, double i) { return Math.sqrt(r * r + i * i); };
 	
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
 	//			OUTPUT METHODS
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
+	
+	// limits output of a double to max 5 characters, for following cases:
+	// -XXeE		v >= 10000
+	// -XXXX		v >= 1000
+	// -XX.D		v >= 10
+	// -X.DD		v < 10
+	private static String to5chars(double v) {
+		int decimals = 0;
+		if (v >= 10000 || v <= -10000) {
+			for (; v >= 100 || v <= -100; v /= 10.0) decimals++;
+			return (v < 0 ? " " : "  ") + (int)v + "e" + decimals;
+		}
+		if (v >= 1000 || v <= -1000) return String.format("%6.0f", v);
+		if (v >= 10 || v <= -10) return String.format("%6.1f", v);
+		return String.format("%6.2f", v);
+	}
 	
 	@Override
 	public String toString() {
@@ -2088,20 +2110,18 @@ public class Matrix implements Cloneable {
 			for (int i = 0; i < M; i++) {
 				int iN = i * N;
 				if (sb.length() > 0) sb.append("\n");
-				sb.append("| ");
+				sb.append("|");
 				if (idata != null) {
 					for (int j = 0; j < N; j++)
-						if (data[iN + j] < ROUNDOFF_ERROR && data[iN + j] > -ROUNDOFF_ERROR &&
-							idata[iN + j] < ROUNDOFF_ERROR && idata[iN + j] > -ROUNDOFF_ERROR)
-								sb.append("            ");	
-						else	sb.append(String.format("(%5.2f,%5.2f)", data[iN + j], idata[iN + j]));		
+						if (nearZero(data[iN + j]) && nearZero(data[iN + j]))
+								sb.append("      -      ");	
+						else	sb.append("(" + to5chars(data[iN + j]) + "," + to5chars(idata[iN + j]) + "%5.2f)");		
 				} else {
 					for (int j = 0; j < N; j++)
-						if (data[iN + j] > ROUNDOFF_ERROR || data[iN + j] < -ROUNDOFF_ERROR)
-								sb.append(String.format("%5.2f ", data[iN + j]));
-						else	sb.append("      ");
+						if (nearZero(data[iN + j])) 	sb.append("   -  ");
+						else							sb.append(to5chars(data[iN + j]));
 				}
-				sb.append("|");
+				sb.append(" |");
 			}
 		else sb.append("[null]\n");
 		if (M == N) sb.append("\nDeterminant: " + det + "\n");
@@ -2115,7 +2135,5 @@ public class Matrix implements Cloneable {
 		private int type;
 		private Type(int type) { this.type = type; }
 	}
-
-
 }
 

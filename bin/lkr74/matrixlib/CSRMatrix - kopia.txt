@@ -9,7 +9,7 @@ public class CSRMatrix extends Matrix {
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
 	
 	private int nA, nIA;
-	private double[] A, iA;
+	private double[] A;
 	private int[] IA, JA;
 	// IAop & JAop are situational, permamently-allocated/reallocated operational buffers
 	private static double[] Aop;
@@ -22,30 +22,31 @@ public class CSRMatrix extends Matrix {
 	
 	public CSRMatrix(String name, int M, int N) { super(name, M, N); nA = nIA = 0; }
 	
-	public CSRMatrix(String name, int M, int N, double[] data, double[] idata) {
+	public CSRMatrix(String name, int M, int N, double[] data) {
 		super(name, M, N);								// get skeleton Matrix superclass instance
-		putData(data, idata);
+		putData(data);
 		bitImage = new BinBitImage(this);
 		if (Matrix.DEBUG_LEVEL > 2) System.out.println(this.toString());
 	}
 
 	public CSRMatrix(String name, int M, int N, Type type) {
 		super(name, M, N);								// get skeleton Matrix superclass instance
+		this.status = CSR_MATRIX;
 		double[] data = Matrix.generateData(M, N, type);
-		putData(data, null);
+		putData(data);
 		bitImage = new BinBitImage(this);
 		if (Matrix.DEBUG_LEVEL > 2) System.out.println(this.toString());
 	}
 
 	
 	
-	public CSRMatrix clone() {
+	@Override
+	public Matrix clone() {
 		CSRMatrix A;
 		A = (CSRMatrix)super.clone();					// will first call Matrix superclass clone() method
-		if (this.A != null)		A.A = this.A.clone();
-		if (this.iA != null)	A.iA = this.iA.clone();
-		if (this.IA != null)	A.IA = IA.clone();
-		if (this.JA != null)	A.JA = JA.clone();
+		A.A = this.A.clone();
+		A.IA = IA.clone();
+		A.JA = JA.clone();
 		A.nA = nA;
 		A.nIA = nIA;
 		if (Matrix.DEBUG_LEVEL > 2) System.out.println(this.toString());
@@ -53,9 +54,9 @@ public class CSRMatrix extends Matrix {
 	}
 	
 	
-
+	@Override
 	public void zero() {
-		A = iA = null;
+		A = null;
 		for (int i = 0; i < nIA; i++) IA[i + 1] = 0;
 		JA = null;
 		nA = 0;
@@ -65,35 +66,32 @@ public class CSRMatrix extends Matrix {
 	
 	// superclass operations operate in RCMatrix space, CSR data needs decoding
 	@Override
-	public double[][] getDataRef() { return getData(); }
+	public double[] getDataRef() { return getData(); }
 
 	@Override
-	public double[][] getData() {	
-
-		double[][] dataSet = new double[2][];
-		double[] data = dataSet[0] = new double[M * N], idata = null;
-		if (nA == 0) return dataSet;								// there was no data, return empty matrix
-		if (iA != null) idata = dataSet[1] = new double[M * N];		// we also have imaginary part, allocate for returning it
+	public double[] getData() {
 		
+		double[] data = new double[M * N];
+		
+		if (nA == 0) return data;		// CSR matrix was empty
 		for (int r = 0; r < M; r++) {
-			int rN = r * N, iar1 = IA[r + 1], nrv = iar1 - IA[r];
+			int rN = r * N;
+			int iar1 = IA[r + 1], nrv = iar1 - IA[r];
 			for (int i = iar1 - 1; nrv > 0; nrv--, i--)
-				data[rN + JA[i]] = A[i];
-			if (iA != null)
-				for (int i = iar1 - 1; nrv > 0; nrv--, i--)
-					idata[rN + JA[i]] = iA[i];	
+				data[rN + JA[i]] = A[i];	
 		}
-		return dataSet;
+		return data;
 	}
-
+	
+	
 	// incoming row-column data into CSRMatrix must be converted to native format
 	@Override
-	public void putDataRef(double[] data, double[] idata) { this.putDataM(data, idata); }
-	@Override
-	public void putData(double[] data, double[] idata) { this.putDataM(data, idata); }
+	public void putDataRef(double[] data) { this.putData(data); }
+
 	
 	// TODO: optimise this algorithm
-	public void putDataM(double[] data, double[] idata) {
+	@Override
+	public void putData(double[] data) {
 
 		if (M < 1 || N < 1)
 			throw new RuntimeException("CSRMatrix.putData(): Invalid matrix size.");
@@ -106,32 +104,25 @@ public class CSRMatrix extends Matrix {
 			int jN = j * N;
 			// get sum of all nonzeros in current row
 			int c = 0;
-			if (idata != null) {
-				for (int i = jN, iEnd = jN + N; i < iEnd; i++)
-					if (!nearZero(data[i]) || !nearZero(idata[i])) c++;
-			} else {
-				for (int i = jN, iEnd = jN + N; i < iEnd; i++)
-					if (!nearZero(data[i])) c++;
-			}
+			for (int i = jN, iEnd = jN + N; i < iEnd; i++)
+				if (!nearZero(data[i])) c++;
+			
 			// assemble compact indexing column IA
 			IA[j + 1] = IA[j] + c;
 		}
 
-		// gather up all non-zero matrix members in A/iA and column indexes of all non-zero matrix members in JA
+		// gather up all non-zero matrix members in A and column indexes of all non-zero matrix members in JA
 		nA = IA[nIA - 1];
+		A = new double[nA];
 		JA = new int[nA];
-		if (data != null)	A = new double[nA];
-		if (idata != null)	iA = new double[nA];
+		int c = 0;
 		
-		for (int j = 0, c1 = 0; j < M; j++) {
-			// for complex number case, any of real or imaginary = nonzero will store a value doublet
-			if (idata != null)
-				for (int i = 0, jNi = j * N; i < N; i++, jNi++) {
-					if (!nearZero(data[jNi]) || !nearZero(idata[jNi])) { A[c1] = data[jNi]; iA[c1] = idata[jNi]; JA[c1++] = i; }
-				}
-			else
-				for (int i = 0, jNi = j * N; i < N; i++, jNi++) {
-					if (!nearZero(data[jNi])) { A[c1] = data[jNi]; JA[c1++] = i; }
+		for (int j = 0; j < M; j++) {
+			int jN = j * N;
+			for (int i = 0, jNi = jN; i < N; i++, jNi++)
+				if (!nearZero(data[jNi])) {
+					A[c] = data[jNi];
+					JA[c++] = i;
 				}
 		}
 	}
@@ -168,7 +159,7 @@ public class CSRMatrix extends Matrix {
 				}
 			}
 		}
-		A.putData(newdata, null);
+		A.putData(newdata);
 		if (Matrix.DEBUG_LEVEL > 1) System.out.println(this.toString());
 		if (doBitImage) A.bitImage = new BinBitImage(A);
 		return A;
@@ -309,7 +300,7 @@ public class CSRMatrix extends Matrix {
 	
 	
 	
-	// transposes a CSR matrix
+	// transposes a CSR sparse matrix
 	@Override
 	public Matrix transpose(boolean copy) {
 		
@@ -429,19 +420,18 @@ public class CSRMatrix extends Matrix {
 
 	
 	
-	public CSRMatrix add(CSRMatrix T, boolean copy)		{ return addSub(T, false, copy); }
-	public CSRMatrix subtract(CSRMatrix T, boolean copy)	{ return addSub(T, true, copy); }
+	public static CSRMatrix add(CSRMatrix S, CSRMatrix T)							{ return addSub(S, T, false); }
+	public static CSRMatrix subtract(CSRMatrix S, CSRMatrix T, boolean subtract)	{ return addSub(S, T, true); }
 
 	// sums two matrices CSR style
-	public CSRMatrix addSub(CSRMatrix T, boolean subtract, boolean copy) {
-		if (T.M != M || T.N != N)
+	public static CSRMatrix addSub(CSRMatrix S, CSRMatrix T, boolean subtract) {
+		if (T.M != S.M || T.N != S.N)
 			throw new RuntimeException("CSRMatrix.addSub(): Nonmatching matrix dimensions.");
 
 		String newname;
-		if (Matrix.DEBUG_LEVEL > 1) newname = "(" + name + (subtract?"-":"+") + T.name + ")";
-		else						newname = (subtract?"S":"D") + nameCount++;
-		CSRMatrix S = this;
-		if (copy) S = this.clone();
+		if (Matrix.DEBUG_LEVEL > 1) newname = "(" + S.name + (subtract ? "-" : "+") + T.name + ")";
+		else						newname = (subtract ? "S" : "D") + nameCount++;
+		CSRMatrix U = new CSRMatrix(newname, S.M, S.N);
 
 		// conservatively assume no. of sparse elements in new matrix will be at maximum
 		// the sum of sparse elements from the summed matrices
@@ -473,17 +463,16 @@ public class CSRMatrix extends Matrix {
 			while(jT < nextIA_T) { A[accIA] = T.A[jT]; JA[accIA++] = T.JA[jT++]; }
 			IA[i + 1] = accIA;
 		}
-		
-		S.A = A;
-		S.IA = IA;
-		S.JA = JA;
-		if (Matrix.DEBUG_LEVEL > 1) System.out.println(S.toString());
+		U.A = A;
+		U.IA = IA;
+		U.JA = JA;
+		if (Matrix.DEBUG_LEVEL > 1) System.out.println(U.toString());
 		// quick & dirty bitImage copy: assume OR between S and T bitimages, as add/subtract eliminates zeroes from both, into U
 		// that is not necessarily the truth, ex: 5 + (-5) will give 0, but zeroing-out of values would happen extremely seldom
 		// in real-life float operations
-		if (copy) S.bitImage = bitImage.clone(this);
-		S.bitImage.or(T.bitImage);
-		return S;
+		U.bitImage = S.bitImage.clone(U);
+		U.bitImage.or(S.bitImage);
+		return U;
 	}
 	
 	
@@ -583,7 +572,7 @@ public class CSRMatrix extends Matrix {
 	public String toString() {
 		StringBuffer sb = new StringBuffer();
 		sb.append(super.toString());						// get matrix data from superclass method
-		sb.append("CSR data:");
+		System.out.println("CSR data:");
 		sb.append("A:  [");
 		for (double i: A) sb.append(String.format("%.2f ", i));
 		sb.append(String.format("]\nIA: %s\nJA: %s", Arrays.toString(IA), Arrays.toString(Arrays.copyOf(JA, nA))));

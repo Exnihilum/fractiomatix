@@ -39,11 +39,11 @@ public class MiscMath {
 	// a useful class for iteratively test-filling arrays & matrices with values in a linearly asymptotic fashion
 	// "sectors" holds integer pairs, the first is start index of a sector, the second an end index
 	// there is always at least one occupied slot between each sector, every new occupied slot can create a new sector partition
-	public static class RandFill {
+	public class RandFill {
 		private int sectorCnt = 1, slotCount;
 		private int[] sectors;
 		
-		RandFill(int range) {
+		public RandFill(int range) {
 			if (range < 1) throw new RuntimeException("RandFill(): Invalid range.");
 			this.slotCount = range;
 			sectors = new int[range + 1];		// holds definitions of sectors between occupied random value slots
@@ -345,7 +345,7 @@ public class MiscMath {
 		double[][] tv = {{-1,0,0}, {-1,1,0}, {0,0,0}};
 		double[][] tv2 = {{0,0,1}, {0,1,1}, {0,0,0}};
 		
-		RandFill rfill = new RandFill(100);
+		RandFill rfill = new MiscMath().new RandFill(100);
 		for (int i = 0; i < 110; i++)
 			System.out.println(rfill.getRandom());
 		
