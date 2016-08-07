@@ -134,12 +134,18 @@ public class MatrixApp {
 		double[] d5 = {	1,2,3,
 						0,2,1,
 						2,1,3};
-		double[] gs = {	1,1,1,
-						2,1,0,
-						5,1,3};
-		double[] cn = {	3,1,8,
+		double[] gs = {	12,-5,4,
+						6,16,8,
+						-4,2,34};
+		double[] cn = {	3,1,1,
 						1,4,2,
 						2,1,5};
+		double[] testQR = {	4,1,3,2,
+							5,4,-1,5,
+							7,3,0,7,
+							1,2,5,8,
+							-3,-5,2,8,
+							5,7,4,9};
 		double[] d10 = {1,2,3,4,5,6,7,8,7,6,
 						2,2,3,4,5,6,7,8,7,6,
 						3,3,3,4,5,6,7,8,7,6,
@@ -173,6 +179,12 @@ public class MatrixApp {
 //		matrixMultiTest(mtests);
 //		if(1==1) return;
 
+		MatrixMarketIO mmIO = new MatrixMarketIO("data/young1c.mtx");
+		Matrix MM = mmIO.getMatrix();
+		System.out.println(MM.toString());
+		CSRMatrix MMcsr = CSRMatrix.convert(MM);
+		System.out.println(MMcsr.toString());
+		
 		Matrix D8 = new Matrix("D8", 8, 8, d11, null);
 		D8.convergent();
 
@@ -184,10 +196,15 @@ public class MatrixApp {
 		D2 = D2.multiply(D2.transpose(true));
 
 		// Test Gram-Schmidt orthonormalisation for non-tranposed & transposed
-		Matrix GS = new Matrix("gs", 3, 3, gs, null);
-		System.out.println(GS.toString());
-		GS.orthogonalise(true);
-		GS.transpose(false).orthogonalise(true);
+		Matrix O = new Matrix("O", 5, 5, d2, null);
+		System.out.println(O.toString());
+		Matrix Q = O.orthogonalise(true);
+		O.transpose(true).orthogonalise(true);
+		
+		// Test eigenvalue & eigenvector finder
+		Matrix E = O.findEigenQR(Q, 150, 30, 0.005);
+		
+		O.decomposeQR(Q);
 		
 		// Test Power Method for finding largest eigenvalue
 		D2 = new Matrix("D2", 5, 5, d2, null);
@@ -204,8 +221,9 @@ public class MatrixApp {
 		Matrix D5 = new Matrix("A", 3, 3, d5, null);
 		Matrix x6 = D5.solveGaussPP(new Matrix("c2", 3, 1, d9, null));
 		
-		Matrix CN = new Matrix("N", 3, 3, cn, null);
-		x6 = CN.solveGaussSeidel(new Matrix("v1", 3, 1, v1, null), 100, 0.1);
+		Matrix N = new Matrix("N", 3, 3, cn, null);
+		N.convergent();
+		x6 = N.solveGaussSeidel(new Matrix("v1", 3, 1, v1, null), 100, 0.1);
 
 		// Test Crout LU decomposer and LU back substitution solver for systems with constant coefficients
 		Matrix[] lLU = D5.decomposeLU();
@@ -294,23 +312,23 @@ public class MatrixApp {
 		S = S.multiply(x2);
 
 		// Test CSRMatrix conversion and polymorphic access
-		CSRMatrix O = new CSRMatrix("O", 9, 7, d3, null);
-		O.transpose(false);
-		G = O.multiply(new CSRMatrix("R", 9, 7, d3, null));
+		CSRMatrix O2 = new CSRMatrix("O", 9, 7, d3, null);
+		O2.transpose(false);
+		G = O2.multiply(new CSRMatrix("R", 9, 7, d3, null));
 		G = G.eliminateRowColumn(6, 6, true);
 
 		// test centering method for Matrix
 		Matrix P = G.center(true);
 
-		BinBitImage.compact(d2, O.bitImage.data[0], 0);
+		BinBitImage.compact(d2, O2.bitImage.data[0], 0);
 		System.out.println(BinBitImage.binBitToString());
-		CSRMatrix I = new CSRMatrix("I", O.M, O.N, O.getDataRef()[0], O.getDataRef()[1]);
-		System.out.println("O equals I: " + O.equals(I));
-		O.valueTo(2, 3, 0.777);
-		System.out.println("O equals I: " + O.equals(I));
+		CSRMatrix I = new CSRMatrix("I", O2.M, O2.N, O2.getDataRef()[0], O.getDataRef()[1]);
+		System.out.println(O2.name + " equals " + I.name + ": " + O2.equals(I));
+		O2.valueTo(2, 3, 0.777);
+		System.out.println(O2.name + " equals " + I.name + ": " + O2.equals(I));
 		
 		System.out.println("Create CSR matrix, read particular values:");
-		CSRMatrix csrO = new CSRMatrix("O2", O.M, O.N, O.getDataRef()[0], O.getDataRef()[1]);
+		CSRMatrix csrO = new CSRMatrix("O2", O2.M, O2.N, O2.getDataRef()[0], O2.getDataRef()[1]);
 		System.out.println("(3,1): " + csrO.valueOf(3, 1));
 		System.out.println("(1,0): " + csrO.valueOf(1, 0));
 		
@@ -318,22 +336,15 @@ public class MatrixApp {
 
 		D.doGaussEliminationPP();
 		CSRMatrix csrA = new CSRMatrix("A2", 5, 5,  Matrix.Type.Random);
-		
-		System.out.println("Create CSR matrix, copy to RC matrix and transpose:");
-		Matrix B = new Matrix("B", csrA.M, csrA.N, Matrix.Type.Null);
-		B = csrA.clone();
-		B.transpose(false);
 
 		CSRMatrix csrS = new CSRMatrix("S", 5, 5, Matrix.Type.Null);
 		CSRMatrix csrT = new CSRMatrix("T", 5, 5, Matrix.Type.Identity);
 		csrT.valueTo(1, 3, 9.9);
 		csrS.valueTo(2, 2, 9.9);
 		csrS.valueTo(0, 4, -8);
-		B = csrT.clone();
 		CSRMatrix csrU = csrS.add(csrT, true);
-		B = csrU.clone();
 		CSRMatrix csrD = csrU.multiply(csrT);
-		B = csrD.clone();
+		Matrix B = csrD.clone();
 		
 		Matrix C = new Matrix("C", 5, 5, Matrix.Type.Identity);
 		System.out.println("Identity matrix\n" + C.toString());

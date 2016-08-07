@@ -38,20 +38,23 @@ public class BinBitImage {
 	public BinBitImage() { M = null; }
 	
 	// instantiates a BinBitImage and generates a bitwise nonzero-value identifying image of a matrix
-	public BinBitImage(Matrix M) { this.M = M; make(); }
+	public BinBitImage(Matrix M) {this.M = M; make(); }
 
 	
 	// generates a bitwise nonzero-value identifying image of a matrix
 	// call this method when the dimensions of bitImage haven't changed and data can be directly overwritten
 	public void make() {
 		
-		// get data in Matrix row-column format from matrix subclass's native format
+		// get data in Matrix row-column format from matrix subclass's native format (unless it's an empty matrix
 		double[][] dataSet = M.getData();		
-		double[] dataM = dataSet[0], idataM = dataSet[1];		
+		double[] dataM = dataSet[0], idataM = dataSet[1];
+		
 		// 8x8 matrix fits perfectly into a long
 		long bitset = 0;
 		if (M.M < 9 && M.N < 9) {
 			data = new long[1];
+			if (M.isNull()) return;		// matrix is null, no need to do anything else but allocation
+			
 			// sets bits linearly along the bitset, first row-col in lowest/rightmost position
 			for (int i = 0; i < M.M; i++) {
 				int irow = i * M.N;
@@ -71,6 +74,8 @@ public class BinBitImage {
 		int sets = M.N >> 6, rest = M.N % 64;
 		bitSets = sets + (rest == 0 ? 0 : 1);
 		data = new long[bitSets * M.M];
+		if (M.isNull()) return;		// matrix is null, no need to do anything else but allocation
+		
 		// for every row of matrix
 		for (int i = 0; i < M.M; i++) {
 			int iN = i * M.N;

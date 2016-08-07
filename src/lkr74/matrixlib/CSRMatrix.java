@@ -25,14 +25,16 @@ public class CSRMatrix extends Matrix {
 	public CSRMatrix(String name, int M, int N, double[] data, double[] idata) {
 		super(name, M, N);								// get skeleton Matrix superclass instance
 		putData(data, idata);
+		if (data != null) clearNull();
 		bitImage = new BinBitImage(this);
 		if (Matrix.DEBUG_LEVEL > 2) System.out.println(this.toString());
 	}
 
 	public CSRMatrix(String name, int M, int N, Type type) {
 		super(name, M, N);								// get skeleton Matrix superclass instance
-		double[] data = Matrix.generateData(M, N, type);
-		putData(data, null);
+		double[][] dataSet = Matrix.generateData(M, N, type, 1);
+		putData(dataSet[0], dataSet[1]);
+		if (type == Matrix.Type.Null || type == Matrix.Type.Null_Complex) setNull();
 		bitImage = new BinBitImage(this);
 		if (Matrix.DEBUG_LEVEL > 2) System.out.println(this.toString());
 	}
@@ -53,6 +55,10 @@ public class CSRMatrix extends Matrix {
 	}
 	
 	
+	public static CSRMatrix convert(Matrix A) {
+		return new CSRMatrix(A.name, A.M, A.N, A.data, A.idata);
+	}
+	
 
 	public void zero() {
 		A = iA = null;
@@ -60,6 +66,7 @@ public class CSRMatrix extends Matrix {
 		JA = null;
 		nA = 0;
 		bitImage.zero();
+		setNull();
 	}
 	
 	
@@ -88,9 +95,9 @@ public class CSRMatrix extends Matrix {
 
 	// incoming row-column data into CSRMatrix must be converted to native format
 	@Override
-	public void putDataRef(double[] data, double[] idata) { this.putDataM(data, idata); }
+	public void putDataRef(double[] data, double[] idata) { if (data != null) putDataM(data, idata); }
 	@Override
-	public void putData(double[] data, double[] idata) { this.putDataM(data, idata); }
+	public void putData(double[] data, double[] idata) { if (data != null) putDataM(data, idata); }
 	
 	// TODO: optimise this algorithm
 	public void putDataM(double[] data, double[] idata) {
@@ -247,7 +254,11 @@ public class CSRMatrix extends Matrix {
 	
 	
 	@Override
-	public CSRMatrix identity(int S) { return new CSRMatrix("I", S, S, Type.Identity); }
+	public CSRMatrix identity(int S, double v) {
+		CSRMatrix I = new CSRMatrix("I", S, S, Type.Identity);
+		for (int i = 0; i < I.A.length; i++) I.A[i] *= v;
+		return I;
+	}
 	
 	
 	
@@ -579,14 +590,29 @@ public class CSRMatrix extends Matrix {
 	//			OUTPUT METHODS
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+	private static int MAX_PRINTEXTENT = 50;
+	
 	@Override
 	public String toString() {
+		
+		int maxA = A.length > MAX_PRINTEXTENT ? MAX_PRINTEXTENT : A.length;
+		int maxIA = IA.length > MAX_PRINTEXTENT ? MAX_PRINTEXTENT : IA.length;
+		
 		StringBuffer sb = new StringBuffer();
 		sb.append(super.toString());						// get matrix data from superclass method
-		sb.append("CSR data:");
-		sb.append("A:  [");
-		for (double i: A) sb.append(String.format("%.2f ", i));
-		sb.append(String.format("]\nIA: %s\nJA: %s", Arrays.toString(IA), Arrays.toString(Arrays.copyOf(JA, nA))));
+		sb.append("CSR data:\nIA:  [");
+		for (int i = 1; i <= maxIA; i++) sb.append(IA[i-1] + (i==maxIA?"":", ") + (i%30==0?"\n":""));
+		if (maxIA < IA.length)
+				sb.append(" ... ]\nA:   [");
+		else	sb.append("]\nA:   [");
+		for (int i = 1; i <= maxA; i++) sb.append(String.format("%.2f" + (i==maxA-1?" ":", ") + (i%30==0?"\n":""), A[i-1]));
+		if (maxA < A.length)
+				sb.append(" ... ]\nJA:   [");
+		else	sb.append("]\nJA:   [");
+		for (int i = 1; i <= maxA; i++) sb.append(JA[i-1] + (i==maxA?"":", ") + (i%30==0?"\n":""));
+		if (maxA < A.length)
+				sb.append(" ... ]\n");
+		else	sb.append("]\n");
 		return sb.toString();
 	}
 

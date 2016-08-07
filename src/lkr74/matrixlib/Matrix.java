@@ -15,6 +15,8 @@ public class Matrix implements Cloneable {
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	static final double ROUNDOFF_ERROR = 1e-8;
+	static final int NULL_MATRIX = 1;
+	static final int COMPLEX_MATRIX = 1<<1;
 	static final int SINGULAR_MATRIX = 1<<8;
 	static final boolean REAL = false;
 	static final boolean IMAGINARY = true;
@@ -59,19 +61,23 @@ public class Matrix implements Cloneable {
 	public Matrix(String name, int r, int c) {
 		// initialise status flags, all bits = 0 means an empty matrix of type Matrix
 		if (r < 1 || c < 1) throw new RuntimeException("Matrix(): Illegal matrix dimensions.");
-		this.name = name;
+		this.name = name + nameCount++;
 		this.M = r;
 		this.N = c;
+		setNull();
 	}
 
 	//	instantiates Matrix with data of choice
 	public Matrix(String name, int r, int c, Type type) {
 		// initialise status flags, all bits = 0 means an empty matrix of type Matrix
 		if (r < 1 || c < 1) throw new RuntimeException("Matrix(): Illegal matrix dimensions.");
-		this.name = name;
+		this.name = name + nameCount++;
 		this.M = r;
 		this.N = c;
-		data = Matrix.generateData(M, N, type);
+		double[][] dataSet = Matrix.generateData(M, N, type, 1);
+		data = dataSet[0];
+		idata = dataSet[1];
+		if (type == Type.Null || type == Type.Null_Complex) setNull();
 		bitImage = new BinBitImage(this);
 	}
 	
@@ -79,11 +85,12 @@ public class Matrix implements Cloneable {
 	public Matrix(String name, int M, int N, double[] data, double[] idata) {
 		if (M < 1 || N < 1 || data.length < M * N) throw new RuntimeException("Matrix(): Illegal matrix dimensions.");
 		if (idata != null && idata.length < M * N) throw new RuntimeException("Matrix(): Illegal imaginary array.");
-		this.name = name;
+		this.name = name + nameCount++;
 		this.M = M;
 		this.N = N;
 		this.putData(data, idata);
 		bitImage = new BinBitImage(this);
+		status = 0;
 	}
 
 	
@@ -129,10 +136,11 @@ public class Matrix implements Cloneable {
 		dataSet[1] = (idata != null ? idata.clone() : null);
 		return dataSet;
 	}
-	public void putDataRef(double[] data, double[] idata) { this.data = data; this.idata = idata; }
+	public void putDataRef(double[] data, double[] idata) { this.data = data; this.idata = idata; clearNull(); }
 	public void putData(double[] data, double[] idata) {
 		this.data = (data != null ? data.clone() : null);
 		this.idata = (idata != null ? idata.clone() : null);
+		if (data != null) clearNull();
 	}
 
 	
@@ -141,10 +149,7 @@ public class Matrix implements Cloneable {
 		Object O = null;
 		try { O = super.clone(); } catch (CloneNotSupportedException e) { e.printStackTrace(); }
 		Matrix A = (Matrix) O;
-//		A.name = name;
-//		A.M = M; A.N = N;
-//		A.status = status;
-		if (data != null) A.data = data.clone();
+		if (data != null) { A.data = data.clone(); clearNull(); }
 		if (idata != null) A.idata = idata.clone();
 		if (bitImage != null) A.bitImage = bitImage.clone(A);
 		if (mutator != null) A.mutator = mutator.clone();
@@ -169,6 +174,7 @@ public class Matrix implements Cloneable {
 		if (idata != null) for (int i = 0, MN = M * N; i < MN; i++) idata[i] = 0;
 		bitImage.zero();
 		if (mutator != null) for (int i = 0; i < M; i++) mutator[i] = 0;
+		setNull();
 	}
 
 	public Matrix eliminateRowColumn(int r, int c, boolean makeBitImage) {
@@ -180,9 +186,9 @@ public class Matrix implements Cloneable {
 
 		String newname;
 		if (DEBUG_LEVEL > 1) 	newname = new String(name + "(M-" + r + ",N-" + c + ")");
-		else 					newname = name + nameCount++;
+		else 					newname = name;
 		Matrix A = null;
-		if (idata != null)	A = new Matrix(newname, M - 1, N - 1, Matrix.Type.Imaginary);
+		if (idata != null)	A = new Matrix(newname, M - 1, N - 1, Matrix.Type.Null_Complex);
 		else				A = new Matrix(newname, M - 1, N - 1, Matrix.Type.Null);
 		
 		for (int i = 0, ii = 0; i < M; i++) {
@@ -210,7 +216,7 @@ public class Matrix implements Cloneable {
 
 	public double valueOf(int r, int c) { return data[r * N + c]; }
 	
-	public double[] ivalueOf(int r, int c) {
+	public double[] valueOfC(int r, int c) {
 		if (data == null || idata == null) throw new RuntimeException("Matrix.valueOf(): Unallocated datafields.");
 		double[] iv = new double[2];
 		int rNc = r * N + c;
@@ -219,20 +225,31 @@ public class Matrix implements Cloneable {
 	}
 
 	public void valueTo(int r, int c, double v) {
+		if (data == null) throw new RuntimeException("Matrix.ivalueTo(): Unallocated datafield.");
 		data[r * N + c] = v;
-		if (!nearZero(v))
+		if (!nearZero(v)) {
 			bitImage.setBit(r, c);				// set the corresponding bit in bitImage if value is nonzero
+			clearNull();
+		}
 	}
-	public void ivalueTo(int r, int c, double[] iv) {
+	public void valueToC(int r, int c, double[] iv) {
 		if (data == null || idata == null) throw new RuntimeException("Matrix.ivalueTo(): Unallocated datafields.");
 		int rNc = r * N + c;
 		data[rNc] = iv[0]; idata[rNc] = iv[1];
-		if (!nearZero(iv[0]) || !nearZero(iv[1]))
+		if (!nearZero(iv[0]) || !nearZero(iv[1])) {
 			bitImage.setBit(r, c);					// set the corresponding bit in bitImage if value is nonzero
+			clearNull();
+		}
 	}
 
 	
-	public Matrix identity(int s) { return new Matrix("I", s, s, Type.Identity); }
+	// generate identity matrix with scalar v in the diagonal
+	public Matrix identity(int s, double v) {
+		Matrix M = new Matrix("I", s, s);
+		double[][] dataSet = generateData(s, s, Type.Identity, v);
+		M.data = dataSet[0];
+		return M;
+		}
 
 	
 	// polymorphic matrix centering method will numerically center the matrix, columnwise
@@ -262,37 +279,44 @@ public class Matrix implements Cloneable {
 	}
 
 	
-	public static double[] generateData(int r, int c, Type type) {
+	// generates different types of matrices, a supplied value can be used to alter the matrix modulo
+	public static double[][] generateData(int r, int c, Type type, double v) {
 		if (r < 1 || c < 1)
 			throw new RuntimeException("Matrix.generateData(): Illegal matrix dimensions.");
-		double[] data = new double[r*c];
+		double dataSet[][] = new double[2][];
 		
 		switch (type) {
+			case Null_Complex:
+				dataSet[1] = new double[r * c];
 			case Null:
+				dataSet[0] = new double[r * c];
 				break;
 			case Identity:
 				if (r != c) 	throw new RuntimeException("Matrix.generateData(): Identity matrix must be square.");
+				dataSet[0] = new double[r * c];
 				for (int i = 0; i < c; i++)
-					data[i * c + i] = 1;
+					dataSet[0][i * c + i] = v;
 				break;
+			case Random_Complex:
+				dataSet[1] = new double[r * c];
+				for (int i = 0; i < r * c; i++) dataSet[1][i] = Math.random();
 			case Random:
-				for (int i = 0; i < r; i++)
-					for (int j = i * c, jEnd = j + c; j < jEnd; j++)
-						data[j] = Math.random();
+				dataSet[0] = new double[r * c];
+				for (int i = 0; i < r * c; i++) dataSet[0][i] = Math.random();
 				break;
 			case Centering:
 				if (r != c) 	throw new RuntimeException("Matrix.generateData(): Centering matrix must be square.");
 				for (int i = 0; i < r; i++)
 					for (int j = i * c, jEnd = j + c; j < jEnd; j++) {
-						double v = 1.0 / (double)r;
-						if (i == j)		data[j] = 1.0 - v;
-						else			data[j] = -v;
+						double d = 1.0 / (double)r;
+						if (i == j)		dataSet[0][j] = 1.0 - d;
+						else			dataSet[0][j] = - d;
 					}
 				break;
 			default:
 				throw new RuntimeException("Matrix.generateData(): Illegal matrix type.");
 		}
-		return data;
+		return dataSet;
 	}
 
 	
@@ -300,6 +324,8 @@ public class Matrix implements Cloneable {
 		
 		if (Mi > Mo || Ni > No) throw new RuntimeException("Matrix.rescale(): Invalid data subset size.");
 		int newM = Mo - Mi, newN = No - Ni;
+		// if rescaled field ends up outside the matrix datafield, set matrix to Null matrix
+		if (Mi >= M || Ni >= N || Mo < 0 || No < 0) setNull();
 		
 		String newname;
 		if (DEBUG_LEVEL > 1)	newname = name + "(r:" + Mi + "," + Ni + "," + Mo + "," + No + ")";
@@ -329,24 +355,26 @@ public class Matrix implements Cloneable {
 	
 	
 	// the Gram-Schmidt orthonormalisation of column vectors constituting a matrix
-	// method finds out vectors if are linearly independent
+	// method also finds out if vectors are linearly independent
 	// if copy = false, use supplied matrix-form vectors for calculations
 	public Matrix orthogonalise(boolean copy) {
-		Matrix An = this;
 		
+		Matrix An = this;
+		// if copy = false, An will be used to store intermediate q-hat vectors
 		if (copy) An = this.clone();
 		double r11 = An.absLength(0);										// r11 := ||x1||
 		if (nearZero(r11)) return null;										// null vector found, abort
 
 		int M = An.M, N = An.N;
-		Matrix Q = new Matrix("q", M, N, Matrix.Type.Null);
+		Matrix Q = new Matrix("Q", M, N, Matrix.Type.Null);
 		r11 = 1.0 / r11;
 		for (int r = 0, rN = 0; r < M; r++, rN += N)
 			Q.data[rN] = An.data[rN] * r11;									// q1 := x1 / r11
 		
+		// main loop steps column by column
 		for (int j = 1; j < N; j++) {
 			for (int i = 0; i < j; i++) {
-				// use vector j in An as q^, multiply by rows
+				// use vector j in An as q^, multiply by columns
 				double rij = multiplyVectors(An, Q, j, i, false);			// rij := (q^,qi)
 				for (int k = 0, kNi = i, kNj = j; k < M; k++, kNi += N, kNj += N)
 					An.data[kNj] -= rij * Q.data[kNi];						// q^ := q^ - rij*qi
@@ -359,7 +387,7 @@ public class Matrix implements Cloneable {
 		}
 
 		if (DEBUG_LEVEL > 1) {
-			System.out.println("Gram-Schmidt orthonormalisation:");
+			System.out.println("Gram-Schmidt orthonormalisation" + (copy ? ": " : "(input matrix wasn't saved): "));
 			System.out.println(Q.toString());
 		}
 		return Q;
@@ -367,7 +395,60 @@ public class Matrix implements Cloneable {
 	
 	
 	
+	public Matrix decomposeQR(Matrix Q) {
 	
+		if (M < 1 || N < 1 || !(N==Q.M && M==Q.N))
+			throw new RuntimeException("Matrix.decomposeQR(): Invalid matrix dimensions.");
+
+		Matrix R = new Matrix("R", Q.M, N, Matrix.Type.Null);	// matrix D will hold dot products of matrix elements in A & Q
+		double[] dataR = R.data;
+		
+		for (int i = 0; i < Q.M; i++) {
+			int iN = i * N;
+			// matrix D will be upper triangular
+			for (int j = i, iNj = iN + j; j < N; j++, iNj++)
+				dataR[iNj] =  multiplyVectors(this, Q, j, i, false);
+		}
+		if (DEBUG_LEVEL > 1) {
+			System.out.println("QR decomposition:");
+			System.out.println(Q.toString());
+			System.out.println(R.toString());
+		}
+		return R;
+	}
+
+	
+	
+	public Matrix toHouseholder(boolean copy) {
+		
+		Matrix A = this;
+		if (copy) A = this.clone();
+		Matrix H = new Matrix("H", M, N, Matrix.Type.Null);
+		Matrix I = new Matrix("I", M, N, Matrix.Type.Identity);
+		Matrix v = new Matrix("v", M, 1, Matrix.Type.Null), V;
+		Matrix vT = new Matrix("vT", 1, N, Matrix.Type.Null);
+		
+		// proceed columnwise
+		for (int j = 0; j < N; j++) {
+			double colSum = 0;
+			for (int i = N; i < M * N; i+= N)
+				colSum += data[i] * data[i];
+			double alpha = (data[N] < 0 ? 1 : -1) * Math.sqrt(colSum);
+			double r = 0.5 / Math.sqrt(0.5 * alpha * (alpha - data[N]));
+			
+			v.data[0] = vT.data[0] = 0;
+			v.data[1] = vT.data[1] = (data[N] - alpha) * r;
+			for (int i = N * 2; i < M * N; i+= N) v.data[i] = vT.data[i] = data[i] * r;
+			
+			V = v.multiply(vT).multiply(2, false);
+			Matrix P = I.subtract(v, true);				// P = I - 2v.v^T
+			A = P.multiply(A).multiply(P);				// A(n+1) = PAP
+		}
+		return A;
+	}
+	
+	
+
 	// finds out number of zeroes in each row & column, sums them up into an analysis array, useful for finding determinant
 	public void analyseRowsColumns() {
 		
@@ -567,7 +648,7 @@ public class Matrix implements Cloneable {
 		double[] dataB = dataSet[0], idataB = dataSet[1], dataC, idataC;
 		Matrix C;
 		if (copy) {
-			C = this.cloneMatrix(); 					// cloneMatrix() will bring data back into superclass format
+			C = new Matrix("C", M, N, Matrix.Type.Null);
 			dataC = C.data; idataC = C.idata;
 		} else {
 			C = this; 
@@ -590,6 +671,7 @@ public class Matrix implements Cloneable {
 			if (idataA != null && idataC != idataA) idataC = idataA.clone();
 		
 		if (DEBUG_LEVEL > 1) System.out.println(C.toString());
+		clearNull();
 		C.bitImage.make();
 		return C;		
 	}
@@ -626,30 +708,37 @@ public class Matrix implements Cloneable {
 		int aM = A.M, aN = A.N, bM = B.M, bN = B.N;
 		if (aM < 1 || aN < 1 || bM < 1 || bN < 1)
 			throw new RuntimeException("Matrix.multiplyVectors(): Invalid vector dimensions.");	
+		
 		double p = 0;
+		double[] dataA = A.data, dataB = B.data;
+		
 		// case 1: two vector-form matrices, either one can be in row/column form
 		if ((aM == 1 && (bM == 1 && aN == bN || bN == 1 && aN == bM)) ||
 			(aN == 1 && (bM == 1 && aM == bN || bN == 1 && aM == bM))) {
 			for (int i = 0, N = aN; i < N; i++) p += A.data[i] * B.data[i];
 			return p;
 		}
+		
 		// case 2: two matrices with arbitrary numbers of column vectors of same length
 		if (aM == bM) {
 			if (byRows) {
 				if (ia >= aM || ib >= bM) throw new RuntimeException("Matrix.multiplyVectors(): Vector indexes out of bounds.");
 
 				for (int i = bN, ca = ia * aN, cb = ib * aN; i > 0; i--, ca++, cb++)
-					p += A.data[ca] * B.data[cb];
+					p += dataA[ca] * dataB[cb];
 			} else {
 				if (ia >= aN || ib >= bN) throw new RuntimeException("Matrix.multiplyVectors(): Vector indexes out of bounds.");
 
 				for (int i = bM, ca = ia, cb = ib; i > 0; i--, ca += aN, cb += bN)
-					p += A.data[ca] * B.data[cb];
+					p += dataA[ca] * dataB[cb];
 			}
 			return p;
 		}
 		throw new RuntimeException("Matrix.multiplyVectors(): Nonmatching matrix-form vector dimensions.");
 	}
+	
+	
+	
 	
 	// polymorphic matrix product will do AB = C
 	public Matrix multiply(Matrix B) {
@@ -661,7 +750,7 @@ public class Matrix implements Cloneable {
 		
 		double[] dataA = this.getDataRef()[0], dataB = B.getDataRef()[0];
 		
-		String newname = (Matrix.DEBUG_LEVEL > 1 ? "(" + name + "." + B.name + ")" : "P" + nameCount++);
+		String newname = (Matrix.DEBUG_LEVEL > 1 ? "(" + name + "." + B.name + ")" : "P");
 		Matrix C = new Matrix(newname, aM, bN);
 		double[] dataC = C.data = new double[aM * bN];
 
@@ -681,6 +770,7 @@ public class Matrix implements Cloneable {
 		}		
 
 		if (DEBUG_LEVEL > 1) System.out.println(C.toString());
+		clearNull();
 		C.bitImage = new BinBitImage(C);				// bitImage needs full reconstitution
 		return C;
 	}
@@ -693,17 +783,17 @@ public class Matrix implements Cloneable {
 		if (M < 1 || N < 1) throw new RuntimeException("Matrix.multiply(): Invalid matrix dimensions.");
 	
 		Matrix C = this;
-		double[] dataA = null, dataC = null;
+		double[] dataA = this.getDataRef()[0], dataC = dataA;
 		if (copy) {
 			String newname = (Matrix.DEBUG_LEVEL > 1 ? "s*" + name : "S" + nameCount++);
 			C = new Matrix(newname, M, N, Matrix.Type.Null);
 			dataC = C.data;
-		} else 
-			dataA = dataC = this.getDataRef()[0];		
+		}		
 		
 		for (int i = 0, MN = M * N; i < MN; i++) dataC[i] = v * dataA[i];
 		
 		C.data = dataC;
+		clearNull();
 		if (DEBUG_LEVEL > 1) System.out.println(C.toString());
 		return C;
 	}
@@ -729,10 +819,8 @@ public class Matrix implements Cloneable {
 		}
 		if (truncP > newM) truncP = newM;				// truncation point can't be larger than the matrix
 
-		String newname;
-		if (Matrix.DEBUG_LEVEL > 1) newname = "(" + A.name + "." + B.name + ")";
-		else						newname = "W" + Matrix.nameCount++;
-		Matrix C = new Matrix(newname, newM, newM, Matrix.Type.Null);
+		String newname = (DEBUG_LEVEL > 1 ? "(" + A.name + "." + B.name + ")" : "W" + Matrix.nameCount++);
+		Matrix C = new Matrix(newname, newM, newM, Type.Null);
 		
 		buffer2x2StrasWin = new double[8][truncP > 16 ? 16*16 : truncP*truncP];
 		
@@ -742,7 +830,8 @@ public class Matrix implements Cloneable {
 		// 3x offsets into the flat datafields, 3x the matrix width of the datafields
 		int[] subInfo = {truncP, newM, 0, 0, 0, newM, newM, newM};
 		multiplyStrasWin2(A.data, B.data, C.data, subInfo);
-			
+		
+		C.clearNull();
 		if (DEBUG_LEVEL > 1) System.out.println(C.toString());
 		return C;
 
@@ -1027,7 +1116,7 @@ public class Matrix implements Cloneable {
 			}
 			if (DEBUG_LEVEL > 1) System.out.print(String.format("%5.2f", critSum) + (r < M - 1 ? ", " : " "));
 		}
-		if (DEBUG_LEVEL > 1) System.out.println(converges ? "\n" : "\nconvergence unlikely\n");
+		if (DEBUG_LEVEL > 1) System.out.println("\nConvergence" + (converges ? "" : " not") + " guaranteed\n");
 		return converges;
 	}
 	
@@ -1075,6 +1164,7 @@ public class Matrix implements Cloneable {
 			System.out.println("Gaussian elimination:");
 			System.out.println(this.toString());
 		}
+		
 		bitImage.make();
 		return true;
 	}
@@ -1243,7 +1333,7 @@ public class Matrix implements Cloneable {
 
 		if (copy)	this.det = det;				// the determinant belongs to the untransformed matrix, which is preserved if duplicate=true
 		else			X.det = det;			// if input matrix is transformed, return determinant in solution vectors matrix
-		X.name = "X" + nameCount;
+		X.name = "X" + nameCount++;
 		if (DEBUG_LEVEL > 1) {
 			System.out.println("Gauss-Jordan full pivoting solver, result vectors:");
 			System.out.println(X.toString());
@@ -1268,7 +1358,7 @@ public class Matrix implements Cloneable {
 		if (Matrix.DEBUG_LEVEL > 1) x.name = "x(" + name + "^-1*" + c.name + ")";
 		else						x.name = "x" + nameCount++;
 		
-		Ai.data = generateData(M, N, Matrix.Type.Identity);
+		Ai.data = generateData(M, N, Matrix.Type.Identity, 1)[0];
 		Ai.M = Ai.N = M;
 		double[] dataA = A.data, dataAi = Ai.data, datax = x.data;
 
@@ -1421,21 +1511,18 @@ public class Matrix implements Cloneable {
 			// do Gauss-Seidel iteration step over every row
 			for (int r = 0; r < M; r++) {
 
-				double sumCurr = 0;
-				for (int c1 = 0; c1 < r; c1++) {
-					sumCurr += data[r * N + c1] * datax[c1];
-				}
-				double sumPrev = 0;
-				for (int c1 = r + 1; c1 < M; c1++) {
-					sumPrev += data[r * N + c1] * datax[c1];
-				}
-				datax[r] = (datac[r] - sumCurr - sumPrev) / data[r * N + r];
+				double sum = 0;
+				int rN = r * N;
+				for (int c1 = 0,rNc = rN; c1 < M; c1++, rNc++)
+					if (c1 != r)	sum += data[rNc] * datax[c1];
+	
+				datax[r] = (datac[r] - sum) / data[rN + r];
 			}
 			// check error vector length between previous & current solution vector
 			System.out.println("Error: " + cuErr + ", error diff: " + (cuErr - prErr));
 			prErr = cuErr;
 			cuErr = xOld.subtract(x, false).absLength(0);
-			if (i > 1 && cuErr - prErr > 0) { converges = false; break; }
+			//if (i > 3 && cuErr - prErr > 0) { converges = false; break; }	// latest error larger than previous, won't converge, stop iteration
 			if (cuErr <= maxError && cuErr >= -maxError) break;		// error below maxError, stop iteration, quit with result
 		}
 		
@@ -1443,10 +1530,10 @@ public class Matrix implements Cloneable {
 		if (DEBUG_LEVEL > 1) {
 			if (!converges || i >= itersMax)
 							System.out.println("Gauss-Seidel iterator solver won't converge.");
-			else			System.out.println("Gauss-Seidel iterator solver done in " + i + "iterations.");
+			else			System.out.println("Gauss-Seidel iterator solver done in " + i + " iterations.");
 			System.out.println(x.toString());
 		}	
-		return x;
+		if (converges) return x; else return null;
 	}
 	
 	
@@ -1466,7 +1553,7 @@ public class Matrix implements Cloneable {
 		if (Matrix.DEBUG_LEVEL > 1) x.name = "x(" + name + "^-1*" + c.name + ")";
 		else						x.name = "x" + nameCount++;
 		
-		Ai.data = generateData(M, N, Matrix.Type.Identity);
+		Ai.data = generateData(M, N, Matrix.Type.Identity, 1)[0];
 		Ai.M = Ai.N = M;
 		double[] dataA = A.data, dataAi = Ai.data, datax = x.data;
 		
@@ -1578,8 +1665,8 @@ public class Matrix implements Cloneable {
 			if (nearZero(data[d * M + d])) { status |= SINGULAR_MATRIX; return null; }
 			
 		Matrix[] lLU = new Matrix[2];
-		lLU[0] = new Matrix("L" + nameCount, M, N, Matrix.Type.Null);
-		lLU[1] = new Matrix("U" + nameCount, M, N, Matrix.Type.Null);
+		lLU[0] = new Matrix("L", M, N, Matrix.Type.Null);
+		lLU[1] = new Matrix("U", M, N, Matrix.Type.Null);
 		double[] dataL = lLU[0].data, dataU = lLU[1].data;
 
 		for (int c1 = 0; c1 < N; c1++) {
@@ -1626,7 +1713,7 @@ public class Matrix implements Cloneable {
 		Matrix cp = new Matrix("c'", U.M, 1, Matrix.Type.Null);					// c' needs to be generated from input constant vector c
 		String newname;
 		if (Matrix.DEBUG_LEVEL > 1) newname = "x((LU)^-1*" + this.name + ")";
-		else						newname = "x" + nameCount++;
+		else						newname = "x";
 		Matrix x = new Matrix(newname, U.M, 1, Matrix.Type.Null);									// the solution vector x
 		double[] dataU = U.data, dataV = L.data, datacp = cp.data, datax = x.data;
 
@@ -1670,11 +1757,11 @@ public class Matrix implements Cloneable {
 		double[] dataLU = data;
 		if (copy) {
 			LU = clone();
-			LU.name = "LU" + nameCount;
+			LU.name = "LU" + nameCount++;
 			dataLU = LU.data;
 			if (mutator == null) mutatorLU = LU.mutator = new int[M];
 		} else {
-			name = "LU" + nameCount;			// this matrix will be modified, change it's name
+			name = "LU" + nameCount++;			// this matrix will be modified, change it's name
 			mutatorLU = mutator = new int[M];
 		}
 		
@@ -1745,7 +1832,7 @@ public class Matrix implements Cloneable {
 	// method takes the factorised L & U triangular matrices using them to solve a linear system
 	// where only the constant vector is changing, the matrix coefficients assumed to be fixed
 	// adapted from NUMERICAL RECIPES IN C: THE ART OF SCIENTIFIC COMPUTING (ISBN 0-521-43108-5)
-	// the triangular matrices L & U come here in a combined form in matrix LU, split by 1:s in the diagonal
+	// the triangular matrices L & U come here in a COMBINED form in matrix LU, split by 1:s in the diagonal
 	// matrix A, LU & vector b are the input, matrix array with solution vector and LU matrix is the return value
 	// if LU is null, then the method calls decomposeLU2() with A, if A is null then LU is used
 	// method optimisation takes into account that b might contain many leading zero elements
@@ -1888,6 +1975,8 @@ public class Matrix implements Cloneable {
 		return false;
 	}
 
+	
+	
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
 	//			IMPLEMENTATION OF LAPLACIAN DETERMINAN FINDER (only of academic interest)
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2090,11 +2179,71 @@ public class Matrix implements Cloneable {
 	
 	
 	
+	// findEigenQR() uses the common A(k+1) = Q*AQ iteration routine
+	public Matrix findEigenQR(Matrix Q, int iters, int vIters, double maxErr) {
+
+		DEBUG_LEVEL--;
+		Matrix Alam = this.clone(), QT = Q.transpose(true);
+		// the null matrix for eigenvector solving
+		Matrix z = new Matrix("z", M, 1, Matrix.Type.Null);
+		Matrix[] v = new Matrix[M];
+		double currErr = 0, lastErr = 0;
+		double[] dataAlam = Alam.data, lastD = new double[M];
+		maxErr *= maxErr;					// compare squared values to avoid unnecessary square root
+		
+		// QR iteration will reduce matrix A to eigenvalues on the diagonal
+		int i = 0;
+		for (; i < iters; i++) {
+
+			Alam = (QT.multiply(Alam)).multiply(Q);			// A(k+1) = Q*(k)A(k)Q(k)
+			Q = Alam.orthogonalise(true);
+			QT = Q.transpose(true);
+			
+			dataAlam = Alam.data;
+			lastErr = currErr;
+			currErr = 0;
+			for (int l = 0, j = 0; j < M; j++, l+= N + 1) {
+				double d = lastD[j] - dataAlam[l];
+				currErr += d * d;							// get residual vector length
+				lastD[j] = dataAlam[l];						// save diagonal for lambda values error comparison
+			}
+			//currAbs = Math.sqrt(currAbs);
+			System.out.println("Error: " + String.format("%.4f, delta: %.4f", currErr, lastErr-currErr));
+			if (currErr < maxErr) break;
+		}
+		DEBUG_LEVEL++;
+		
+		// time to find the eigenvectors through v(i) = (lambda(i)*I - A)^-1 * zero-vector
+		for(int j = 0; j < M; j++) {
+			Matrix Ilam = identity(M, dataAlam[j * M + j]);
+			Matrix AmIlam = this.subtract(Ilam, true);
+			//v[j] = (this.subtract(Ilam, true)).solveGaussSeidel(z, vIters, maxErr);
+			v[j] = AmIlam.solveGaussJordanFP(z, true);
+		}
+
+		if (DEBUG_LEVEL > 1) {
+			System.out.println("QR eigenfinder took " + i + " iterations, results:");
+			for(i = 0; i < M; i++) {
+				System.out.println("eigenvalue" + (i+1) + ": " + Alam.data[i * M + i]);
+				//System.out.println("eigenvector" + (i+1) + (v[i] != null ? ":" : " failed converging."));
+				//if (v[i] != null) System.out.println(v[i].toString());
+			}
+			System.out.println(Alam.toString());
+			System.out.println(Q.toString());
+		}
+		return Alam;
+	}
+
+	
+	
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
 	//			INLINE/SHORTFORM METHODS
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	public static boolean nearZero(double v) { return (v < -ROUNDOFF_ERROR || v > ROUNDOFF_ERROR ? false : true); }
+	boolean isNull() { return (status & NULL_MATRIX) != 0; }
+	void clearNull() { status ^= NULL_MATRIX & status; }
+	void setNull() { status |= NULL_MATRIX; }
 	
 	// get complex modulus of imaginary value
 	double complexM(double r, double i) { return Math.sqrt(r * r + i * i); };
@@ -2105,42 +2254,83 @@ public class Matrix implements Cloneable {
 	
 	// limits output of a double to max 5 characters, for following cases:
 	// -XXeE		v >= 10000
-	// -XXXX		v >= 1000
+	// -XXXX		v >= 100
 	// -XX.D		v >= 10
 	// -X.DD		v < 10
-	private static String to5chars(double v) {
+	private static String to5chars(double v, boolean imaginary) {
 		int decimals = 0;
 		if (v >= 10000 || v <= -10000) {
 			for (; v >= 100 || v <= -100; v /= 10.0) decimals++;
-			return (v < 0 ? " " : "  ") + (int)v + "e" + decimals;
+			if (imaginary)
+					return (v < 0 ? " " : "  ") + (int)v + "e" + decimals + "  ";
+			else	return (v < 0 ? " " : "  ") + (int)v + "e" + decimals + (imaginary ? "i " : " ");
 		}
-		if (v >= 1000 || v <= -1000) return String.format("%6.0f", v);
-		if (v >= 10 || v <= -10) return String.format("%6.1f", v);
-		return String.format("%6.2f", v);
+		
+		boolean isInt = nearZero(v - (int)v);
+			
+		if (v >= 100 || v <= -100) {
+			return imaginary ? String.format("%6di", (int)v) : String.format("%6d ", (int)v);
+			//return imaginary ? String.format("%6.0fi", v) : String.format("%6.0f ", v);
+		}
+			
+		if (v >= 10 || v <= -10) {
+			if (isInt) return imaginary ? String.format("%5di ", (int)v) : String.format("%5d  ", (int)v);
+			return imaginary ? String.format("%6.1fi", v) : String.format("%6.1f ", v);
+		}
+			
+		if (isInt) return imaginary ? String.format("%4di  ", (int)v) : String.format("%4d   ", (int)v);
+		return imaginary ? String.format("%6.2fi", v) : String.format("%6.2f ", v);
 	}
+	
+	private static int MAX_PRINTEXTENT = 20;
 	
 	@Override
 	public String toString() {
+		
+		double[][] dataSet = this.getDataRef();
+		double[] data = dataSet[0], idata = dataSet[1];
+		
 		StringBuilder sb = new StringBuilder();
+		int maxM = M > MAX_PRINTEXTENT ? MAX_PRINTEXTENT : M;
+		int maxN = N > MAX_PRINTEXTENT ? MAX_PRINTEXTENT : N;
+		
 		System.out.println(((M == 1 || N == 1) ? "vector: " :"matrix: ") + name + (M == 1 ? "^T" : ""));
-		if (data != null)
-			for (int i = 0; i < M; i++) {
+		if (data != null) {
+			for (int i = 0; i < maxM; i++) {
 				int iN = i * N;
-				if (sb.length() > 0) sb.append("\n");
+				if (sb.length() > 0) sb.append("\n");		// don't add newline at start of matrix printout
 				sb.append("|");
+				for (int j = 0; j < maxN; j++)
+					if (nearZero(data[iN + j])) 	sb.append("   -   ");
+					else							sb.append(to5chars(data[iN + j], false));
+
+				// if matrix was bigger than allowed printout bounds, indicate the continuation
+				if (maxN < N) if (i % 4 == 0) sb.append(" ..."); else sb.append("    ");
+				
+				// any imaginary data comes as a second line under the real data line
 				if (idata != null) {
-					for (int j = 0; j < N; j++)
-						if (nearZero(data[iN + j]) && nearZero(data[iN + j]))
-								sb.append("      -      ");	
-						else	sb.append("(" + to5chars(data[iN + j]) + "," + to5chars(idata[iN + j]) + "%5.2f)");		
-				} else {
-					for (int j = 0; j < N; j++)
-						if (nearZero(data[iN + j])) 	sb.append("   -  ");
-						else							sb.append(to5chars(data[iN + j]));
+					sb.append(" |\n|");
+					for (int j = 0; j < maxN; j++) sb.append("       ");
+					sb.append("     |\n|");
+					for (int j = 0; j < maxN; j++)
+						if (nearZero(data[iN + j]))	sb.append("       ");
+						else						sb.append(to5chars(data[iN + j], true));
+					
+					if (maxN < N) sb.append("    ");
 				}
+				
 				sb.append(" |");
 			}
-		else sb.append("[null]\n");
+			// if matrix was bigger than allowed printout bounds, indicate the continuation
+			if (maxM < M) {
+				for (int i = 0; i < 3; i++) {
+					sb.append("\n|");
+					for (int j = 0; j < maxN; j++)
+						if (j%2 == 0) sb.append("   .   "); else sb.append("       ");
+					sb.append("     |");
+				}
+			}
+		} else sb.append("[null]\n");
 		if (M == N) sb.append("\nDeterminant: " + det + "\n");
 		else		sb.append("\n");
 		return sb.toString();	
@@ -2148,7 +2338,7 @@ public class Matrix implements Cloneable {
 	
 	
 	public enum Type {
-		Null(0), Identity(1), Random(2), Centering(3), Imaginary(16);
+		Null(0), Identity(1), Random(2), Centering(3), Null_Complex(16), Random_Complex(17);
 		private int type;
 		private Type(int type) { this.type = type; }
 	}
