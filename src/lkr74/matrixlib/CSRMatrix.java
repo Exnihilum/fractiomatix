@@ -202,7 +202,7 @@ public class CSRMatrix extends Matrix {
 	public void valueTo(int r, int c, double v) {
 		if (r < 0 || c < 0 || r >= M || c >= N)
 			throw new RuntimeException("CSRMatrix.valueTo(): Invalid matrix coordinates.");
-
+		
 		double[] A = this.A;
 		int[] JA = this.JA;
 
@@ -210,9 +210,22 @@ public class CSRMatrix extends Matrix {
 		int iN = this.IA[r + 1], i_cpos = iN, cmax = c; 
 		for (int i = this.IA[r]; i < iN; i++) {
 			// it existed, change value and quit
-			if (JA[i] == c)	{ A[i] = v; return; }
+			if (JA[i] == c)	{
+				if (nearZero(v)) {				// we're zeroing an existing value, so it must be removed from CSR tables
+					int lenA = this.IA[M] - 1;
+					for (int j = i; j < lenA ; j++) { A[j] = this.A[j + 1]; JA[j] = this.JA[j + 1]; }
+					for (int j = r + 1; j <= M; i++) this.IA[j]--;
+				} else {
+					A[i] = v;
+					clearNull();
+				}
+				return;
+			}
 			if (cmax < JA[i]) { cmax = JA[i]; i_cpos = i; }
 		}
+		
+		if (nearZero(v)) return;				// inserting a zero changes nothing for CSR
+		clearNull();
 
 		// didn't find column, A & JA must be rescaled, new value(A)-column(JA) pair must be inserted
 		// check if A & JA need to be rescaled
@@ -452,10 +465,12 @@ public class CSRMatrix extends Matrix {
 		CSRMatrix S = this;
 		if (copy) {
 			S = this.clone();
-			// in case we're adding a near-zero scalar, nothing more needs to be done
-			if (addScalar && nearZero(scl)) return S;
 			S.name = Matrix.DEBUG_LEVEL > 1 ? "(" + name + (subtract?"-":"+") + T.name + ")" : (subtract?"D":"S") + nameCount++;
 		}
+		
+		if (addScalar && nearZero(scl)) return S;			// in case we're adding a near-zero scalar, nothing more needs to be done
+		if (this.isNull() || S.isNull()) return S;			// quick check - are we adding null matrices?
+		clearNull();
 
 		// conservatively assume no. of sparse elements in new matrix will be at maximum
 		// the sum of sparse elements from the summed matrices
@@ -495,10 +510,10 @@ public class CSRMatrix extends Matrix {
 						A[accIA] = S.A[jS++] + (subtract ? -T.A[jT++] : T.A[jT++]);
 						JA[accIA++] = vJAS;
 					}
-					// we've run out of values either in (S or T), take care of remaining ones in (S or T)
-					while(jS < nextIA_S) { A[accIA] = S.A[jS]; JA[accIA++] = S.JA[jS++]; }
-					while(jT < nextIA_T) { A[accIA] = T.A[jT]; JA[accIA++] = T.JA[jT++]; }
 				}
+				// we've run out of values either in (S or T), take care of remaining ones in (S or T)
+				while(jS < nextIA_S) { A[accIA] = S.A[jS]; JA[accIA++] = S.JA[jS++]; }
+				while(jT < nextIA_T) { A[accIA] = T.A[jT]; JA[accIA++] = T.JA[jT++]; }
 			}
 			IA[i + 1] = accIA;
 		}
