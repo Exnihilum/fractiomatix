@@ -12,18 +12,18 @@ public class MatrixMarketIO {
 	StringBuilder sb;
 	Matrix M = null;
 	
-	private static boolean isSparse(String typeCode) { return typeCode.charAt(0) == 'C'; }
-	private static boolean isCoordinate(String typeCode) { return typeCode.charAt(0) == 'C'; }
-	private static boolean isDense(String typeCode) { return typeCode.charAt(0) == 'A'; }
-	private static boolean isArray(String typeCode) { return typeCode.charAt(0) == 'A'; }
-	private static boolean isComplex(String typeCode) { return typeCode.charAt(1) == 'C'; }
-	private static boolean isReal(String typeCode) { return typeCode.charAt(1) == 'R'; }
-	private static boolean isPattern(String typeCode) { return typeCode.charAt(1) == 'P'; }
-	private static boolean isInteger(String typeCode) { return typeCode.charAt(1) == 'I'; }
-	private static boolean isSymmetric(String typeCode) { return typeCode.charAt(2) == 'S'; }
-	private static boolean isGeneral(String typeCode) { return typeCode.charAt(2) == 'G'; }
-	private static boolean isSkew(String typeCode) { return typeCode.charAt(2) == 'K'; }
-	private static boolean isHermitian(String typeCode) { return typeCode.charAt(2) == 'H'; }
+//	private static boolean isSparse(String typeCode) { return typeCode.charAt(0) == 'C'; }
+//	private static boolean isCoordinate(String typeCode) { return typeCode.charAt(0) == 'C'; }
+//	private static boolean isDense(String typeCode) { return typeCode.charAt(0) == 'A'; }
+//	private static boolean isArray(String typeCode) { return typeCode.charAt(0) == 'A'; }
+//	private static boolean isComplex(String typeCode) { return typeCode.charAt(1) == 'C'; }
+//	private static boolean isReal(String typeCode) { return typeCode.charAt(1) == 'R'; }
+//	private static boolean isPattern(String typeCode) { return typeCode.charAt(1) == 'P'; }
+//	private static boolean isInteger(String typeCode) { return typeCode.charAt(1) == 'I'; }
+//	private static boolean isSymmetric(String typeCode) { return typeCode.charAt(2) == 'S'; }
+//	private static boolean isGeneral(String typeCode) { return typeCode.charAt(2) == 'G'; }
+//	private static boolean isSkew(String typeCode) { return typeCode.charAt(2) == 'K'; }
+//	private static boolean isHermitian(String typeCode) { return typeCode.charAt(2) == 'H'; }
 	
 	// constructor reads in file into stringbuffer in memory
 	public MatrixMarketIO(String fName) {

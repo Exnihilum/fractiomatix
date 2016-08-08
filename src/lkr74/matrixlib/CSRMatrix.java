@@ -1,7 +1,5 @@
 package lkr74.matrixlib;
 
-import java.util.Arrays;
-
 public class CSRMatrix extends Matrix {
 	
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -27,14 +25,15 @@ public class CSRMatrix extends Matrix {
 		putData(data, idata);
 		if (data != null) clearNull();
 		bitImage = new BinBitImage(this);
-		if (Matrix.DEBUG_LEVEL > 2) System.out.println(this.toString());
+		if (Matrix.DEBUG_LEVEL > 2)
+			System.out.println(this.toString());
 	}
 
 	public CSRMatrix(String name, int M, int N, Type type) {
 		super(name, M, N);								// get skeleton Matrix superclass instance
 		double[][] dataSet = Matrix.generateData(M, N, type, 1);
 		putData(dataSet[0], dataSet[1]);
-		if (type == Matrix.Type.Null || type == Matrix.Type.Null_Complex) setNull();
+		if (type != Matrix.Type.Null && type != Matrix.Type.Null_Complex) clearNull();
 		bitImage = new BinBitImage(this);
 		if (Matrix.DEBUG_LEVEL > 2) System.out.println(this.toString());
 	}
@@ -440,23 +439,28 @@ public class CSRMatrix extends Matrix {
 
 	
 	
-	public CSRMatrix add(CSRMatrix T, boolean copy)		{ return addSub(T, false, copy); }
-	public CSRMatrix subtract(CSRMatrix T, boolean copy)	{ return addSub(T, true, copy); }
+	public CSRMatrix add(double v, boolean copy)		{ return addSub(this, false, copy, v, true); }
+	public CSRMatrix subtract(double v, boolean copy)		{ return addSub(this, true, copy, -v, true); }
+	public CSRMatrix add(CSRMatrix T, boolean copy)		{ return addSub(T, false, copy, 0, false); }
+	public CSRMatrix subtract(CSRMatrix T, boolean copy)	{ return addSub(T, true, copy, 0, false); }
 
 	// sums two matrices CSR style
-	public CSRMatrix addSub(CSRMatrix T, boolean subtract, boolean copy) {
+	public CSRMatrix addSub(CSRMatrix T, boolean subtract, boolean copy, double scl, boolean addScalar) {
 		if (T.M != M || T.N != N)
 			throw new RuntimeException("CSRMatrix.addSub(): Nonmatching matrix dimensions.");
 
-		String newname;
-		if (Matrix.DEBUG_LEVEL > 1) newname = "(" + name + (subtract?"-":"+") + T.name + ")";
-		else						newname = (subtract?"S":"D") + nameCount++;
 		CSRMatrix S = this;
-		if (copy) S = this.clone();
+		if (copy) {
+			S = this.clone();
+			// in case we're adding a near-zero scalar, nothing more needs to be done
+			if (addScalar && nearZero(scl)) return S;
+			S.name = Matrix.DEBUG_LEVEL > 1 ? "(" + name + (subtract?"-":"+") + T.name + ")" : (subtract?"D":"S") + nameCount++;
+		}
 
 		// conservatively assume no. of sparse elements in new matrix will be at maximum
 		// the sum of sparse elements from the summed matrices
-		int lenA = S.A.length + T.A.length;
+		// in case of adding a scalar, the buffers will effectively be M*N sized
+		int lenA = addScalar ? M * N : S.A.length + T.A.length;
 		double[] A = new double[lenA];
 		int[] IA = new int[S.M + 1];
 		int[] JA = new int[lenA];
@@ -466,22 +470,36 @@ public class CSRMatrix extends Matrix {
 		for (int i = 0; i < S.M; i++) {
 			// set up parallel marching through both added rows, add values if column indexes found for both values
 			// otherwise, insert the larger value from (S or T)
-			int jS = nextIA_S, jT = nextIA_T;
+			int jS = nextIA_S, jT = nextIA_T, vScl = 0;
 			nextIA_S = S.IA[i + 1];
-			nextIA_T = T.IA[i + 1];
-			while (jS < nextIA_S && jT < nextIA_T) {
-				int vJAS = S.JA[jS], vJAT = T.JA[jT];
-				if (vJAS < vJAT)		{ A[accIA] = S.A[jS++]; JA[accIA++] = vJAS; }
-				else if (vJAS > vJAT)	{ A[accIA] = T.A[jT++]; JA[accIA++] = vJAT; }
-				// the adding/subtracting happens here
-				else {
-					A[accIA] = S.A[jS++] + (subtract ? -T.A[jT++] : T.A[jT++]);
-					JA[accIA++] = vJAS;
+
+			// this code takes care of adding a scalar to a CSR matrix - effectively at this
+			// stage one should convert to standard matrix form since the sparsity is destroyed
+			if (addScalar)
+				while (vScl < N) {
+					int vJAS = S.JA[jS];
+					if (vJAS != vScl) A[accIA] = scl;
+					else A[accIA] = S.A[jS++] + scl;
+					JA[accIA++] = vScl++;
+				}
+			// normal matrix + matrix adding goes on in this segment
+			// both marchers keep track of number of values left to read (nextIA are the bounds) for respective marcher
+			else {
+				nextIA_T = T.IA[i + 1];
+				while (jS < nextIA_S && jT < nextIA_T) {		
+					int vJAS = S.JA[jS], vJAT = T.JA[jT];
+					if (vJAS < vJAT)		{ A[accIA] = S.A[jS++]; JA[accIA++] = vJAS; }
+					else if (vJAS > vJAT)	{ A[accIA] = T.A[jT++]; JA[accIA++] = vJAT; }
+					// the adding/subtracting happens here
+					else {
+						A[accIA] = S.A[jS++] + (subtract ? -T.A[jT++] : T.A[jT++]);
+						JA[accIA++] = vJAS;
+					}
+					// we've run out of values either in (S or T), take care of remaining ones in (S or T)
+					while(jS < nextIA_S) { A[accIA] = S.A[jS]; JA[accIA++] = S.JA[jS++]; }
+					while(jT < nextIA_T) { A[accIA] = T.A[jT]; JA[accIA++] = T.JA[jT++]; }
 				}
 			}
-			// we've run out of values either in (S or T), take care of remaining ones in (S or T)
-			while(jS < nextIA_S) { A[accIA] = S.A[jS]; JA[accIA++] = S.JA[jS++]; }
-			while(jT < nextIA_T) { A[accIA] = T.A[jT]; JA[accIA++] = T.JA[jT++]; }
 			IA[i + 1] = accIA;
 		}
 		
@@ -489,23 +507,29 @@ public class CSRMatrix extends Matrix {
 		S.IA = IA;
 		S.JA = JA;
 		if (Matrix.DEBUG_LEVEL > 1) System.out.println(S.toString());
+		
 		// quick & dirty bitImage copy: assume OR between S and T bitimages, as add/subtract eliminates zeroes from both, into U
 		// that is not necessarily the truth, ex: 5 + (-5) will give 0, but zeroing-out of values would happen extremely seldom
 		// in real-life float operations
 		if (copy) S.bitImage = bitImage.clone(this);
-		S.bitImage.or(T.bitImage);
+		if (addScalar)	S.bitImage.set();				// adding/subtracting a scalar will set every bit
+		else			S.bitImage.or(T.bitImage);
 		return S;
 	}
 	
 	
-
+	
+	
+	
+	
+	
 	public CSRMatrix multiply(CSRMatrix T) {
 
 		if (N != T.M) throw new RuntimeException("CSRMatrix.multiply(): Nonmatching matrix dimensions.");
 
 		// results stored in new CSRMatrix U
-		String newname = (Matrix.DEBUG_LEVEL > 1 ? "(" + name + "." + T.name + ")" : "P" + nameCount++);
-		CSRMatrix U = new CSRMatrix(newname, M, T.N);
+		CSRMatrix U = new CSRMatrix("M", M, T.N);
+		U.name = (Matrix.DEBUG_LEVEL > 1 ? "(" + name + "." + T.name + ")" : "M" + nameCount++);
 
 		// create new bitImage, we will fill it up dynamically. Note down what type of bitimage it is
 		boolean bitImage8x8 = false;
@@ -601,15 +625,15 @@ public class CSRMatrix extends Matrix {
 		StringBuffer sb = new StringBuffer();
 		sb.append(super.toString());						// get matrix data from superclass method
 		sb.append("CSR data:\nIA:  [");
-		for (int i = 1; i <= maxIA; i++) sb.append(IA[i-1] + (i==maxIA?"":", ") + (i%30==0?"\n":""));
+		for (int i = 1; i <= maxIA; i++) sb.append(IA[i-1] + (i==maxIA?"":", ") + (i%30==0?"\n      ":""));
 		if (maxIA < IA.length)
 				sb.append(" ... ]\nA:   [");
 		else	sb.append("]\nA:   [");
-		for (int i = 1; i <= maxA; i++) sb.append(String.format("%.2f" + (i==maxA-1?" ":", ") + (i%30==0?"\n":""), A[i-1]));
+		for (int i = 1; i <= maxA; i++) sb.append(String.format("%.2f" + (i==maxA-1?" ":", ") + (i%30==0?"\n      ":""), A[i-1]));
 		if (maxA < A.length)
 				sb.append(" ... ]\nJA:   [");
 		else	sb.append("]\nJA:   [");
-		for (int i = 1; i <= maxA; i++) sb.append(JA[i-1] + (i==maxA?"":", ") + (i%30==0?"\n":""));
+		for (int i = 1; i <= maxA; i++) sb.append(JA[i-1] + (i==maxA?"":", ") + (i%30==0?"\n      ":""));
 		if (maxA < A.length)
 				sb.append(" ... ]\n");
 		else	sb.append("]\n");

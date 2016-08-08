@@ -21,7 +21,7 @@ public class BinBitImage {
 	private static DoubleBuffer binBitD;
 	private static IntBuffer binBitI;
 
-	static int DEBUG_LEVEL = 0;
+	static int DEBUG_LEVEL = 2;
 
 	// everything that needs to be statically set up at load time for the Matrix class is done here
 	{
@@ -68,6 +68,8 @@ public class BinBitImage {
 			}
 			data[0] = bitset;
 			bitSets = 0;
+			
+			if (debugTrigger(3)) System.out.println(this.toString());
 			return;
 		}
 		
@@ -106,7 +108,7 @@ public class BinBitImage {
 			if (rest > 0) data[i * bitSets + sets] = bitset;
 		}
 		
-		if (BinBitImage.DEBUG_LEVEL > 1) System.out.println(this.toString());
+		if (debugTrigger(3)) System.out.println(this.toString());
 	}
 	
 	public BinBitImage clone(Matrix M) {
@@ -115,19 +117,20 @@ public class BinBitImage {
 		bitimage.data = data.clone();
 		bitimage.bitSets = bitSets;
 		
-		if (BinBitImage.DEBUG_LEVEL > 2) System.out.println(this.toString());
+		if (debugTrigger(2)) System.out.println(this.toString());
 		return bitimage;
 	}
 	
 	
 	public void zero() { for (int i = 0; i < data.length; i++) data[i] = 0; }
+	public void set() { for (int i = 0; i < data.length; i++) data[i] = 0xffffffffffffffffL; }
 	
 	// OR-s this another bitImage into this bitImage
 	void or(BinBitImage bI) {
 		int l = data.length > bI.data.length ? bI.data.length : data.length;
 		for (int i = 0; i < l; i++) this.data[i] |= bI.data[i];
 		
-		if (Matrix.DEBUG_LEVEL > 1) System.out.println(this.toString());
+		if (debugTrigger(2)) System.out.println(this.toString());
 	}
 
 	// AND-s this another bitImage into this bitImage
@@ -135,7 +138,7 @@ public class BinBitImage {
 		int l = data.length > bI.data.length ? bI.data.length : data.length;
 		for (int i = 0; i < l; i++) this.data[i] &= bI.data[i];
 		
-		if (BinBitImage.DEBUG_LEVEL > 1) System.out.println(this.toString());
+		if (debugTrigger(2)) System.out.println(this.toString());
 	}
 
 	
@@ -146,7 +149,7 @@ public class BinBitImage {
 		// large matrix basecase
 		else { int a = c%64; data[r * bitSets + c/64] |= (0x1L << a); }
 		
-		if (BinBitImage.DEBUG_LEVEL > 1) System.out.println(this.toString());
+		if (debugTrigger(2)) System.out.println(this.toString());
 	}
 
 	// clear a bit in bitImage
@@ -156,7 +159,7 @@ public class BinBitImage {
 		// large matrix basecase
 		else { int a = c%64; data[r * bitSets + c/64] &= 0xFFFFFFFFFFFFFFFFL ^ (0x1L<<a); }
 		
-		if (BinBitImage.DEBUG_LEVEL > 1) System.out.println(this.toString());
+		if (debugTrigger(2)) System.out.println(this.toString());
 	}
 	
 	// transposes two bits across a square matrix
@@ -184,7 +187,7 @@ public class BinBitImage {
 			data[rofs] |= bitcr; data[cofs] -= bitrc;
 		}
 		
-		if (BinBitImage.DEBUG_LEVEL > 1) System.out.println(this.toString());
+		if (debugTrigger(2)) System.out.println(this.toString());
 	}
 	
 	void swapRows(int r1, int r2) {
@@ -205,7 +208,7 @@ public class BinBitImage {
 			data[r2*bitSets + i] = bitset;
 		}
 		
-		if (BinBitImage.DEBUG_LEVEL > 1) System.out.println(this.toString());
+		if (debugTrigger(2)) System.out.println(this.toString());
 	}
 	
 	protected boolean equals(BinBitImage bI) {
@@ -350,7 +353,14 @@ public class BinBitImage {
 		return binBitLength;
 	}
 
+
+	///////////////////////////////////////////////////////////////////////////////////////////////////////////
+	//			HELPER/INLINE MTHODS
+	///////////////////////////////////////////////////////////////////////////////////////////////////////////
 	
+	// debugTrigger() limits local debug level by debug level of Matrix class 
+	private static boolean debugTrigger(int trigger) { return Matrix.DEBUG_LEVEL - DEBUG_LEVEL >= 0 && DEBUG_LEVEL >= trigger; }
+
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
 	//			OUTPUT METHODS
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -380,13 +390,14 @@ public class BinBitImage {
 
 	// returns String version of current binBitI & binBitD contents
 	protected static String binBitToString() {
+		if (!debugTrigger(DEBUG_LEVEL)) return "";
 		double[] ad = new double[binBitLength];
 		int[] ai = new int[binBitLength];
 		binBitI.position(0);
 		binBitD.position(0);
 		binBitI.get(ai, 0, binBitLength);
 		binBitD.get(ad, 0, binBitLength);
-		return "binBitI: " + binBitLength + " " + Arrays.toString(ai) + "\nbinBitD: " + binBitLength + " " + Arrays.toString(ad) + "\n";
+		return "binBitI: " + binBitLength + " " + Arrays.toString(ai) + "\binBitI length: " + binBitLength + " " + Arrays.toString(ad) + "\n";
 	}
 
 	

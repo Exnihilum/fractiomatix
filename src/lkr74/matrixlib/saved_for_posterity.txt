@@ -1,3 +1,102 @@
+	// factorises/decomposes matrix into two diagonal matrices U and V, useful for the LU backsubstitution linear solving method:
+	//		uuu			v..
+	// U:	.uu		L:	vv.
+	//		..u			vvv
+	// TODO: debugging needed, do not use
+	public Matrix[] decomposeLU() {
+		
+		if (M != N)	throw new RuntimeException("Matrix.decomposeLU(): Matrix not square.");
+		if (M < 1)	throw new RuntimeException("Matrix.decomposeLU(): Invalid matrix.");
+
+		// all diagonal elements must be nonzero
+		for (int d = 0; d < M; d++)
+			if (nearZero(data[d * M + d])) { status |= SINGULAR_MATRIX; return null; }
+			
+		Matrix[] lLU = new Matrix[2];
+		lLU[0] = new Matrix("L", M, N, Matrix.Type.Null);
+		lLU[1] = new Matrix("U", M, N, Matrix.Type.Null);
+		double[] dataL = lLU[0].data, dataU = lLU[1].data;
+
+		for (int c1 = 0; c1 < N; c1++) {
+			
+			// calculate u(r,c)
+			if (c1 == 0)	dataU[0] = data[0];
+			else
+				for (int r = 0; r <= c1; r++) {
+					int rN = r * N;
+					double luSum = 0;
+					for (int k = 0; k < r; k++)
+						luSum += dataL[rN + k] * dataU[k * N + c1];
+					dataU[rN + c1] = data[rN + c1] - luSum;
+				}
+			
+			// calculate l(r,c)
+			double uDiag = 1.0 / dataU[c1 * N + c1];
+			for (int r = c1; r < N; r++) {
+				int rN = r * N;
+				double luSum = 0;
+				if (c1 == 0) dataL[rN] = data[rN];
+				else {
+					for (int k = 0; k < c1; k++)
+						luSum += dataL[rN + k] * dataU[k * N + c1];
+					dataL[rN + c1] = (data[rN + c1] - luSum) * uDiag;
+				}
+			}
+		}
+		
+		if (DEBUG_LEVEL > 1) {
+			System.out.println("decomposeLU() result:");
+			System.out.println(lLU[0].toString());
+			System.out.println(lLU[1].toString());
+		}
+		return lLU;
+	}
+	
+	
+	
+		
+	// method takes the factorised L & U triangular matrices applying them on this constant vector to solve
+	// a linear system where only the constant vector is changing, the matrix coefficients assumed to be fixed
+	// method returns the solution vector x
+	public Matrix backSubstituteLU(Matrix L, Matrix U) {
+		
+		Matrix cp = new Matrix("c'", U.M, 1, Matrix.Type.Null);					// c' needs to be generated from input constant vector c
+		String newname;
+		if (Matrix.DEBUG_LEVEL > 1) newname = "x((LU)^-1*" + this.name + ")";
+		else						newname = "x";
+		Matrix x = new Matrix(newname, U.M, 1, Matrix.Type.Null);									// the solution vector x
+		double[] dataU = U.data, dataV = L.data, datacp = cp.data, datax = x.data;
+
+		// loop handles every element of c, c', V, U and x
+		// c'(r) = (c(r) - sum(v(r,k) * c'(k))) / v(r,r)
+		datacp[0] = data[0] / dataV[0];
+		for (int r = 1; r < M; r++) {
+			int rN = L.N * r;
+			double sum = 0;
+			for (int k = 0; k < r; k++) sum += dataV[rN + k] * datacp[k];
+			datacp[r] = (data[r] - sum) / dataV[rN + r];
+		}
+
+		// x(r) = (c'(r) - sum(u(r,k) * x(k))) / u(r,r)
+		int r = M - 1;
+		datax[r] = datacp[r] / dataU[r * U.N + r--];
+		for (; r >= 0; r--) {
+			int rN = U.N * r;
+			double sum = 0;
+			for (int k = r + 1; k < M; k++) sum += dataU[rN + k] * datax[k];
+			datax[r] = (datacp[r] - sum) / dataU[rN + r];
+		}
+
+		if (DEBUG_LEVEL > 1) {
+			System.out.println("backSubstituteLU solver:");
+			System.out.println(x.toString());
+		}
+		return x;	
+	}
+	
+
+
+
 	private static DoubleBuffer bufSWA, bufSWB, bufSWC;	// preallocated DirectBuffer for operations upto specific matrix size
 	
 	// method preallocates a DirectBuffer for a matrix operation of a certain size with a certain recursion cutoff

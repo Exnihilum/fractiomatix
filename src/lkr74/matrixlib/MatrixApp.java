@@ -4,6 +4,9 @@ import org.jfree.data.xy.XYDataset;
 import org.jfree.data.xy.XYSeries;
 import org.jfree.data.xy.XYSeriesCollection;
 import org.jfree.ui.RefineryUtilities;
+
+import com.jogamp.gluegen.DebugEmitter;
+
 import lkr74.mathgenerics.MiscMath;
 import lkr74.mathgenerics.MiscMath.RandFill;
 import lkr74.mathgenerics.XYLineChart_AWT;
@@ -179,11 +182,13 @@ public class MatrixApp {
 //		matrixMultiTest(mtests);
 //		if(1==1) return;
 
-		MatrixMarketIO mmIO = new MatrixMarketIO("data/young1c.mtx");
-		Matrix MM = mmIO.getMatrix();
-		System.out.println(MM.toString());
-		CSRMatrix MMcsr = CSRMatrix.convert(MM);
-		System.out.println(MMcsr.toString());
+//		// Test MarixMarket file loading routine
+//		MatrixMarketIO mmIO = new MatrixMarketIO("data/young1c.mtx");
+//		Matrix MM = mmIO.getMatrix();
+//		System.out.println(MM.toString());
+//		// Test conversion of MatrixMarket data to CSR sparse format
+//		CSRMatrix MMcsr = CSRMatrix.convert(MM);
+//		System.out.println(MMcsr.toString());
 		
 		Matrix D8 = new Matrix("D8", 8, 8, d11, null);
 		D8.convergent();
@@ -201,9 +206,16 @@ public class MatrixApp {
 		Matrix Q = O.orthogonalise(true);
 		O.transpose(true).orthogonalise(true);
 		
-		// Test eigenvalue & eigenvector finder
-		Matrix E = O.findEigenQR(Q, 150, 30, 0.005);
+		// test LU = A decomposition with permutation and A = LU recomposition with depermutation
+		Matrix[] lLU = Q.decomposeLU(true, true);
+		Matrix LU = lLU[0].multiply(lLU[1]);
+		LU.unpermute(lLU[0].mutator);
+		System.out.println(LU);
 		
+		// Test eigenvalue & eigenvector finder findEigenQR(), which takes an orthonormalised matrix
+		Matrix E = O.findEigenQR(Q, 150, 30, 0.005);
+
+		// test QR decomposition
 		O.decomposeQR(Q);
 		
 		// Test Power Method for finding largest eigenvalue
@@ -212,7 +224,7 @@ public class MatrixApp {
 		System.out.println("Largest eigenvalue: " + D2.eigenPowerValue(x5, 0.01, 100) + "\n");
 		
 		// Test method that finds diagonal bandwidth of a sparse matrix
-		System.out.println(new Matrix("Dd", 10, 10, d20, null).diagonality());
+		System.out.println("Diagonality: " + new Matrix("Dd", 10, 10, d20, null).diagonality());
 		
 		int iters = 100;
 		long tstart, tend;
@@ -220,18 +232,15 @@ public class MatrixApp {
 		// Test partial pivoting Gauss solver
 		Matrix D5 = new Matrix("A", 3, 3, d5, null);
 		Matrix x6 = D5.solveGaussPP(new Matrix("c2", 3, 1, d9, null));
+		// test remultiplying it
+		D5.multiply(x6);
 		
 		Matrix N = new Matrix("N", 3, 3, cn, null);
 		N.convergent();
 		x6 = N.solveGaussSeidel(new Matrix("v1", 3, 1, v1, null), 100, 0.1);
-
-		// Test Crout LU decomposer and LU back substitution solver for systems with constant coefficients
-		Matrix[] lLU = D5.decomposeLU();
-		if (lLU != null)	x6 = new Matrix("c2", 3, 1, d9, null).backSubstituteLU(lLU[0], lLU[1]);
-		else				System.out.println("backSubstituteLU solver: nonfactorisable matrix.");
 		
 		// Test pivoting LU decomposer and back substitution methods
-		Matrix[] bLU = Matrix.backSubstituteLU2(D5, null, new Matrix("c2", 3, 1, d9, null), true);
+		Matrix[] bLU = new Matrix("c2", 3, 1, d9, null).backSubstituteLU(D5, null, true);
 		if (bLU == null) System.out.println("backSubstituteLU2() received singular matrix.");
 
 		// Test partial pivoting Gauss Jordan with inverse matrix creation and sparse diagonal matrix optimisation
@@ -244,37 +253,37 @@ public class MatrixApp {
 		
 		// Test full pivoting Gauss-Jordan with in-situ matrix & input vector -> solution vector transformation
 		Matrix c2 = new Matrix("c2", 3, 2, d9b, null), X;
-		Matrix.DEBUG_LEVEL = 0;
+		Matrix.DEBUG_LEVEL--;
 		tstart = System.nanoTime();
 		for (int i = 0; i < iters; i++) X = D5.solveGaussJordanFP(c2, true);
 		tend = System.nanoTime();
-		Matrix.DEBUG_LEVEL = 1;
+		Matrix.DEBUG_LEVEL++;
 		System.out.printf("solveGaussJordanFP() averaged %.1f ns\n", (double)(tend - tstart)/iters);
 
 		Matrix Q1 = new Matrix("Q1", 128, 128, Matrix.Type.Random), Q11;
 		Matrix Q2 = new Matrix("Q2", 128, 128, Matrix.Type.Random), Q22;
 		
 		// Test ordinary multiply versus Strassen-Winograd multiply algorithm
-		Matrix.DEBUG_LEVEL = 0;
-		for (int tests = 0; tests < 5; tests++) {
-
-			tstart = System.nanoTime();
-			for (int i = 0; i < iters; i++) Q11 = Q1.multiply(Q1);
-			tend = System.nanoTime();
-
-			System.out.printf("multiply() averaged %.1f ns\n", (double)(tend - tstart)/iters);
-		    System.out.println("Mults: " + Matrix.mulFlops_DEBUG);
-
-		    tstart = System.nanoTime();
-			for (int i = 0; i < iters; i++) Q22 = Matrix.multiplyStrasWin(Q2, Q2, 8);
-			tend = System.nanoTime();
-
-			System.out.printf("multiplyStrasWin() averaged %.1f ns\n", (double)(tend - tstart)/iters);
-		    System.out.println("Mults: " + Matrix.mulFlopsSW_DEBUG);
-		    System.out.println("Adds: " + Matrix.mulAdopsSW_DEBUG);
-		    System.out.println("Recurses: " + Matrix.mulSW_DEBUG);
-		}
-		Matrix.DEBUG_LEVEL = 2;
+//		Matrix.DEBUG_LEVEL--;
+//		for (int tests = 0; tests < 5; tests++) {
+//
+//			tstart = System.nanoTime();
+//			for (int i = 0; i < iters; i++) Q11 = Q1.multiply(Q1);
+//			tend = System.nanoTime();
+//
+//			System.out.printf("multiply() averaged %.1f ns\n", (double)(tend - tstart)/iters);
+//		    System.out.println("Mults: " + Matrix.mulFlops_DEBUG);
+//
+//		    tstart = System.nanoTime();
+//			for (int i = 0; i < iters; i++) Q22 = Matrix.multiplyStrasWin(Q2, Q2, 8);
+//			tend = System.nanoTime();
+//
+//			System.out.printf("multiplyStrasWin() averaged %.1f ns\n", (double)(tend - tstart)/iters);
+//		    System.out.println("Mults: " + Matrix.mulFlopsSW_DEBUG);
+//		    System.out.println("Adds: " + Matrix.mulAdopsSW_DEBUG);
+//		    System.out.println("Recurses: " + Matrix.mulSW_DEBUG);
+//		}
+//		Matrix.DEBUG_LEVEL++;
 		
 		// Test if multiplication of rescaled matrices produce same results as unexpanded ones
 		Matrix S1 = new Matrix("S1", 6, 5, d2, null);
@@ -287,21 +296,21 @@ public class MatrixApp {
 		Matrix A1 = new Matrix("A1", 9, 9, d3, null);
 		A1 = A1.multiply(-2000, false);
 
+		Matrix G = new CSRMatrix("G", 9, 9, d3, null);
 
 		// Test Laplacian determinant finding method
-		Matrix.DEBUG_LEVEL--;
-		Matrix G = new CSRMatrix("G", 9, 9, d3, null);
-		for (int tests = 0; tests < 3; tests++) {
-			
-			tstart = System.nanoTime();
-			for (int i = 0; i < iters; i++) Matrix.determinantLaplace(G, 2);
-			tend = System.nanoTime();
-			
-		    System.out.printf("determinantLaplaceR2() averaged %.1f ns\n", (double)(tend - tstart)/iters);
-			System.out.println("determinant: " + G.det);
-			System.out.println("recursions: " + Matrix.detL_DEBUG + "\n");
-		}
-		Matrix.DEBUG_LEVEL++;
+//		Matrix.DEBUG_LEVEL--;
+//		for (int tests = 0; tests < 3; tests++) {
+//			
+//			tstart = System.nanoTime();
+//			for (int i = 0; i < iters; i++) Matrix.determinantLaplace(G, 2);
+//			tend = System.nanoTime();
+//			
+//		    System.out.printf("determinantLaplaceR2() averaged %.1f ns\n", (double)(tend - tstart)/iters);
+//			System.out.println("determinant: " + G.det);
+//			System.out.println("recursions: " + Matrix.detL_DEBUG + "\n");
+//		}
+//		Matrix.DEBUG_LEVEL++;
 
 		// Test CSR matrices, test vAv style multiplication
 		CSRMatrix x1 = new CSRMatrix("x1", 1, 9, d, null);
@@ -344,17 +353,20 @@ public class MatrixApp {
 		csrS.valueTo(0, 4, -8);
 		CSRMatrix csrU = csrS.add(csrT, true);
 		CSRMatrix csrD = csrU.multiply(csrT);
-		Matrix B = csrD.clone();
+		CSRMatrix B = csrD.clone();
 		
 		Matrix C = new Matrix("C", 5, 5, Matrix.Type.Identity);
 		System.out.println("Identity matrix\n" + C.toString());
 		System.out.println();
 
-		//System.out.println("Multiplied matrices\n" + Matrix.multiply(csrA, B).toString());
+		System.out.println("Multiplied matrices polymorphically\n" + csrA.multiply(B));
 		System.out.println();
 
 		// shouldn't be equal since AB != BA in general
-		//System.out.println(Matrix.multiply(csrA, B).equals(Matrix.multiply(B, csrA)));
+		csrS = new CSRMatrix("S", 5, 5, d2, null);
+		csrT = new CSRMatrix("T", 5, 5, d2, null);
+		csrT = csrT.add(5, false);
+		System.out.println(csrS.multiply(csrT).equals(csrT.multiply(csrS)));
 		System.out.println();
 
 		Matrix b = new Matrix("b", 5, 1, Matrix.Type.Random);
@@ -362,7 +374,6 @@ public class MatrixApp {
 		Matrix A = new Matrix("A3", csrA.M, csrA.N, Matrix.Type.Null);
 		A = csrA.clone();
 		Matrix x = A.solveGaussPP(b);
-
 		A = A.multiply(x);
 		
 	}

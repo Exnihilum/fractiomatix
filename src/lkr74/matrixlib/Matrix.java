@@ -30,6 +30,7 @@ public class Matrix implements Cloneable {
 	protected double[] data, idata;				// row-column matrix uses a flat array, data = real part, idata = imaginary part
 	protected int status;
 	public double det = 0;						// last calculated determinant value
+	public double norm1 = -1;					// last calculated norm-1 value
 
 	// optimisation hierarchies & variables
 	// binBitLength = no. of values gathered in binBit, procNum = number of concurrent processors available
@@ -78,6 +79,7 @@ public class Matrix implements Cloneable {
 		data = dataSet[0];
 		idata = dataSet[1];
 		if (type == Type.Null || type == Type.Null_Complex) setNull();
+		//for (int i = 0; i < r; i++) mutator[i] = i;
 		bitImage = new BinBitImage(this);
 	}
 	
@@ -250,6 +252,23 @@ public class Matrix implements Cloneable {
 		M.data = dataSet[0];
 		return M;
 		}
+	
+	
+	// calculates 1-norm of a matrix
+	private double norm1() {
+		int MN = M * N;
+		norm1 = 0;
+		double sum;
+		for (int j = 0; j < N; j++) {
+			sum = 0;
+			for (int i = j; i < MN; i += N) {
+				double v = data[i];
+				sum += v < 0 ? -v : v; }
+			if (sum > norm1) norm1 = sum;
+		}
+		return norm1;
+	}
+
 
 	
 	// polymorphic matrix centering method will numerically center the matrix, columnwise
@@ -290,6 +309,10 @@ public class Matrix implements Cloneable {
 				dataSet[1] = new double[r * c];
 			case Null:
 				dataSet[0] = new double[r * c];
+				break;
+			case Unit:
+				dataSet[0] = new double[r * c];
+				for (int i = 0; i < r * c; i++) dataSet[0][i] = 1;
 				break;
 			case Identity:
 				if (r != c) 	throw new RuntimeException("Matrix.generateData(): Identity matrix must be square.");
@@ -655,7 +678,7 @@ public class Matrix implements Cloneable {
 			dataC = dataA; idataC = idataA;
 		}
 		
-		C.name = (Matrix.DEBUG_LEVEL > 1 ? "(" + name + (subtract?"-":"+") + B.name + ")" : "A" + nameCount++);
+		C.name = (Matrix.DEBUG_LEVEL > 1 ? "(" + name + (subtract?"-":"+") + B.name + ")" : (subtract?"D":"S") + nameCount++);
 		
 		if (subtract)	for (int i = 0, MN = M * N; i < MN; i++) dataC[i] = dataA[i] - dataB[i];
 		else			for (int i = 0, MN = M * N; i < MN; i++) dataC[i] = dataA[i] + dataB[i];
@@ -1649,111 +1672,22 @@ public class Matrix implements Cloneable {
 		return x;
 	}
 
-	
-	
-	// factorises/decomposes matrix into two diagonal matrices U and V, useful for the LU backsubstitution linear solving method:
-	//		uuu			v..
-	// U:	.uu		L:	vv.
-	//		..u			vvv
-	public Matrix[] decomposeLU() {
-		
-		if (M != N)	throw new RuntimeException("Matrix.decomposeLU(): Matrix not square.");
-		if (M < 1)	throw new RuntimeException("Matrix.decomposeLU(): Invalid matrix.");
-
-		// all diagonal elements must be nonzero
-		for (int d = 0; d < M; d++)
-			if (nearZero(data[d * M + d])) { status |= SINGULAR_MATRIX; return null; }
-			
-		Matrix[] lLU = new Matrix[2];
-		lLU[0] = new Matrix("L", M, N, Matrix.Type.Null);
-		lLU[1] = new Matrix("U", M, N, Matrix.Type.Null);
-		double[] dataL = lLU[0].data, dataU = lLU[1].data;
-
-		for (int c1 = 0; c1 < N; c1++) {
-			
-			// calculate u(r,c)
-			if (c1 == 0)	dataU[0] = data[0];
-			else
-				for (int r = 0; r <= c1; r++) {
-					int rN = r * N;
-					double vuSum = 0;
-					for (int k = 0; k < r; k++)
-						vuSum += dataL[rN + k] * dataU[k * N + c1];
-					dataU[rN + c1] = data[rN + c1] - vuSum;
-				}
-			
-			// calculate v(r,c)
-			double uDiag = 1.0 / dataU[c1 * N + c1];
-			for (int r = c1; r < N; r++) {
-				int rN = r * N;
-				double vuSum = 0;
-				if (c1 == 0) dataL[rN] = data[rN];
-				else {
-					for (int k = 0; k < c1; k++)
-						vuSum += dataL[rN + k] * dataU[k * N + c1];
-					dataL[rN + c1] = (data[rN + c1] - vuSum) * uDiag;
-				}
-			}
-		}
-		
-		if (DEBUG_LEVEL > 1) {
-			System.out.println("decomposeLU() result:");
-			System.out.println(lLU[0].toString());
-			System.out.println(lLU[1].toString());
-		}
-		return lLU;
-	}
 
 	
-	// method takes the factorised L & U triangular matrices applying them on this constant vector to solve
-	// a linear system where only the constant vector is changing, the matrix coefficients assumed to be fixed
-	// method returns the solution vector x
-	public Matrix backSubstituteLU(Matrix L, Matrix U) {
-		
-		Matrix cp = new Matrix("c'", U.M, 1, Matrix.Type.Null);					// c' needs to be generated from input constant vector c
-		String newname;
-		if (Matrix.DEBUG_LEVEL > 1) newname = "x((LU)^-1*" + this.name + ")";
-		else						newname = "x";
-		Matrix x = new Matrix(newname, U.M, 1, Matrix.Type.Null);									// the solution vector x
-		double[] dataU = U.data, dataV = L.data, datacp = cp.data, datax = x.data;
-
-		// loop handles every element of c, c', V, U and x
-		// c'(r) = (c(r) - sum(v(r,k) * c'(k))) / v(r,r)
-		datacp[0] = data[0] / dataV[0];
-		for (int r = 1; r < M; r++) {
-			int rN = L.N * r;
-			double sum = 0;
-			for (int k = 0; k < r; k++) sum += dataV[rN + k] * datacp[k];
-			datacp[r] = (data[r] - sum) / dataV[rN + r];
-		}
-
-		// x(r) = (c'(r) - sum(u(r,k) * x(k))) / u(r,r)
-		int r = M - 1;
-		datax[r] = datacp[r] / dataU[r * U.N + r--];
-		for (; r >= 0; r--) {
-			int rN = U.N * r;
-			double sum = 0;
-			for (int k = r + 1; k < M; k++) sum += dataU[rN + k] * datax[k];
-			datax[r] = (datacp[r] - sum) / dataU[rN + r];
-		}
-
-		if (DEBUG_LEVEL > 1) {
-			System.out.println("backSubstituteLU solver:");
-			System.out.println(x.toString());
-		}
-		return x;	
-	}
 	
-	
-	// LU decompose with pivoting and recording of permutations, which also calculates determinant
+	// LU combined single-matrix LU decompose with pivoting and recording of permutations, which also calculates determinant
 	// adapted from NUMERICAL RECIPES IN C: THE ART OF SCIENTIFIC COMPUTING (ISBN 0-521-43108-5)
-	// the decompose is stored directly in current matrix, unless copy = true, then a copy is returned
-	Matrix decomposeLU2(boolean copy) {
+	// the combined decompose is stored directly in current matrix, unless copy = true, then a copy is returned
+	// if generateLandU = true, a normal two-matrix L & U result returned, otherwise a combined LU matrix returned
+	// also the row mutation result is stored in result matrixes mutator field
+	Matrix[] decomposeLU(boolean copy, boolean generateLandU) {
 		
 		if (M != N)	throw new RuntimeException("Matrix.decomposeLU2(): Matrix not square.");
 		if (M < 1)	throw new RuntimeException("Matrix.decomposeLU2(): Invalid matrix.");
+		
+		Matrix[] lLU = new Matrix[2];
 		int[] mutatorLU = null;
-		Matrix LU = null;
+		Matrix LU = this;
 		double[] dataLU = data;
 		if (copy) {
 			LU = clone();
@@ -1766,7 +1700,7 @@ public class Matrix implements Cloneable {
 		}
 		
 		double[] vv = new double[M];
-		int d = 1;								// every permutation toggles sign of d
+		double d = 1;								// every permutation toggles sign of d
 		
 		for (int i = 0; i < M; i++) {			// looping over rows getting scaling factor of every row, putting it in vv
 			int iN = i * N;
@@ -1793,53 +1727,81 @@ public class Matrix implements Cloneable {
 			for (int i = j; i < M; i++) {
 				int iN = i * N;
 				double sum = dataLU[iN + j];
-				for (int k = 0; k < j; k++) sum -= dataLU[iN + k] * dataLU[k * N + j];
+				for (int k = 0, kNj = j; k < j; k++, kNj += N)
+					sum -= dataLU[iN + k] * dataLU[kNj];
 				dataLU[iN + j] = sum;
 				double v = vv[i] * (sum < 0 ? -sum : sum);
 				// have we found a better pivot than the best so far?
 				if (v >= vMax) { vMax = v; iMax = i; }
 			}
 			if (j != iMax) {											// test if there's a better pivot and we need to swap rows
-				if (copy) LU.swapRows(iMax, j); else swapRows(iMax, j);			// yes
+				LU.swapRows(iMax, j);									// yes
 				d = -d;
 				vv[iMax] = vv[j];										// also change scale factor
 			}
 			mutatorLU[j] = iMax;
 			// zero at pivot element implies a singular matrix, but some applications can get by with tweaking away the zero
-			if (dataLU[jN + j] == 0) {
+			if (nearZero(dataLU[jN + j])) {
 				status |= SINGULAR_MATRIX;
-				dataLU[jN + j] = ROUNDOFF_ERROR;
+				dataLU[jN + j] = ROUNDOFF_ERROR * (norm1 < 0 ? this.norm1() : norm1);
 			}
 			if (j < M - 1) {
 				double v = 1.0 / dataLU[jN + j];
 				for (int i = j + 1; i < N; i++) dataLU[i * N + j] *= v;	// divide column by pivot element
 			}
 		}
-		
+
+		lLU[0] = LU;
+
 		// use d to calculate determinant, put it in LU
 		for (int i = 0; i < M; i++) d *= dataLU[i * M + i];
 		if (copy) LU.det = d; else this.det = d;
 		
+		// was generation of individual L & U matrices requested?
+		if (generateLandU) {
+			// convert LU into L, moving it's upper triangle data into U
+			lLU[0].name = "L";									// here we treat dataLU as if containing data of L
+			lLU[1] = new Matrix("U", M, N, Matrix.Type.Null);
+			double[] dataU = lLU[1].data;
+			for (int i = 0; i < M; i++)
+				for (int j = i; j < N; j++) {					// iterate over the top triangle to copy data into U
+					dataU[i * M + j] = dataLU[i * M + j];
+					if (i == j) dataLU[i * M + j] = 1;			// L's diagonal has only 1:s
+					else dataLU[i * M + j] = 0;					// L's top triangle is zero
+				}
+			lLU[0].det = lLU[1].det = d;
+			lLU[1].mutator = mutatorLU;
+		}
+		
 		if (DEBUG_LEVEL > 1) {
 			System.out.println("decomposeLU2() result:");
-			System.out.println(copy ? LU.toString() : this.toString());
+			System.out.println(LU.toString());
+			if (generateLandU) System.out.println(lLU[1].toString());
 			System.out.println(Arrays.toString(mutatorLU));
 		}
-		if (copy) return LU; else return this;
+		return lLU;
 	}
 	
 	
-	// method takes the factorised L & U triangular matrices using them to solve a linear system
+
+	// unpermute a matrix with mutator values altered
+	public void unpermute(int[] mutator) {
+		if (mutator == null) return;
+		for (int i = M - 1; i >= 0; i--) if (mutator[i] != i)	swapRows(i, mutator[i]);
+	}
+	
+	
+	// method takes the combined factorised LU matrix using it to solve a linear system
 	// where only the constant vector is changing, the matrix coefficients assumed to be fixed
 	// adapted from NUMERICAL RECIPES IN C: THE ART OF SCIENTIFIC COMPUTING (ISBN 0-521-43108-5)
-	// the triangular matrices L & U come here in a COMBINED form in matrix LU, split by 1:s in the diagonal
-	// matrix A, LU & vector b are the input, matrix array with solution vector and LU matrix is the return value
+	// the triangular matrices L & U come here in a COMBINED form in matrix LU, split by l(ii)+u(ii) in the diagonal; l(ii) = 1
+	// matrix A, LU are applied on this vector, matrix array with solution vector and LU matrix is the return value
 	// if LU is null, then the method calls decomposeLU2() with A, if A is null then LU is used
 	// method optimisation takes into account that b might contain many leading zero elements
-	public static Matrix[] backSubstituteLU2(Matrix A, Matrix LU, Matrix b, boolean copy) {
+	public Matrix[] backSubstituteLU(Matrix A, Matrix LU, boolean copy) {
 		
-		if (A == null && LU == null || b == null) throw new RuntimeException("Matrix.backSubstituteLU2(): Null matrices/vector.");
-		if (b.N != 1 || b.M != (A == null ? LU.M : A.M))	throw new RuntimeException("Matrix.backSubstituteLU2(): Invalid constant vector.");			
+		if (A == null && LU == null) throw new RuntimeException("Matrix.backSubstituteLU2(): Null matrices/vector.");
+		if (N != 1 || M != (A == null ? LU.M : A.M))	throw new RuntimeException("Matrix.backSubstituteLU2(): Invalid constant vector.");			
 		Matrix[] bLU = new Matrix[2];
 		
 		// a LU = null tells algorithm to create a new LU decompose, which will be returned in the matrix array
@@ -1847,15 +1809,15 @@ public class Matrix implements Cloneable {
 			if (A.M != A.N)	throw new RuntimeException("Matrix.decomposeLU2(): Matrix A not square.");			
 			if (A.M < 1)	throw new RuntimeException("Matrix.decomposeLU2(): Invalid matrix.");
 			// copy A into a LU matrix and decompose LU, if copy=false it will destroy matrix A returning it as LU
-			bLU[1] = A.decomposeLU2(copy);
+			bLU[1] = A.decomposeLU(copy, false)[0];
 			// decompose failed on a singular matrix, return null
 			if (bLU[1] == null)	return null;	
 		} else
 			bLU[1] = LU;
 		
 		// if copy=true, do not return solution vector in b vector, but in a copy
-		if (copy) bLU[0] = b.clone(); else bLU[0] = b;
-		if (Matrix.DEBUG_LEVEL > 1) bLU[0].name = "x((" + bLU[1].name + ")^-1*" + b.name + ")";
+		if (copy) bLU[0] = this.clone(); else bLU[0] = this;
+		if (Matrix.DEBUG_LEVEL > 1) bLU[0].name = "x((" + bLU[1].name + ")^-1*" + name + ")";
 		else						bLU[0].name = "x" + nameCount++;
 
 		double[] dataLU = bLU[1].data, datab = bLU[0].data, databi = bLU[0].idata;
@@ -2179,14 +2141,12 @@ public class Matrix implements Cloneable {
 	
 	
 	
-	// findEigenQR() uses the common A(k+1) = Q*AQ iteration routine
+	// findEigenQR() uses the common A(k+1) = Q*AQ iterative diagonalisation routine, and Q is an orthonormal matrix
 	public Matrix findEigenQR(Matrix Q, int iters, int vIters, double maxErr) {
 
 		DEBUG_LEVEL--;
 		Matrix Alam = this.clone(), QT = Q.transpose(true);
-		// the null matrix for eigenvector solving
-		Matrix z = new Matrix("z", M, 1, Matrix.Type.Null);
-		Matrix[] v = new Matrix[M];
+		
 		double currErr = 0, lastErr = 0;
 		double[] dataAlam = Alam.data, lastD = new double[M];
 		maxErr *= maxErr;					// compare squared values to avoid unnecessary square root
@@ -2211,25 +2171,45 @@ public class Matrix implements Cloneable {
 			System.out.println("Error: " + String.format("%.4f, delta: %.4f", currErr, lastErr-currErr));
 			if (currErr < maxErr) break;
 		}
-		DEBUG_LEVEL++;
+		int itersDone = i;
 		
-		// time to find the eigenvectors through v(i) = (lambda(i)*I - A)^-1 * zero-vector
+		// the eigenvectors to solve start out filled with ones
+		Matrix[] ev = new Matrix[M];
+		for (i = 0; i < M; i++)
+			ev[i] = new Matrix("z", M, 1, Matrix.Type.Unit);
+
+		// solve the eigenvectors
+		Matrix Ilam = identity(M, 1);
 		for(int j = 0; j < M; j++) {
-			Matrix Ilam = identity(M, dataAlam[j * M + j]);
-			Matrix AmIlam = this.subtract(Ilam, true);
-			//v[j] = (this.subtract(Ilam, true)).solveGaussSeidel(z, vIters, maxErr);
-			v[j] = AmIlam.solveGaussJordanFP(z, true);
+			// this is the I*lambda matrix
+			for (int d = 0, jMj = j * M + j; d < M; d++) Ilam.data[d * M + d] = dataAlam[jMj];
+			// LU decompose (A - lambda*I)
+			Matrix[] lLU = this.subtract(Ilam, true).decomposeLU(true, true);
+			Matrix[] xl = {ev[j], null};
+			// iterate 4 times: LU*x(l+1) = x(l)
+			for (int l = 0; l < 4; l++) {
+				xl = xl[0].backSubstituteLU(null, lLU[1], false);
+				if (xl == null) { ev[j] = null; break; }			// if backsubstitution fails, set that eigenvector to null
+				xl[0].normalise(false);
+			}
 		}
+		
+		DEBUG_LEVEL++;
 
 		if (DEBUG_LEVEL > 1) {
-			System.out.println("QR eigenfinder took " + i + " iterations, results:");
+			System.out.println("QR eigenfinder took " + itersDone + " iterations, results:");
 			for(i = 0; i < M; i++) {
 				System.out.println("eigenvalue" + (i+1) + ": " + Alam.data[i * M + i]);
-				//System.out.println("eigenvector" + (i+1) + (v[i] != null ? ":" : " failed converging."));
-				//if (v[i] != null) System.out.println(v[i].toString());
+				System.out.println("eigenvector" + (i+1) + (ev[i] != null ? ":" : " failed converging."));
+				if (ev[i] != null) {
+					for(int r = 0; r < M; r++) {
+						double v = ev[i].data[r];
+						System.out.println((v < 0 ? "|" : "| ") + String.format("%.5f", v) + " |");
+					}
+				}
 			}
-			System.out.println(Alam.toString());
-			System.out.println(Q.toString());
+			//System.out.println(Alam.toString());
+			//System.out.println(Q.toString());
 		}
 		return Alam;
 	}
@@ -2295,6 +2275,7 @@ public class Matrix implements Cloneable {
 		int maxN = N > MAX_PRINTEXTENT ? MAX_PRINTEXTENT : N;
 		
 		System.out.println(((M == 1 || N == 1) ? "vector: " :"matrix: ") + name + (M == 1 ? "^T" : ""));
+		
 		if (data != null) {
 			for (int i = 0; i < maxM; i++) {
 				int iN = i * N;
@@ -2333,12 +2314,16 @@ public class Matrix implements Cloneable {
 		} else sb.append("[null]\n");
 		if (M == N) sb.append("\nDeterminant: " + det + "\n");
 		else		sb.append("\n");
+		
+//		if (bitImage != null)	sb.append(bitImage.toString());
+//		else					sb.append("No bit image.");
+			
 		return sb.toString();	
 	}
 	
 	
 	public enum Type {
-		Null(0), Identity(1), Random(2), Centering(3), Null_Complex(16), Random_Complex(17);
+		Null(0), Identity(1), Random(2), Centering(3), Unit(4), Null_Complex(16), Random_Complex(17);
 		private int type;
 		private Type(int type) { this.type = type; }
 	}
