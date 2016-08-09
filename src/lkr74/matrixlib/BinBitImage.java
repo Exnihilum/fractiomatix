@@ -365,7 +365,10 @@ public class BinBitImage {
 	//			OUTPUT METHODS
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+	private static int MAX_PRINTEXTENT = Matrix.MAX_PRINTEXTENT;
+
 	public String toString() {
+		
 		StringBuilder sb = new StringBuilder();
 		System.out.println("matrix " + this.M.name + "'s bitImage:");
 		if (bitSets == 0) {
@@ -375,9 +378,14 @@ public class BinBitImage {
 			}
 			return sb.toString();
 		}
-		for (int i = 0; i < M.M; i++) {
-			for (int j = 0; j < bitSets; j++) {
-				for (int k = 0; k < 64; k++)
+		
+		int maxM = M.M > MAX_PRINTEXTENT ? MAX_PRINTEXTENT : M.M;
+		int maxN = M.N > MAX_PRINTEXTENT ? MAX_PRINTEXTENT : M.N;
+		int maxBitSets = (maxN>>6) + (maxN%64 == 0 ? 0 : 1);
+
+		for (int i = 0; i < maxM; i++) {
+			for (int j = 0; j < maxBitSets; j++) {
+				for (int k = 0; k < maxN; k++)
 					if (M.N > j * 64 + k)
 						sb.append(((data[i * bitSets + j]&(0x1L<<k))!=0)?"1 ":". ");
 			}

@@ -3,6 +3,7 @@ package lkr74.mathgenerics;
 import org.jfree.data.xy.XYDataset;
 import org.jfree.ui.RefineryUtilities;
 
+import kineticstorage.FES;
 import lkr74.mathgenerics.XYLineChart_AWT;
 
 
@@ -86,7 +87,11 @@ public class MiscMath {
 	}
 
 	
-	public static double[] solveCubicPolynomial(double A, double B, double C) {
+	
+	public static double convertRPM(double rpm) { return rpm * Math.PI * 2.0 / 60.0; }
+	
+	
+	public static double[] solveQuadraticPolynomial(double A, double B, double C) {
 		// max 4 values to return: result1, result1, complexpart(+/-)
 		// if solution is noncomplex, complexpart will return zero
 		if (A == 0) throw new RuntimeException("solveCubicPolynomial(): divide by zero.");
@@ -342,6 +347,13 @@ public class MiscMath {
 		// dt = delta t (time step)
 		double tpad = 0.2, dt = 0.02;
 		
+		
+		FES flywheel = new FES("FES1", 2, 0.3, convertRPM(1000));
+		flywheel.setRim(0, 0.3, 0.4, "carbon T400HB");
+		flywheel.setRim(1, 0.4, 0.6, "carbon T400HB");
+		System.out.println(flywheel.toString());
+		if (1==1) return;
+		
 		double[][] tv = {{-1,0,0}, {-1,1,0}, {0,0,0}};
 		double[][] tv2 = {{0,0,1}, {0,1,1}, {0,0,0}};
 		
@@ -355,7 +367,7 @@ public class MiscMath {
 		System.out.println("3D Triangle area: " + triangle3DArea2(tv2[0], tv2[1], tv2[2], true));
 
 		System.out.println();
-		double[] s1 = solveCubicPolynomial(1, 3f/2f, 10f/2f);
+		double[] s1 = solveQuadraticPolynomial(1, 3f/2f, 10f/2f);
 		if (s1[2] == 0)
 				System.out.println("cubic solution: x1: " + s1[0] + ", x2: " + s1[1] + "\n");
 		else	System.out.println("cubic complex solution: x1: " + s1[0] + ", x2: " + s1[1] + ", c: " + s1[2] + " * sqrt(-1)\n");

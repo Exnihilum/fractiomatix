@@ -182,13 +182,16 @@ public class MatrixApp {
 //		matrixMultiTest(mtests);
 //		if(1==1) return;
 
-//		// Test MarixMarket file loading routine
-//		MatrixMarketIO mmIO = new MatrixMarketIO("data/young1c.mtx");
-//		Matrix MM = mmIO.getMatrix();
-//		System.out.println(MM.toString());
-//		// Test conversion of MatrixMarket data to CSR sparse format
-//		CSRMatrix MMcsr = CSRMatrix.convert(MM);
-//		System.out.println(MMcsr.toString());
+		// Test MarixMarket file loading routine
+		MatrixMarketIO mmIO = new MatrixMarketIO("data/mcca.mtx");
+		Matrix MM = mmIO.getMatrix();
+		System.out.println(MM.toString());
+		// Test conversion of MatrixMarket data to CSR sparse format
+		CSRMatrix MMcsr = CSRMatrix.convert(MM);
+		System.out.println(MMcsr.toString());
+		
+		MatrixBMPImage MM_image = new MatrixBMPImage(MM);
+		MM_image.write();
 		
 		Matrix D8 = new Matrix("D8", 8, 8, d11, null);
 		D8.convergent();
@@ -255,7 +258,8 @@ public class MatrixApp {
 		Matrix c2 = new Matrix("c2", 3, 2, d9b, null), X;
 		Matrix.DEBUG_LEVEL--;
 		tstart = System.nanoTime();
-		for (int i = 0; i < iters; i++) X = D5.solveGaussJordanFP(c2, true);
+		for (int i = 0; i < iters; i++)
+			X = D5.solveGaussJordanFP(c2, true);
 		tend = System.nanoTime();
 		Matrix.DEBUG_LEVEL++;
 		System.out.printf("solveGaussJordanFP() averaged %.1f ns\n", (double)(tend - tstart)/iters);

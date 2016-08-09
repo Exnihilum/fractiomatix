@@ -348,15 +348,10 @@ public class Matrix implements Cloneable {
 		if (Mi > Mo || Ni > No) throw new RuntimeException("Matrix.rescale(): Invalid data subset size.");
 		int newM = Mo - Mi, newN = No - Ni;
 		// if rescaled field ends up outside the matrix datafield, set matrix to Null matrix
-		if (Mi >= M || Ni >= N || Mo < 0 || No < 0) setNull();
 		
-		String newname;
-		if (DEBUG_LEVEL > 1)	newname = name + "(r:" + Mi + "," + Ni + "," + Mo + "," + No + ")";
-		else					newname = name + "(r)";
-		int dbg = Matrix.DEBUG_LEVEL;
-		Matrix.DEBUG_LEVEL = 0;
-		Matrix A = new Matrix(newname, newM, newN, Matrix.Type.Null);
-		Matrix.DEBUG_LEVEL = dbg;
+		Matrix A = new Matrix("R", newM, newN, Matrix.Type.Null);
+		A.name = (DEBUG_LEVEL > 1 ? name + "(r:" + Mi + "," + Ni + "," + Mo + "," + No + ")" : name + "(r)");
+
 		double[] newdata = A.data;
 
 		for (int nr = Mi, r = 0; nr < Mo; nr++, r++) {
@@ -370,7 +365,11 @@ public class Matrix implements Cloneable {
 				}
 			}
 		}
-		if (DEBUG_LEVEL > 1) System.out.println(A.toString());
+		if (!(Mi >= M || Ni >= N || Mo < 0 || No < 0)) A.clearNull();
+		if (DEBUG_LEVEL > 1) {
+			System.out.println("Rescaling matrix " + A.name);
+			System.out.println(A.toString());
+		}
 		if (doBitImage) A.bitImage = new BinBitImage(A);
 		return A;
 	}
@@ -2232,37 +2231,37 @@ public class Matrix implements Cloneable {
 	//			OUTPUT METHODS
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
 	
-	// limits output of a double to max 5 characters, for following cases:
-	// -XXeE		v >= 10000
-	// -XXXX		v >= 100
-	// -XX.D		v >= 10
-	// -X.DD		v < 10
-	private static String to5chars(double v, boolean imaginary) {
+	// limits output of a double to max 6 characters, for following cases:
+	// -XXeEi		v >= 10000
+	// -XXXXi		v >= 100
+	// -XX.Di		v >= 10
+	// -X.DDi		v < 10
+	private static String to5chars(double v, boolean complex) {
 		int decimals = 0;
 		if (v >= 10000 || v <= -10000) {
 			for (; v >= 100 || v <= -100; v /= 10.0) decimals++;
-			if (imaginary)
+			if (complex)
 					return (v < 0 ? " " : "  ") + (int)v + "e" + decimals + "  ";
-			else	return (v < 0 ? " " : "  ") + (int)v + "e" + decimals + (imaginary ? "i " : " ");
+			else	return (v < 0 ? " " : "  ") + (int)v + "e" + decimals + (complex ? "i " : " ");
 		}
 		
 		boolean isInt = nearZero(v - (int)v);
 			
 		if (v >= 100 || v <= -100) {
-			return imaginary ? String.format("%6di", (int)v) : String.format("%6d ", (int)v);
+			return complex ? String.format("%6di", (int)v) : String.format("%6d ", (int)v);
 			//return imaginary ? String.format("%6.0fi", v) : String.format("%6.0f ", v);
 		}
 			
 		if (v >= 10 || v <= -10) {
-			if (isInt) return imaginary ? String.format("%5di ", (int)v) : String.format("%5d  ", (int)v);
-			return imaginary ? String.format("%6.1fi", v) : String.format("%6.1f ", v);
+			if (isInt) return complex ? String.format("%5di ", (int)v) : String.format("%5d  ", (int)v);
+			return complex ? String.format("%6.1fi", v) : String.format("%6.1f ", v);
 		}
 			
-		if (isInt) return imaginary ? String.format("%4di  ", (int)v) : String.format("%4d   ", (int)v);
-		return imaginary ? String.format("%6.2fi", v) : String.format("%6.2f ", v);
+		if (isInt) return complex ? String.format("%4di  ", (int)v) : String.format("%4d   ", (int)v);
+		return complex ? String.format("%6.2fi", v) : String.format("%6.2f ", v);
 	}
 	
-	private static int MAX_PRINTEXTENT = 20;
+	static int MAX_PRINTEXTENT = 20;
 	
 	@Override
 	public String toString() {
@@ -2274,7 +2273,8 @@ public class Matrix implements Cloneable {
 		int maxM = M > MAX_PRINTEXTENT ? MAX_PRINTEXTENT : M;
 		int maxN = N > MAX_PRINTEXTENT ? MAX_PRINTEXTENT : N;
 		
-		System.out.println(((M == 1 || N == 1) ? "vector: " :"matrix: ") + name + (M == 1 ? "^T" : ""));
+		sb.append(((M == 1 || N == 1) ? "vector: " :"matrix: ") + name + (M == 1 ? "^T\n" : "\n"));
+		sb.append("size: " + M + ", " + N);
 		
 		if (data != null) {
 			for (int i = 0; i < maxM; i++) {
@@ -2290,13 +2290,13 @@ public class Matrix implements Cloneable {
 				
 				// any imaginary data comes as a second line under the real data line
 				if (idata != null) {
-					sb.append(" |\n|");
-					for (int j = 0; j < maxN; j++) sb.append("       ");
 					sb.append("     |\n|");
 					for (int j = 0; j < maxN; j++)
 						if (nearZero(data[iN + j]))	sb.append("       ");
-						else						sb.append(to5chars(data[iN + j], true));
+						else						sb.append(to5chars(idata[iN + j], true));
 					
+					sb.append(" |\n|");
+					for (int j = 0; j < maxN; j++) sb.append("       ");
 					if (maxN < N) sb.append("    ");
 				}
 				
@@ -2314,14 +2314,16 @@ public class Matrix implements Cloneable {
 		} else sb.append("[null]\n");
 		if (M == N) sb.append("\nDeterminant: " + det + "\n");
 		else		sb.append("\n");
-		
-//		if (bitImage != null)	sb.append(bitImage.toString());
-//		else					sb.append("No bit image.");
 			
 		return sb.toString();	
 	}
 	
 	
+	
+	///////////////////////////////////////////////////////////////////////////////////////////////////////////
+	//			MATRIX TYPES
+	///////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 	public enum Type {
 		Null(0), Identity(1), Random(2), Centering(3), Unit(4), Null_Complex(16), Random_Complex(17);
 		private int type;

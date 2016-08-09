@@ -33,6 +33,9 @@ public class MatrixMarketIO {
 		boolean keepReading = true;
 		String[] dataRow = null, mName = fName.split("[//.]+");
 		
+		int debug_level = Matrix.DEBUG_LEVEL;
+		Matrix.DEBUG_LEVEL = 0;
+		
 		try {
 			br = new BufferedReader(new FileReader(fName));
 			String s;
@@ -77,13 +80,13 @@ public class MatrixMarketIO {
 						if (dataRow.length == 4) {
 							// allocate empty complex matrix to fill up
 							M = new Matrix(mName[mName.length-2], rows, cols, Matrix.Type.Null_Complex);
-							state = 8;
+							state = 9;
 							break;
 						// or only real numbers?
 						} else {
 							// allocate empty real matrix to fill up
 							M = new Matrix(mName[mName.length-2], rows, cols, Matrix.Type.Null);
-							state = 9;
+							state = 8;
 							break;
 						}
 						
@@ -101,6 +104,7 @@ public class MatrixMarketIO {
 						if (--entries <= 0) state = 5;
 						break;
 
+					// complex matrix loop
 					case 4:
 						if ((s = br.readLine()) == null) { state = 5; break; }
 						if (s.startsWith("%")) break;
@@ -124,6 +128,9 @@ public class MatrixMarketIO {
 			} finally { br.close(); }
 
 		} catch (IOException e) { e.printStackTrace(); }
+		
+		Matrix.DEBUG_LEVEL = debug_level;
+
 	}
 	
 	public Matrix getMatrix() { return M; }
