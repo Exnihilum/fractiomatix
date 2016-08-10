@@ -26,18 +26,19 @@ public class Matrix implements Cloneable {
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
 	
 	protected String name;
-	protected int M, N; 						// number of rows & columns
-	protected double[] data, idata;				// row-column matrix uses a flat array, data = real part, idata = imaginary part
+	protected int M, N; 							// number of rows & columns
+	protected double[] data, idata;					// row-column matrix uses a flat array, data = real part, idata = imaginary part
 	protected int status;
-	public double det = 0;						// last calculated determinant value
-	public double norm1 = -1;					// last calculated norm-1 value
+	public double det = 0;							// last calculated determinant value
+	public double norm1 = -1;						// last calculated norm-1 value
 
 	// optimisation hierarchies & variables
 	// binBitLength = no. of values gathered in binBit, procNum = number of concurrent processors available
-	protected boolean rowAspectSparsest = true;	// indicates whether row or column aspect is most sparse for determinant analysis
-	protected int detSign = 1;					// tells sign of the determinant, according to heuristics of analyseRowsColumns() 
-	protected int[][] detAnalysis = null;		// used by analyseRowsColumns() for determinant finding heuristics
-	protected int[] mutator = null;				// used to index mutated rows for certain algorithms
+	protected boolean rowAspectSparsest = true;		// indicates whether row or column aspect is most sparse for determinant analysis
+	protected int halfBandwidth = -1;					// tells how far a sparse matrix deviates from it's diagonal band, p = |i - j|
+	protected int detSign = 1;						// tells sign of the determinant, according to heuristics of analyseRowsColumns() 
+	protected int[][] detAnalysis = null;			// used by analyseRowsColumns() for determinant finding heuristics
+	protected int[] mutator = null;					// used to index mutated rows for certain algorithms
 	protected BinBitImage bitImage;
 	
 	// multithreading variables
@@ -75,9 +76,7 @@ public class Matrix implements Cloneable {
 		this.name = name + nameCount++;
 		this.M = r;
 		this.N = c;
-		double[][] dataSet = Matrix.generateData(M, N, type, 1);
-		data = dataSet[0];
-		idata = dataSet[1];
+		this.generateData(type, 1);
 		if (type == Type.Null || type == Type.Null_Complex) setNull();
 		//for (int i = 0; i < r; i++) mutator[i] = i;
 		bitImage = new BinBitImage(this);
@@ -177,6 +176,7 @@ public class Matrix implements Cloneable {
 		bitImage.zero();
 		if (mutator != null) for (int i = 0; i < M; i++) mutator[i] = 0;
 		setNull();
+		halfBandwidth = -1;
 	}
 
 	public Matrix eliminateRowColumn(int r, int c, boolean makeBitImage) {
@@ -230,8 +230,11 @@ public class Matrix implements Cloneable {
 		if (data == null) throw new RuntimeException("Matrix.ivalueTo(): Unallocated datafield.");
 		data[r * N + c] = v;
 		if (!nearZero(v)) {
-			bitImage.setBit(r, c);				// set the corresponding bit in bitImage if value is nonzero
+			bitImage.setBit(r, c);					// set the corresponding bit in bitImage if value is nonzero
 			clearNull();
+			int width = r - c;						// readjust half bandwidth if value coordinates are "sticking out" from diagonal
+			if (width < 0) width = -width;
+			if (halfBandwidth < width) halfBandwidth = width;
 		}
 	}
 	public void valueToC(int r, int c, double[] iv) {
@@ -241,6 +244,9 @@ public class Matrix implements Cloneable {
 		if (!nearZero(iv[0]) || !nearZero(iv[1])) {
 			bitImage.setBit(r, c);					// set the corresponding bit in bitImage if value is nonzero
 			clearNull();
+			int width = r - c;						// readjust half bandwidth if value coordinates are "sticking out" from diagonal
+			if (width < 0) width = -width;
+			if (halfBandwidth < width) halfBandwidth = width;
 		}
 	}
 
@@ -248,8 +254,7 @@ public class Matrix implements Cloneable {
 	// generate identity matrix with scalar v in the diagonal
 	public Matrix identity(int s, double v) {
 		Matrix M = new Matrix("I", s, s);
-		double[][] dataSet = generateData(s, s, Type.Identity, v);
-		M.data = dataSet[0];
+		M.generateData(Type.Identity, v);
 		return M;
 		}
 	
@@ -293,53 +298,59 @@ public class Matrix implements Cloneable {
 				for (int i = 0, iNj = j; i < M; i++, iNj += N) idataAc[iNj] -= avg;
 			}
 		}
+		Ac.halfBandwidth = -1;
 		Ac.bitImage.make();
 		return Ac;
 	}
 
 	
 	// generates different types of matrices, a supplied value can be used to alter the matrix modulo
-	public static double[][] generateData(int r, int c, Type type, double v) {
-		if (r < 1 || c < 1)
+	public void generateData(Type type, double v) {
+		if (M < 1 || N < 1)
 			throw new RuntimeException("Matrix.generateData(): Illegal matrix dimensions.");
-		double dataSet[][] = new double[2][];
+		
+		double[] data = null, idata = null;
 		
 		switch (type) {
 			case Null_Complex:
-				dataSet[1] = new double[r * c];
+				idata = new double[M * N];
 			case Null:
-				dataSet[0] = new double[r * c];
+				data = new double[M * N];
+				halfBandwidth = -1;
 				break;
 			case Unit:
-				dataSet[0] = new double[r * c];
-				for (int i = 0; i < r * c; i++) dataSet[0][i] = 1;
+				data = new double[M * N];
+				for (int i = 0; i < M * N; i++) data[i] = 1;
+				if (M != N) halfBandwidth = -1; else halfBandwidth = M - 1;
 				break;
 			case Identity:
-				if (r != c) 	throw new RuntimeException("Matrix.generateData(): Identity matrix must be square.");
-				dataSet[0] = new double[r * c];
-				for (int i = 0; i < c; i++)
-					dataSet[0][i * c + i] = v;
+				if (M != N) 	throw new RuntimeException("Matrix.generateData(): Identity matrix must be square.");
+				data = new double[M * N];
+				for (int i = 0; i < N; i++) data[i * N + i] = v;
+				halfBandwidth = 0;
 				break;
 			case Random_Complex:
-				dataSet[1] = new double[r * c];
-				for (int i = 0; i < r * c; i++) dataSet[1][i] = Math.random();
+				idata = new double[M * N];
+				for (int i = 0; i < M * N; i++) idata[i] = Math.random();
 			case Random:
-				dataSet[0] = new double[r * c];
-				for (int i = 0; i < r * c; i++) dataSet[0][i] = Math.random();
+				data = new double[M * N];
+				for (int i = 0; i < M * N; i++) data[i] = Math.random();
+				if (M != N) halfBandwidth = -1; else halfBandwidth = M - 1;
 				break;
 			case Centering:
-				if (r != c) 	throw new RuntimeException("Matrix.generateData(): Centering matrix must be square.");
-				for (int i = 0; i < r; i++)
-					for (int j = i * c, jEnd = j + c; j < jEnd; j++) {
-						double d = 1.0 / (double)r;
-						if (i == j)		dataSet[0][j] = 1.0 - d;
-						else			dataSet[0][j] = - d;
+				if (M != N) 	throw new RuntimeException("Matrix.generateData(): Centering matrix must be square.");
+				for (int i = 0; i < M; i++)
+					for (int j = M * N, jEnd = j + N; j < jEnd; j++) {
+						double d = 1.0 / (double)M;
+						if (i == j)		data[j] = 1.0 - d;
+						else			data[j] = - d;
 					}
+				halfBandwidth = -1;
 				break;
 			default:
 				throw new RuntimeException("Matrix.generateData(): Illegal matrix type.");
 		}
-		return dataSet;
+		putData(data, idata);
 	}
 
 	
@@ -417,12 +428,39 @@ public class Matrix implements Cloneable {
 	
 	
 	
+//	public Matrix factoriseCholesky() {
+//		
+//		if (M < 1 || N < 1 || M != N)
+//			throw new RuntimeException("Matrix.decomposeQR(): Invalid matrix dimensions.");
+//
+//		Matrix R = new Matrix("R", M, N, Matrix.Type.Null);	// factorisation goes into this matrix
+//		double[] dataR = R.data;
+//		
+//		for (int i = 0; i < M; i++) {
+//			for (int k = 0)
+//			int iN = i * N;
+//			// matrix D will be upper triangular
+//			for (int j = i, iNj = iN + j; j < N; j++, iNj++)
+//				dataR[iNj] =  multiplyVectors(this, Q, j, i, false);
+//		}
+//		if (DEBUG_LEVEL > 1) {
+//			System.out.println("QR decomposition:");
+//			System.out.println(Q.toString());
+//			System.out.println(R.toString());
+//		}
+//		return R;
+//	}
+
+	
+	
+	// given a Gram-Schmidt orthonormalised matrix Q and original matrix A
+	// returns the matrix R, such that QR = A
 	public Matrix decomposeQR(Matrix Q) {
 	
 		if (M < 1 || N < 1 || !(N==Q.M && M==Q.N))
 			throw new RuntimeException("Matrix.decomposeQR(): Invalid matrix dimensions.");
 
-		Matrix R = new Matrix("R", Q.M, N, Matrix.Type.Null);	// matrix D will hold dot products of matrix elements in A & Q
+		Matrix R = new Matrix("R", Q.M, N, Matrix.Type.Null);	// matrix R will hold dot products of matrix elements in A & Q
 		double[] dataR = R.data;
 		
 		for (int i = 0; i < Q.M; i++) {
@@ -447,6 +485,7 @@ public class Matrix implements Cloneable {
 		if (M < 1 || N < 1) throw new RuntimeException("Matrix.reduceHouseholder(): Invalid matrix dimensions.");
 		if (M != N) throw new RuntimeException("Matrix.reduceHouseholder(): Matrix not square.");
 
+		DEBUG_LEVEL--;
 		Matrix A = this;
 		if (copy) A = this.clone();
 		Matrix I = new Matrix("I", M, N, Matrix.Type.Identity);
@@ -478,6 +517,8 @@ public class Matrix implements Cloneable {
 			A = P.multiply(A).multiply(P);						// A(k+1) = P(k).A(k).P(k)
 			dataA = A.data;
 		}
+		
+		DEBUG_LEVEL++;
 		if (DEBUG_LEVEL > 1) {
 			System.out.println("Householder reduction:");
 			System.out.println(A.toString());
@@ -1100,32 +1141,34 @@ public class Matrix implements Cloneable {
 	// method tests how far the non-zero elements extend from the diagonal, returning a value of the range
 	// this allows elimination-type solvers to stop elimination beyond the width of the diagonal data band
 	// method runs from left/right edges towards the diagonal in a symmetrical fashion, looking for first non-zero element
-	public int halfBandwidth() {
+	public int getHalfBandwidth() {
 
-		if (M < 1 || N < 1) throw new RuntimeException("Matrix.halfBandwidth(): Invalid matrix dimansions.");
-		if (M != N) throw new RuntimeException("Matrix.halfBandwidth(): Matrix not square.");
+		if (M < 1 || N < 1) throw new RuntimeException("Matrix.getHalfBandwidth(): Invalid matrix dimansions.");
+		if (M != N) throw new RuntimeException("Matrix.getHalfBandwidth(): Matrix not square.");
 
-		int width = 0, symOffs = M * M - 1;
+		halfBandwidth = 0;
+		int symOffs = M * M - 1;
 		for (int r = 1; r < M; r++) {
 			int rN = r * N, rNsym = symOffs - rN;
-			for (int i = 0, rNi = rN, rNsymi = rNsym; i < r - width; i++, rNi++, rNsymi--) {
+			for (int i = 0, rNi = rN, rNsymi = rNsym; i < r - halfBandwidth; i++, rNi++, rNsymi--) {
 				// is element non-zero?
 				if (!nearZero(data[rNi]) || !nearZero(data[rNsymi])) {
 					// found the first/farthest-out element of this row, break out of loop
-					if (r - i > width) width = r - i;
+					if (r - i > halfBandwidth) halfBandwidth = r - i;
 					break;
 				}
 				if (idata != null) {
 					// is imaginary element non-zero?
 					if (!nearZero(idata[rNi]) || !nearZero(idata[rNsymi])) {
 						// found the first/farthest-out element of this row, break out of loop
-						if (r - i > width) width = r - i;
+						if (r - i > halfBandwidth) halfBandwidth = r - i;
 						break;
 					}				
 				}
 			}
 		}
-		return width;
+		if (DEBUG_LEVEL > 1) System.out.println("half bandwidth: " + halfBandwidth);
+		return halfBandwidth;
 	}
 	
 	
@@ -1397,15 +1440,16 @@ public class Matrix implements Cloneable {
 		det = 1;
 		
 		Matrix x = c.clone();
-		if (Matrix.DEBUG_LEVEL > 1) x.name = "x(" + name + "^-1*" + c.name + ")";
-		else						x.name = "x" + nameCount++;
+		x.name = Matrix.DEBUG_LEVEL > 1 ? "x(" + name + "^-1*" + c.name + ")" : "x" + nameCount++;
 		
-		Ai.data = generateData(M, N, Matrix.Type.Identity, 1)[0];
 		Ai.M = Ai.N = M;
+		Ai.generateData(Matrix.Type.Identity, 1);
 		double[] dataA = A.data, dataAi = Ai.data, datax = x.data;
 
-		int diag = halfBandwidth();	// find out how far from the diagonal the sparse data stretches at maximum
-		int overlap = diag * 2;		// tur it into overlap number, telling how many rows above & below to process for a given row
+		// find out how far from the diagonal the sparse data stretches at maximum
+		if (halfBandwidth < 0) getHalfBandwidth();
+		// turn it into overlap number, telling how many rows above & below to process for a given row
+		int overlap = halfBandwidth * 2;	
 		
 		// loop handles every case of subtracting current unitised row from all other rows
 		for (int r = 0; r < M; r++) {			
@@ -1524,7 +1568,7 @@ public class Matrix implements Cloneable {
 			System.out.println(A.toString());
 			System.out.println("input matrix inverse:");
 			System.out.println(Ai.toString());
-			System.out.println("Diagonality: " + diag);
+			System.out.println("half bandwidth: " + halfBandwidth);
 		}
 		return x;
 	}
@@ -1595,8 +1639,8 @@ public class Matrix implements Cloneable {
 		if (Matrix.DEBUG_LEVEL > 1) x.name = "x(" + name + "^-1*" + c.name + ")";
 		else						x.name = "x" + nameCount++;
 		
-		Ai.data = generateData(M, N, Matrix.Type.Identity, 1)[0];
 		Ai.M = Ai.N = M;
+		Ai.generateData(Matrix.Type.Identity, 1);
 		double[] dataA = A.data, dataAi = Ai.data, datax = x.data;
 		
 		// loop handles every case of subtracting current unitised row from all other rows
@@ -2335,7 +2379,11 @@ public class Matrix implements Cloneable {
 				}
 			}
 		} else sb.append("[null]\n");
-		if (M == N) sb.append("\nDeterminant: " + det + "\n");
+		if (M == N) {
+			sb.append("\ndeterminant: " + det + "\n");
+			if (halfBandwidth > 0)
+				sb.append("\nhalf bandwidth: " + halfBandwidth + "\n");
+		}
 		else		sb.append("\n");
 			
 		return sb.toString();	

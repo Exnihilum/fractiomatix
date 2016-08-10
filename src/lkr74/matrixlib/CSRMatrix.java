@@ -31,8 +31,7 @@ public class CSRMatrix extends Matrix {
 
 	public CSRMatrix(String name, int M, int N, Type type) {
 		super(name, M, N);								// get skeleton Matrix superclass instance
-		double[][] dataSet = Matrix.generateData(M, N, type, 1);
-		putData(dataSet[0], dataSet[1]);
+		this.generateData(type, 1);
 		if (type != Matrix.Type.Null && type != Matrix.Type.Null_Complex) clearNull();
 		bitImage = new BinBitImage(this);
 		if (Matrix.DEBUG_LEVEL > 2) System.out.println(this.toString());
@@ -531,10 +530,6 @@ public class CSRMatrix extends Matrix {
 		else			S.bitImage.or(T.bitImage);
 		return S;
 	}
-	
-	
-	
-	
 	
 	
 	

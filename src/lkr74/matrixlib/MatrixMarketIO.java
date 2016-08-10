@@ -28,7 +28,7 @@ public class MatrixMarketIO {
 	// constructor reads in file into stringbuffer in memory
 	public MatrixMarketIO(String fName) {
 		
-		int state = 1, rows = 0, cols = 0, entries = 0;
+		int state = 1, rows = 0, cols = 0, entries = 0, r, c;
 		double[] iv = new double[2];
 		boolean keepReading = true;
 		String[] dataRow = null, mName = fName.split("[//.]+");
@@ -98,26 +98,27 @@ public class MatrixMarketIO {
 						if (dataRow == null) break;
 					case 8:
 						state = 3;
-						M.valueTo(	Integer.valueOf(dataRow[0]) - 1,
-									Integer.valueOf(dataRow[1]) - 1,
-									Double.valueOf(dataRow[2]));
+						r = Integer.valueOf(dataRow[0]) - 1;
+						c = Integer.valueOf(dataRow[1]) - 1;
+						M.valueTo(r, c, Double.valueOf(dataRow[2]));
 						if (--entries <= 0) state = 5;
 						break;
-
 					// complex matrix loop
 					case 4:
 						if ((s = br.readLine()) == null) { state = 5; break; }
 						if (s.startsWith("%")) break;
 						dataRow = s.split("[ ]+");
 						if (dataRow == null) break;
-					case 9:
+					case 9: {
 						state = 4;
 						iv[0] = Double.valueOf(dataRow[2]);
 						iv[1] = Double.valueOf(dataRow[3]);
-						M.valueToC(Integer.valueOf(dataRow[0]) - 1, Integer.valueOf(dataRow[1]) - 1, iv);
+						r = Integer.valueOf(dataRow[0]) - 1;
+						c = Integer.valueOf(dataRow[1]) - 1;
+						M.valueToC(r, c, iv);
 						if (--entries <= 0) state = 5;
 						break;
-
+					}
 					// state 5 = end of file case
 					case 5:
 						keepReading = false;

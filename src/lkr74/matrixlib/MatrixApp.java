@@ -10,6 +10,7 @@ import com.jogamp.gluegen.DebugEmitter;
 import lkr74.mathgenerics.MiscMath;
 import lkr74.mathgenerics.MiscMath.RandFill;
 import lkr74.mathgenerics.XYLineChart_AWT;
+import lkr74.matrixlib.Matrix.Type;
 
 public class MatrixApp {
 	
@@ -225,7 +226,6 @@ public class MatrixApp {
 		
 		// Test eigenvalue & eigenvector finder findEigenQR(), which takes an orthonormalised matrix
 		Matrix E = O.findEigenQR(Q, 150, 30, 0.005);
-		if (1==1) return;
 
 		// test QR decomposition
 		O.decomposeQR(Q);
@@ -236,7 +236,7 @@ public class MatrixApp {
 		System.out.println("Largest eigenvalue: " + D2.eigenPowerValue(x5, 0.01, 100) + "\n");
 		
 		// Test method that finds diagonal bandwidth of a sparse matrix
-		System.out.println("Diagonality: " + new Matrix("Dd", 10, 10, d20, null).halfBandwidth());
+		System.out.println("half bandwidth: " + new Matrix("Dd", 10, 10, d20, null).getHalfBandwidth());
 		
 		int iters = 100;
 		long tstart, tend;
