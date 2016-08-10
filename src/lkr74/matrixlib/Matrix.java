@@ -432,28 +432,48 @@ public class Matrix implements Cloneable {
 	
 	
 	
-//	public Matrix factoriseCholesky() {
-//		
-//		if (M < 1 || N < 1 || M != N)
-//			throw new RuntimeException("Matrix.decomposeQR(): Invalid matrix dimensions.");
-//
-//		Matrix R = new Matrix("R", M, N, Matrix.Type.Null);	// factorisation goes into this matrix
-//		double[] dataR = R.data;
-//		
-//		for (int i = 0; i < M; i++) {
-//			for (int k = 0)
-//			int iN = i * N;
-//			// matrix D will be upper triangular
-//			for (int j = i, iNj = iN + j; j < N; j++, iNj++)
-//				dataR[iNj] =  multiplyVectors(this, Q, j, i, false);
-//		}
-//		if (DEBUG_LEVEL > 1) {
-//			System.out.println("QR decomposition:");
-//			System.out.println(Q.toString());
-//			System.out.println(R.toString());
-//		}
-//		return R;
-//	}
+	// Cholesky factoriser conditions symmetric and positive definite matrices for fast O(4*p*n) linear ssytem solving
+	public Matrix factoriseCholesky() {
+		
+		if (M < 1 || N < 1 || M != N)
+			throw new RuntimeException("Matrix.factoriseCholesky(): Invalid matrix dimensions.");
+
+		Matrix R = new Matrix("R", M, N, Matrix.Type.Null);	// factorisation goes into this matrix
+		double[] dataR = R.data;
+		
+		int p = 0;
+		if (halfBandwidth < 0) p = getHalfBandwidth();
+		
+		for (int i = 0; i < M; i++) {
+			
+			double rki = 0;
+			int im1 = i - 1, kStart = i - p;
+			if (kStart < 0) kStart = 0;
+			for (int k = kStart * N + i, k1 = kStart; k1 <= im1; k += N, k1++)
+				rki += dataR[k] * dataR[k];
+
+			int iNi = i * N + i;
+			dataR[iNi] = Math.sqrt(data[iNi] - rki);
+			
+			int jEnd = i + p;
+			if (jEnd >= N) jEnd = N - 1;
+			if (dataR[iNi] < ROUNDOFF_ERROR) return null;		// divide by zero, zeroes on diagonal not allowed
+			double riiD = 1.0 / dataR[iNi];
+			
+			for (int j = i + 1; j <= jEnd; j++) {
+				double rkirkj = 0;
+				for (int kN = kStart * N, k = kStart; k <= im1; k++, kN += N)
+					rkirkj += dataR[kN + i] * dataR[kN + j];
+				int iNj = i * N + j;
+				dataR[iNj] = riiD * (data[iNj] - rkirkj);
+			}				
+		}
+		if (DEBUG_LEVEL > 1) {
+			System.out.println("Cholesky factorisation:");
+			System.out.println(R.toString());
+		}
+		return R;
+	}
 
 	
 	

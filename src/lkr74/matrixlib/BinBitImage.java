@@ -187,7 +187,7 @@ public class BinBitImage {
 			data[rofs] |= bitcr; data[cofs] -= bitrc;
 		}
 		
-		if (debugTrigger(2)) System.out.println(this.toString());
+		if (debugTrigger(3)) System.out.println(this.toString());
 	}
 	
 	void swapRows(int r1, int r2) {

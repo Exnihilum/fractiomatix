@@ -154,6 +154,7 @@ public class MatrixApp {
 							 1, 2, 0, 1,
 							-2, 0, 3,-2,
 							 2, 1,-2,-1 };
+		double[] testCh = {	 4,12,-16,12,37,-43,-16,-43,98};
 		double[] d10 = {1,2,3,4,5,6,7,8,7,6,
 						2,2,3,4,5,6,7,8,7,6,
 						3,3,3,4,5,6,7,8,7,6,
@@ -187,6 +188,13 @@ public class MatrixApp {
 //		matrixMultiTest(mtests);
 //		if(1==1) return;
 
+		// Test Cholesky factorisation
+		//Matrix Ch = new Matrix("C", 3, 3, testCh, null);
+		Matrix Ch = new Matrix("C", 10, 10, d20, null);
+		Ch = Ch.transpose(true).multiply(Ch);
+		Ch.factoriseCholesky();
+		if(1==1) return;
+		
 		// Test Householder reduction form
 		Matrix HH = new Matrix("HH", 4, 4, testHH, null);
 		HH = HH.reduceHouseholder(true);
@@ -199,8 +207,12 @@ public class MatrixApp {
 		CSRMatrix MMcsr = CSRMatrix.convert(MM);
 		System.out.println(MMcsr.toString());
 		
-		MatrixBMPImage MM_image = new MatrixBMPImage(MM);
-		MM_image.write();
+		Matrix MM_Cholesky = MM.factoriseCholesky();
+		
+		if (MM_Cholesky != null) {
+			MatrixBMPImage MM_image = new MatrixBMPImage(MM_Cholesky);
+			MM_image.write();
+		}
 		
 		Matrix D8 = new Matrix("D8", 8, 8, d11, null);
 		D8.convergent();
