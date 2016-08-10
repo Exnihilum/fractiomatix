@@ -339,6 +339,7 @@ public class Matrix implements Cloneable {
 				break;
 			case Centering:
 				if (M != N) 	throw new RuntimeException("Matrix.generateData(): Centering matrix must be square.");
+				data = new double[M * N];
 				for (int i = 0; i < M; i++)
 					for (int j = M * N, jEnd = j + N; j < jEnd; j++) {
 						double d = 1.0 / (double)M;
@@ -350,7 +351,7 @@ public class Matrix implements Cloneable {
 			default:
 				throw new RuntimeException("Matrix.generateData(): Illegal matrix type.");
 		}
-		putData(data, idata);
+		putDataRef(data, idata);
 	}
 
 	
@@ -377,10 +378,12 @@ public class Matrix implements Cloneable {
 			}
 		}
 		if (!(Mi >= M || Ni >= N || Mo < 0 || No < 0)) A.clearNull();
+		
 		if (DEBUG_LEVEL > 1) {
 			System.out.println("Rescaling matrix " + A.name);
 			System.out.println(A.toString());
 		}
+		
 		if (doBitImage) A.bitImage = new BinBitImage(A);
 		return A;
 	}
@@ -395,6 +398,7 @@ public class Matrix implements Cloneable {
 		Matrix An = this;
 		// if copy = false, An will be used to store intermediate q-hat vectors
 		if (copy) An = this.clone();
+		else An.halfBandwidth = -1;
 		double r11 = An.absLength(0);										// r11 := ||x1||
 		if (nearZero(r11)) return null;										// null vector found, abort
 
@@ -523,12 +527,13 @@ public class Matrix implements Cloneable {
 			System.out.println("Householder reduction:");
 			System.out.println(A.toString());
 		}
+		A.halfBandwidth = -1;
 		return A;
 	}
 	
 	
 
-	// finds out number of zeroes in each row & column, sums them up into an analysis array, useful for finding determinant
+	// finds out number of zeroes in each row & column, sums them up into an analysis array, useful for checking determinant
 	public void analyseRowsColumns() {
 		
 		if (M < 2 || N < 2) {
@@ -620,6 +625,7 @@ public class Matrix implements Cloneable {
 		if (DEBUG_LEVEL > 2) System.out.println("swap:\n" + this.toString());
 		if (bitImage != null)
 			bitImage.swapRows(r1, r2);		// swap bitImage rows
+		halfBandwidth = -1;
 	}
 
 
@@ -751,6 +757,8 @@ public class Matrix implements Cloneable {
 		
 		if (DEBUG_LEVEL > 1) System.out.println(C.toString());
 		clearNull();
+		// add/sub. simply increases half bandwidth to the bandwidth of the matrix of it's largest extent
+		C.halfBandwidth = halfBandwidth > B.halfBandwidth ? halfBandwidth : B.halfBandwidth;
 		C.bitImage.make();
 		return C;		
 	}
@@ -841,15 +849,14 @@ public class Matrix implements Cloneable {
 				if (!nearZero(v)) { 					// optimisation for sparse matrices
 					for (int k1 = iCN, k2 = jBN, k1End = iCN + bN; k1 < k1End; k1++, k2++)
 						dataC[k1] += v * dataB[k2];
-//					for (int k = 0; k < B.N; k++)
-//						dataC[iCN + k] += v * dataB[jBN + k];
 					mulFlops_DEBUG += bN;
 				}
 			}
 		}		
 
 		if (DEBUG_LEVEL > 1) System.out.println(C.toString());
-		clearNull();
+		C.clearNull();
+		C.halfBandwidth = -1;
 		C.bitImage = new BinBitImage(C);				// bitImage needs full reconstitution
 		return C;
 	}
@@ -872,7 +879,7 @@ public class Matrix implements Cloneable {
 		for (int i = 0, MN = M * N; i < MN; i++) dataC[i] = v * dataA[i];
 		
 		C.data = dataC;
-		clearNull();
+		C.clearNull();
 		if (DEBUG_LEVEL > 1) System.out.println(C.toString());
 		return C;
 	}
@@ -911,6 +918,7 @@ public class Matrix implements Cloneable {
 		multiplyStrasWin2(A.data, B.data, C.data, subInfo);
 		
 		C.clearNull();
+		C.halfBandwidth = -1;
 		if (DEBUG_LEVEL > 1) System.out.println(C.toString());
 		return C;
 
@@ -1336,7 +1344,8 @@ public class Matrix implements Cloneable {
 		if (copy) {
 			X = B.clone();
 			A = this.clone();
-		}
+		} else
+			A.halfBandwidth = X.halfBandwidth = -1;
 		
 		double[] dataX = X.data, dataA = A.data;
 		// integer arrays indxc, indxr and ipiv do the bookkeeping on the pivoting
@@ -1448,8 +1457,8 @@ public class Matrix implements Cloneable {
 
 		// find out how far from the diagonal the sparse data stretches at maximum
 		if (halfBandwidth < 0) getHalfBandwidth();
-		// turn it into overlap number, telling how many rows above & below to process for a given row
-		int overlap = halfBandwidth * 2;	
+		// turn it into bandwidth number, telling how many rows above & below to process for a given row
+		int bandwidth = halfBandwidth * 2;	
 		
 		// loop handles every case of subtracting current unitised row from all other rows
 		for (int r = 0; r < M; r++) {			
@@ -1459,7 +1468,7 @@ public class Matrix implements Cloneable {
 			int rPivot = r;
 			// for a matrix sparse/zeroed outside a diagonal band we'll only process the available row data above & below pivot
 			// that is overlapping the pivot datawidth, the degree of overlap was calculated from return of diagonality() method
-			for (int r2 = r, overlap1 = overlap; r2 < M && overlap1 > 0; r2++, overlap1--) {
+			for (int r2 = r, bandwidth1 = bandwidth; r2 < M && bandwidth1 > 0; r2++, bandwidth1--) {
 				double v = dataA[N * r2 + r];
 				if (v < 0) v = -v;
 				if (v > vMax) { vMax = v; rPivot = r2; }
@@ -1479,8 +1488,8 @@ public class Matrix implements Cloneable {
 				}
 			}
 
-			int iStart = (r - overlap < 0 ? 0 : r - overlap);			// find out bounds of sparse datawidth of pivot row
-			int iEnd = (r + overlap >= M ? M - 1 : r + overlap);
+			int iStart = (r - bandwidth < 0 ? 0 : r - bandwidth);		// find out bounds of sparse datawidth of pivot row
+			int iEnd = (r + bandwidth >= M ? M - 1 : r + bandwidth);
 			
 			for (int i = iStart; i <= iEnd; i++) {						// the diagonal element column unitising loop
 				int iN = i * N;
@@ -1558,7 +1567,7 @@ public class Matrix implements Cloneable {
 
 			datax[r] *= div;										// divide c(i) by a(ii), it will turn into solution vector x
 		}
-		A.det = 1;													// |I| = 1
+		A.det = 1.0;												// |I| = 1
 		Ai.det = 1.0 / det;											// |A^-1| = 1 / |A|
 
 		if (DEBUG_LEVEL > 1) {
@@ -1575,6 +1584,9 @@ public class Matrix implements Cloneable {
 
 	
 	
+	// iterative Gauss-Seidel solver will not guranteedly succeed to converge to a vector,
+	// but could be used with certainty if convergence() criterion is fulfilled, and fallback
+	// to standard Gaussian elimination solvers
 	public Matrix solveGaussSeidel(Matrix c, int itersMax, double maxError) {
 		
 		if (M != N || c.M != N || c.N != 1)
@@ -1615,7 +1627,7 @@ public class Matrix implements Cloneable {
 		DEBUG_LEVEL++;
 		if (DEBUG_LEVEL > 1) {
 			if (!converges || i >= itersMax)
-							System.out.println("Gauss-Seidel iterator solver won't converge.");
+							System.out.println("Gauss-Seidel iterator solver failed converging.");
 			else			System.out.println("Gauss-Seidel iterator solver done in " + i + " iterations.");
 			System.out.println(x.toString());
 		}	
@@ -1850,7 +1862,9 @@ public class Matrix implements Cloneable {
 	// unpermute a matrix with mutator values altered
 	public void unpermute(int[] mutator) {
 		if (mutator == null) return;
-		for (int i = M - 1; i >= 0; i--) if (mutator[i] != i)	swapRows(i, mutator[i]);
+		for (int i = M - 1; i >= 0; i--)
+			if (mutator[i] != i)	swapRows(i, mutator[i]);
+		halfBandwidth = -1;
 	}
 	
 	
@@ -1867,7 +1881,7 @@ public class Matrix implements Cloneable {
 		if (N != 1 || M != (A == null ? LU.M : A.M))	throw new RuntimeException("Matrix.backSubstituteLU2(): Invalid constant vector.");			
 		Matrix[] bLU = new Matrix[2];
 		
-		// a LU = null tells algorithm to create a new LU decompose, which will be returned in the matrix array
+		// LU = null tells algorithm to create a new LU decompose, which will be returned in the matrix array
 		if (LU == null) {
 			if (A.M != A.N)	throw new RuntimeException("Matrix.decomposeLU2(): Matrix A not square.");			
 			if (A.M < 1)	throw new RuntimeException("Matrix.decomposeLU2(): Invalid matrix.");
@@ -1927,7 +1941,7 @@ public class Matrix implements Cloneable {
 		}
 		
 		if (DEBUG_LEVEL > 1) {
-			System.out.println("backSubstituteLU2 solver:");
+			System.out.println("Backsubstitution LU solver:");
 			System.out.println(bLU[0].toString());
 			System.out.println(bLU[1].toString());
 		}
@@ -1999,11 +2013,37 @@ public class Matrix implements Cloneable {
 		}
 		return false;
 	}
+	
+	
+	// quick zero determinant heuristics helper method for version 2 of determinant Laplace Expansion
+	// uses the relative increment list activec to jump past recursively eliminated columns
+	public boolean hasZeroDeterminant2(int[][] activec, int columns) {
 
-	
-	
+		int topb = M - columns;
+		double[] data = getDataRef()[0];
+		// Cacc accumulates sums along the columns during the horisontal passes, Racc accumulates sums along the rows
+		double[] Cacc = new double[N], Racc = new double[M];
+		double v;
+
+		for (int i = topb; i < M; i++) {
+			// get row index from detAnalysis if has been created
+			int iN = N * (detAnalysis == null ? i : detAnalysis[2][i]);
+			for (int j = 0, ac = activec[0][0]; j < columns; j++, ac += activec[0][ac]) {
+				v = data[iN + ac - 1];
+				Racc[i] += v;
+				Cacc[j] += v;
+			}
+			// found zero row, determinant = 0
+			if (nearZero(Racc[i])) return true;
+		}
+		
+		// check presense of zero columns
+		for (int j = 0; j < columns; j++) if (nearZero(Cacc[j])) return true; // found zero column, determinant = 0
+		return false;
+	}
+
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
-	//			IMPLEMENTATION OF LAPLACIAN DETERMINAN FINDER (only of academic interest)
+	//			IMPLEMENTATION OF LAPLACIAN DETERMINANT FINDER (only of academic interest)
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	// multimode implementation of the Laplace Expansion Recursive algorithm for finding the determinant
@@ -2075,37 +2115,9 @@ public class Matrix implements Cloneable {
 				det +=  (((j + 2) & 1) == 0 ? 1 : -1) * data[j] * determinantLaplaceR1(M.eliminateRowColumn(0, j, false), true);
 			}
 		}
-
 		return det;
 	}
 
-	
-	// quick zero determinant heuristics helper method for version 2 of determinant Laplace Expansion
-	// uses the relative increment list activec to jump past recursively eliminated columns
-	public boolean hasZeroDeterminant2(int[][] activec, int columns) {
-
-		int topb = M - columns;
-		double[] data = getDataRef()[0];
-		// Cacc accumulates sums along the columns during the horisontal passes, Racc accumulates sums along the rows
-		double[] Cacc = new double[N], Racc = new double[M];
-		double v;
-
-		for (int i = topb; i < M; i++) {
-			// get row index from detAnalysis if has been created
-			int iN = N * (detAnalysis == null ? i : detAnalysis[2][i]);
-			for (int j = 0, ac = activec[0][0]; j < columns; j++, ac += activec[0][ac]) {
-				v = data[iN + ac - 1];
-				Racc[i] += v;
-				Cacc[j] += v;
-			}
-			// found zero row, determinant = 0
-			if (nearZero(Racc[i])) return true;
-		}
-		
-		// check presense of zero columns
-		for (int j = 0; j < columns; j++) if (nearZero(Cacc[j])) return true; // found zero column, determinant = 0
-		return false;
-	}
 	
 	
 	// version two of determinant Laplace Expansion does not use the costly matrix reconstruction method
@@ -2274,8 +2286,10 @@ public class Matrix implements Cloneable {
 					}
 				}
 			}
-			//System.out.println(Alam.toString());
-			//System.out.println(Q.toString());
+			if (DEBUG_LEVEL > 2) {
+				System.out.println(Alam.toString());
+				System.out.println(Q.toString());
+			}
 		}
 		return Alam;
 	}
