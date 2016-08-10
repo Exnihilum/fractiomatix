@@ -1,6 +1,8 @@
 # fractiomatix
 Mathematical code repository for matrices and specific combinatorial problems of interest.
 
+Note: this is in no way a finished, streamlined library, but rather a collection of working algorithms with a surrounding structure still needing solid refactoring massage and organisation.
+
 Included are methods for processing flat-array matrices, both ordinary row/column and CSR matrices.
 Polymorphic methods getData(), getDataRef(), putData(), putDataRef() allow bringing in data from both ordinary and CSR packing into any algorithm (CSRMatrix class extends Matrix class), the basis data order will naturally be the row/column one.
 
