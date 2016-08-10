@@ -149,6 +149,10 @@ public class MatrixApp {
 							1,2,5,8,
 							-3,-5,2,8,
 							5,7,4,9};
+		double[] testHH = {	 4, 1,-2, 2,
+							 1, 2, 0, 1,
+							-2, 0, 3,-2,
+							 2, 1,-2,-1 };
 		double[] d10 = {1,2,3,4,5,6,7,8,7,6,
 						2,2,3,4,5,6,7,8,7,6,
 						3,3,3,4,5,6,7,8,7,6,
@@ -182,6 +186,10 @@ public class MatrixApp {
 //		matrixMultiTest(mtests);
 //		if(1==1) return;
 
+		// Test Householder reduction form
+		Matrix HH = new Matrix("HH", 4, 4, testHH, null);
+		HH = HH.reduceHouseholder(true);
+		
 		// Test MarixMarket file loading routine
 		MatrixMarketIO mmIO = new MatrixMarketIO("data/mcca.mtx");
 		Matrix MM = mmIO.getMatrix();
@@ -217,6 +225,7 @@ public class MatrixApp {
 		
 		// Test eigenvalue & eigenvector finder findEigenQR(), which takes an orthonormalised matrix
 		Matrix E = O.findEigenQR(Q, 150, 30, 0.005);
+		if (1==1) return;
 
 		// test QR decomposition
 		O.decomposeQR(Q);
@@ -227,7 +236,7 @@ public class MatrixApp {
 		System.out.println("Largest eigenvalue: " + D2.eigenPowerValue(x5, 0.01, 100) + "\n");
 		
 		// Test method that finds diagonal bandwidth of a sparse matrix
-		System.out.println("Diagonality: " + new Matrix("Dd", 10, 10, d20, null).diagonality());
+		System.out.println("Diagonality: " + new Matrix("Dd", 10, 10, d20, null).halfBandwidth());
 		
 		int iters = 100;
 		long tstart, tend;

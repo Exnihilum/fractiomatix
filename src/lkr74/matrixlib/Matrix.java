@@ -441,30 +441,46 @@ public class Matrix implements Cloneable {
 
 	
 	
-	public Matrix toHouseholder(boolean copy) {
-		
+	// reduces matrix to Householder form
+	public Matrix reduceHouseholder(boolean copy) {
+
+		if (M < 1 || N < 1) throw new RuntimeException("Matrix.reduceHouseholder(): Invalid matrix dimensions.");
+		if (M != N) throw new RuntimeException("Matrix.reduceHouseholder(): Matrix not square.");
+
 		Matrix A = this;
 		if (copy) A = this.clone();
-		Matrix H = new Matrix("H", M, N, Matrix.Type.Null);
 		Matrix I = new Matrix("I", M, N, Matrix.Type.Identity);
 		Matrix v = new Matrix("v", M, 1, Matrix.Type.Null), V;
 		Matrix vT = new Matrix("vT", 1, N, Matrix.Type.Null);
+		double[] dataA = A.data;
+		double a;
 		
 		// proceed columnwise
-		for (int j = 0; j < N; j++) {
+		for (int k = 0, MN = M * N; k < N - 1; k++) {
 			double colSum = 0;
-			for (int i = N; i < M * N; i+= N)
-				colSum += data[i] * data[i];
-			double alpha = (data[N] < 0 ? 1 : -1) * Math.sqrt(colSum);
-			double r = 0.5 / Math.sqrt(0.5 * alpha * (alpha - data[N]));
+			int j1 = N * (k + 1) + k;
+			for (int j = j1; j < MN; j += N) {
+				a = dataA[j];
+				colSum += a * a;					
+			}
+			a = dataA[j1];
+			double alpha = (a < 0 ? 1.0 : -1.0) * Math.sqrt(colSum);	// alpha = -sign(a(k+1,k) * sqrt(sum(a(j,k)^2)
+			double r = 0.5 / Math.sqrt(0.5 * alpha * (alpha - a));
 			
-			v.data[0] = vT.data[0] = 0;
-			v.data[1] = vT.data[1] = (data[N] - alpha) * r;
-			for (int i = N * 2; i < M * N; i+= N) v.data[i] = vT.data[i] = data[i] * r;
+			for (int kv = 0; kv <= k; kv++)							// set up v vector that will be multiplied up to a matrix
+				v.data[kv] = vT.data[kv] = 0;
+			v.data[k+1] = vT.data[k+1] = (a - alpha) * r;
+			for (int j = k + 2, kvN = j * N + k; j < N; j++, kvN += N)
+				v.data[j] = vT.data[j] = dataA[kvN] * r;
 			
-			V = v.multiply(vT).multiply(2, false);
-			Matrix P = I.subtract(v, true);				// P = I - 2v.v^T
-			A = P.multiply(A).multiply(P);				// A(n+1) = PAP
+			V = v.multiply(vT).multiply(2, false);					// 2*v.v^T -> V
+			Matrix P = I.subtract(V, true);							// P = I - 2*v.v^T
+			A = P.multiply(A).multiply(P);						// A(k+1) = P(k).A(k).P(k)
+			dataA = A.data;
+		}
+		if (DEBUG_LEVEL > 1) {
+			System.out.println("Householder reduction:");
+			System.out.println(A.toString());
 		}
 		return A;
 	}
@@ -1084,7 +1100,11 @@ public class Matrix implements Cloneable {
 	// method tests how far the non-zero elements extend from the diagonal, returning a value of the range
 	// this allows elimination-type solvers to stop elimination beyond the width of the diagonal data band
 	// method runs from left/right edges towards the diagonal in a symmetrical fashion, looking for first non-zero element
-	public int diagonality() {
+	public int halfBandwidth() {
+
+		if (M < 1 || N < 1) throw new RuntimeException("Matrix.halfBandwidth(): Invalid matrix dimansions.");
+		if (M != N) throw new RuntimeException("Matrix.halfBandwidth(): Matrix not square.");
+
 		int width = 0, symOffs = M * M - 1;
 		for (int r = 1; r < M; r++) {
 			int rN = r * N, rNsym = symOffs - rN;
@@ -1384,7 +1404,7 @@ public class Matrix implements Cloneable {
 		Ai.M = Ai.N = M;
 		double[] dataA = A.data, dataAi = Ai.data, datax = x.data;
 
-		int diag = diagonality();	// find out how far from the diagonal the sparse data stretches at maximum
+		int diag = halfBandwidth();	// find out how far from the diagonal the sparse data stretches at maximum
 		int overlap = diag * 2;		// tur it into overlap number, telling how many rows above & below to process for a given row
 		
 		// loop handles every case of subtracting current unitised row from all other rows
@@ -2145,6 +2165,9 @@ public class Matrix implements Cloneable {
 
 		DEBUG_LEVEL--;
 		Matrix Alam = this.clone(), QT = Q.transpose(true);
+		DEBUG_LEVEL++;
+		Alam = Alam.reduceHouseholder(false);
+		DEBUG_LEVEL--;
 		
 		double currErr = 0, lastErr = 0;
 		double[] dataAlam = Alam.data, lastD = new double[M];
