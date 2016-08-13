@@ -188,6 +188,20 @@ public class MatrixApp {
 //		matrixMultiTest(mtests);
 //		if(1==1) return;
 
+		//CSRMatrix G8 = new CSRMatrix("G", 10, 10, d20, null);
+		CSRMatrix G8 = new CSRMatrix("G", 9, 9, d3, null);
+		
+		System.out.println(G8.valueOf2(0, 5));
+		System.out.println(G8.valueOf2(1, 5));
+		System.out.println(G8.valueOf2(2, 5));
+		System.out.println(G8.valueOf2(3, 5));
+		System.out.println(G8.valueOf2(4, 5));
+		System.out.println(G8.valueOf2(5, 5));
+		System.out.println(G8.valueOf2(6, 5));
+		System.out.println(G8.valueOf2(7, 5));
+		//if(1==1) return;
+
+		
 		// Test Cholesky factorisation
 		//Matrix Ch = new Matrix("C", 3, 3, testCh, null);
 		Matrix Ch = new Matrix("C", 10, 10, d20, null);

@@ -1,14 +1,18 @@
 package lkr74.matrixlib;
 
+import java.util.Arrays;
+
 public class CSRMatrix extends Matrix {
 	
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
 	//			INSTANCE-LEVEL VALUES, CSR SPECIFIC
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
 	
+	// this is the standard flat array style of CSR, simple to analyse but not optimal for searching and inserting
 	private int nA, nIA;
 	private double[] A, iA;
 	private int[] IA, JA;
+		
 	// IAop & JAop are situational, permamently-allocated/reallocated operational buffers
 	private static double[] Aop;
 	private static int[] JAop;
@@ -22,11 +26,13 @@ public class CSRMatrix extends Matrix {
 	
 	public CSRMatrix(String name, int M, int N, double[] data, double[] idata) {
 		super(name, M, N);								// get skeleton Matrix superclass instance
-		putData(data, idata);
+		putData(data, idata);							// standard CSR flat list creation
 		if (data != null) clearNull();
 		bitImage = new BinBitImage(this);
-		if (Matrix.DEBUG_LEVEL > 2)
+		if (Matrix.DEBUG_LEVEL > 2) {
 			System.out.println(this.toString());
+			System.out.println(this.toStringCSR2());			
+		}
 	}
 
 	public CSRMatrix(String name, int M, int N, Type type) {
@@ -95,7 +101,12 @@ public class CSRMatrix extends Matrix {
 	@Override
 	public void putDataRef(double[] data, double[] idata) { if (data != null) putDataM(data, idata); }
 	@Override
-	public void putData(double[] data, double[] idata) { if (data != null) putDataM(data, idata); }
+	public void putData(double[] data, double[] idata) {
+		if (data != null) { 
+			putDataM(data, idata);
+			putDataCSR2(data, idata);
+		}
+	}
 	
 	// TODO: optimise this algorithm
 	public void putDataM(double[] data, double[] idata) {
@@ -621,6 +632,229 @@ public class CSRMatrix extends Matrix {
 	
 	
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
+	//			DYNAMICALLY RESIZED CSR METHODS
+	///////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	// IA2 is a list of sparse row lists JA, preallocated to 16 positions each for fast fill-in at end of list
+	// each list is reallocated on hitting 16-element bounds with size -> size + 16
+	// each row starts with triplet: (tBl,tEc,sEc) total buffer length, total element count, sorted element count
+	// after that, each element of each list is a triplet: (cIdx,uIdx,dIdx)
+	// c is column inumber, uIdx & dIdx tell where the equal column number lies in the row above and below
+	int nA2;
+	private int[][] IA2, regIA2, nodeIA2;
+	private double[][] A2, iA2;
+	private int toSort;					// counts number of IA2 internal lists on the sorting stack 
+	private int[] sortIA2;				// sortIA2 is an index stack for IA2 lists needing sorting
+	private int[][] vGraph;				// stores nodes array-wise, for direct indexing
+	private int[][] vGraphC;			// arranges nodes for column-wise indexing
+	// valueOfColumn() method flushes column data into these temporary buffers
+	int[] cCSR2;
+	double[] cdCSR2;
+	double[] icdCSR2;
+	
+	// identifiers for offsets into a JA2 buffer
+	// tBl = offset to total buffer length param., tEc = offset to total element count param., sEc = offset to sorted element count param.
+	private static final int tBl = 0, tEc = 1, sEc = 2, headerJA2 = 3;
+	
+		
+	private void initCSR2(boolean complex) {
+		nA2 = 0;
+		IA2 = new int[M][];
+		regIA2 = new int[M][];
+		nodeIA2 = new int[M][];
+		A2 = new double[M][];
+		if (complex) iA2 = new double[M][];
+		for (int i = 0; i < M; i++) {
+			IA2[i] = new int[16];
+			regIA2[i] = new int[headerJA2];
+			nodeIA2[i] = new int[16];
+			A2[i] = new double[16];
+			if (complex) iA2[i] = new double[16];
+			regIA2[i][tBl] = 16;
+		}
+		//sortIA2 = new int[16];
+		cCSR2 = new int[M];
+		cdCSR2 = new double[M];
+		if (complex) icdCSR2 = new double[M];
+	}
+	
+	
+	public void putDataCSR2(double[] data, double[] idata) {
+		
+		if (IA2 == null) initCSR2(idata == null ? false : true);
+		
+		// first loop just inserts elements in proper order, the interlinking happens in next loop
+		for (int i = 0; i < M; i++) {
+
+			int[] JA2c = IA2[i];									// set up fast access references for JA2, regJA2, nodeJA2, A2 & iA2
+			int[] regJA2c = regIA2[i], nodeJA2c = nodeIA2[i];
+			double[] A2c = A2[i], iA2c = iA2 == null ? null : iA2[i];
+			int iN = i * N, eLeft = regJA2c[tBl] - regJA2c[tEc];	// eLeft = number of free elements left in current JA2 buffer	
+			int offsJA = 0;											// offset into current A2 & JA2 buffer
+			
+			for (int j = iN, jEnd = iN + N, col = 0; j < jEnd; j++, col++) {
+				
+				// if current JA2 is full (tBl - tEc = 0), add another 16 elements
+				if (eLeft <= 0) {				
+					int newSize = regJA2c[tBl] + 16;
+					int[] oldJA = JA2c;
+					JA2c = IA2[i] = new int[newSize];
+					
+					int eTotal = regJA2c[tEc];
+					for (int c = 0; c < eTotal; c++)		// copy over data into new JA2 buffer
+						JA2c[c] = oldJA[c];
+					regJA2c[tBl] = newSize;					// update length of buffer
+					
+					double[] oldA = A2c;
+					A2c = A2[i] = new double[newSize];		// copy over real values into new A2 buffer
+					for (int c = 1; c < eTotal; c++)		A2c[c] = oldA[c];
+					
+					if (idata != null) {
+						oldA = iA2c;						// copy over complex values into new A2 buffer
+						iA2c = iA2[i] = new double[newSize];
+						for (int c = 1; c < eTotal; c++)	iA2c[c] = oldA[c];						
+					}
+				}
+				
+				// we're inserting only nonzero values
+				if (!nearZero(data[j]) || (idata != null && !nearZero(idata[j]))) {
+					JA2c[offsJA] = col;						// insert column index
+					nodeJA2c[offsJA] = -1;					// insert no-link flag
+					A2c[offsJA] = data[j];					// insert non-zero value
+					if (idata != null)						// insert non-zero complex value
+						iA2c[offsJA] = idata[j];
+					offsJA++;
+					nA2++;									// global element count incremented
+					regJA2c[tEc]++;							// total element count incremented
+					eLeft--; 								// decrease number of free elements left in JA2
+				}
+			}
+			if (regJA2c[tEc] == 0) {						// dereference empty rows
+				IA2[i] = null;
+				A2[i] = null;
+				if (iA2 != null) iA2[i] = null;
+			}
+			else regJA2c[sEc] = regJA2c[tEc];
+		}
+		
+		buildVGraph(data, idata);
+	}
+	
+	
+
+	
+	private void buildVGraph(double[] data, double[] idata) {
+		
+		vGraph = new int[nA2][];									// every CSR2 element will be part of the graph, connected or not
+		vGraphC = new int[N][];										// indexing of column-wise groups
+		int nodeCnt = 0;											// counts up number of assembled nodes so far
+		int[] linkJA2 = new int[M];									// stores indexes into JA2 arrays to use in crosslinking
+		int[] linkRow = new int[M];
+		
+		int[] offJA2 = new int[M];									// holds current offsets into every JA2 sparse row
+
+		// iterate over columns, this sets up a left-to-right marching through sparse column data
+		for (int c = 0; c < N; c++) {
+			
+			int toLink = 0;											// counts number of vertical JA2 matches found for crosslinking
+			// find all JA2 arrays containing current column c
+			for (int r = 0; r < M; r++) {
+				int[] JA2c = IA2[r], regJA2c = regIA2[r];
+				if (offJA2[r] >= 0 && JA2c != null && JA2c[offJA2[r]] == c) {
+					linkRow[toLink] = r;
+					linkJA2[toLink++] = offJA2[r];
+					offJA2[r]++;									// increment the marching offset into this JA2 row
+					if (offJA2[r] >= regJA2c[tEc])					// if we have exhausted current JA2 row...
+						offJA2[r] = -1;								// ...flag it as deactivated
+				}
+			}
+			
+			// create the column-wise group
+			if (toLink > 0) {
+				int groupSize = (toLink & 0xFFFFFFF0) + 32;
+				vGraphC[c] = new int[groupSize];
+			}
+			vGraphC[c][0] = toLink;									// first entry of column group is the node count
+
+			// time to allocate nodes for the found JA2 rows and do the vertical crosslinking
+			int nodeCnt2 = nodeCnt + toLink;
+			for (int node = nodeCnt, r = 0; node < nodeCnt2; node++, r++) {
+				
+				int nodeSize = 4;
+				int[] vGNode =  vGraph[node] = new int[nodeSize];
+				vGNode[0] = linkRow[r];
+				vGNode[1] = linkJA2[r];
+				nodeIA2[linkRow[r]][linkJA2[r]] = node;				// set link index from JA2 to current node
+				vGraphC[c][r + 1] = node;
+			}
+			
+			nodeCnt = nodeCnt2;
+		}
+		return;
+	}
+	
+	
+	public double valueOf2(int r, int c) {
+		
+		if (r < 0 || c < 0 || r >= M || c >= N) throw new RuntimeException("CSRMatrix.valueOf2(): Invalid matrix coordinates.");
+
+		int[] JA2 = IA2[r], regJA2 = regIA2[r];
+		if (JA2 == null) return 0;
+
+		// do ordinary linear search for small arrays
+		int eCnt = regJA2[sEc];							// search only through all sorted elements (for sake of consistency)
+		if (eCnt <= 8)
+			for (int j = 0; j < eCnt; j++)
+				if (JA2[j] == c) return A2[r][j];
+		
+		// make binary search for sought element in JA2 sparse array, naturally only sorted elements apply
+		int seekS = 0, seekE = eCnt, seekM = (seekE + seekS) >> 1;
+//		while (JA2[seekM] != c) {
+//			if (JA2[seekM] < c) 		{ seekS = seekM + 1; seekM = (seekE + seekS) >> 1; }
+//			else if (JA2[seekM] > c)	{ seekE = seekM - 1; seekM = (seekE + seekS) >> 1; }
+//			if (seekS >= seekE) return 0;
+//		}
+		while (seekS < seekE) {
+			if (JA2[seekM] < c) 		{ seekS = seekM + 1; seekM = (seekE + seekS) >> 1; }
+			else if (JA2[seekM] > c)	{ seekE = seekM - 1; seekM = (seekE + seekS) >> 1; }
+			if (JA2[seekM] == c) return A2[r][seekM];
+		}
+		return 0;
+	}
+	
+	
+	public void valueTo2(int r, int c, double v) {
+	
+		if (r < 0 || c < 0 || r >= M || c >= N) throw new RuntimeException("CSRMatrix.valueOf2(): Invalid matrix coordinates.");
+
+		int[] JA2 = IA2[r], regJA2 = regIA2[r];
+		// if JA2 is a null-element array or if it needs to be rescaled
+		if (JA2 == null || regJA2[tEc] >= regJA2[tBl]) {
+			IA2[r] = JA2 = new int[16];					// if JA2 was empty, allocate the default 16 elements
+			regJA2[tBl] = 16;							// set total buffer length
+			regJA2[tEc] = regJA2[sEc] = 1;				// it's the only element of the JA2 array
+			A2[r] = new double[16];
+			if (isComplex()) iA2[r] = new double[16];
+		}
+		
+		int eCnt = regJA2[sEc];							// search only through all sorted elements (for sake of consistency)
+		if (eCnt <= 8)
+			for (int j = 0; j < eCnt; j++)
+				if (JA2[j] < c) {						// if we found the spot of insertion (next element is of lower column rank)
+					
+				}
+		
+	}
+	
+	
+	public void valueOfColumn(int c) {
+		if (c < 0 || c >= N) throw new RuntimeException("CSRMatrix.valueOfColumn(): Invalid column.");
+		//for (int i = 0; i < )
+	}
+	
+	
+	
+	///////////////////////////////////////////////////////////////////////////////////////////////////////////
 	//			OUTPUT METHODS
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -643,10 +877,63 @@ public class CSRMatrix extends Matrix {
 		if (maxA < A.length)
 				sb.append(" ... ]\nJA:   [");
 		else	sb.append("]\nJA:   [");
+		if (iA != null) {
+			for (int i = 1; i <= maxA; i++) sb.append(String.format("i%.2f" + (i==maxA-1?" ":", ") + (i%30==0?"\n      ":""), iA[i-1]));
+			if (maxA < A.length)
+					sb.append(" ... ]\nJA:   [");
+			else	sb.append("]\nJA:   [");
+		}
 		for (int i = 1; i <= maxA; i++) sb.append(JA[i-1] + (i==maxA?"":", ") + (i%30==0?"\n      ":""));
 		if (maxA < A.length)
 				sb.append(" ... ]\n");
 		else	sb.append("]\n");
+		return sb.toString();
+	}
+	
+	
+	
+	private String toStringCSR2() {
+		int maxIA = IA2.length > MAX_PRINTEXTENT ? MAX_PRINTEXTENT : IA2.length;
+		StringBuffer sb = new StringBuffer();
+		sb.append("CSR2 data:\n");
+		for (int i = 0; i < maxIA; i++) {
+			
+			int[] JA2 = IA2[i], regJA2 = regIA2[i], nodeJA2 = nodeIA2[i];
+			if (JA2 != null) {
+				int unsorted = regJA2[tEc] - regJA2[sEc];
+				sb.append("JA2_" + String.format("%d", i) + ": Sorted: [");
+				for (int j = 0; j < regJA2[sEc]; j++)
+					sb.append("(" + JA2[j] + ", node: " + nodeJA2[j] + (j == regJA2[sEc]-1 ? ")] " : "), "));
+				
+				if (unsorted > 0) sb.append(" unsorted: [");
+				for (int j = 0; j < unsorted; j++)
+					sb.append("(" + JA2[JA2[sEc] + 1] + ", node: " + JA2[JA2[sEc] + j] + (j == unsorted - 1 ? ")] " : "), "));
+					
+				sb.append("\nA2: [");
+				int maxA = regJA2[tEc] > MAX_PRINTEXTENT ? MAX_PRINTEXTENT : regJA2[tEc];
+				for (int j = 0; j < maxA; j++)
+					sb.append(String.format("%.2f" + (j==maxA-1?"]":", "), A2[i][j]));
+				
+				if (iA2 != null) {
+					sb.append("\niA2: [");
+					for (int j = 0; j < maxA; j++)
+						sb.append(String.format("i%.2f" + (j==maxA-1?"]":", "), iA2[i][j]));				
+				}
+				sb.append("\n\n");
+			} else
+				sb.append("JA2_" + String.format("%d", i) + ": [empty]\n\n");
+		}
+		for (int i = 0; i < vGraph.length; i++)
+			sb.append("Node " + i + ": [row: " + vGraph[i][0] + ", JA2 offset: " + vGraph[i][1] + "]\n");
+		
+		for (int i = 0; i < N; i++)
+			if (vGraphC[i] != null) {
+				sb.append("Column group " + i + ", nodes: [");
+				for(int j = 0; j < vGraphC[i][0]; j++) sb.append(vGraphC[i][j+1] + (j == vGraphC[i][0] - 1 ? "]" : ", "));
+				sb.append("\n");
+			}
+
+		
 		return sb.toString();
 	}
 

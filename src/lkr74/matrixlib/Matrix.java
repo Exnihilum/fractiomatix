@@ -28,7 +28,7 @@ public class Matrix implements Cloneable {
 	protected String name;
 	protected int M, N; 							// number of rows & columns
 	protected double[] data, idata;					// row-column matrix uses a flat array, data = real part, idata = imaginary part
-	protected int status;
+	protected int status;							// status bits
 	public double det = 0;							// last calculated determinant value
 	public double norm1 = -1;						// last calculated norm-1 value
 
@@ -50,7 +50,7 @@ public class Matrix implements Cloneable {
 	volatile double vdet = 0;						// threadsafe determinant accumulator for multithreaded methods
 	
 	// global variables
-	protected static int DEBUG_LEVEL = 2;
+	protected static int DEBUG_LEVEL = 3;
 	protected volatile static int nameCount = 1;
 	// debugging global variables
 	protected static volatile int detL_DEBUG;
@@ -77,21 +77,24 @@ public class Matrix implements Cloneable {
 		this.M = r;
 		this.N = c;
 		this.generateData(type, 1);
-		if (type == Type.Null || type == Type.Null_Complex) setNull();
+		if (type == Type.Null_Complex) { setNull(); setComplex(); }
+		if (type == Type.Null) setNull();
 		//for (int i = 0; i < r; i++) mutator[i] = i;
 		bitImage = new BinBitImage(this);
 	}
 	
 	//	instantiates a matrix with a provided dataset, cloning the dataset into this matrix
 	public Matrix(String name, int M, int N, double[] data, double[] idata) {
-		if (M < 1 || N < 1 || data.length < M * N) throw new RuntimeException("Matrix(): Illegal matrix dimensions.");
-		if (idata != null && idata.length < M * N) throw new RuntimeException("Matrix(): Illegal imaginary array.");
+		if (M < 1 || N < 1)							throw new RuntimeException("Matrix(): Illegal matrix dimensions.");
+		if (data.length < M * N) 					throw new RuntimeException("Matrix(): Illegal data array.");
+		if (idata != null && idata.length < M * N) 	throw new RuntimeException("Matrix(): Illegal complex data array.");
 		this.name = name + nameCount++;
 		this.M = M;
 		this.N = N;
 		this.putData(data, idata);
 		bitImage = new BinBitImage(this);
 		status = 0;
+		if (idata != null) setComplex();
 	}
 
 	
@@ -190,14 +193,14 @@ public class Matrix implements Cloneable {
 		if (DEBUG_LEVEL > 1) 	newname = new String(name + "(M-" + r + ",N-" + c + ")");
 		else 					newname = name;
 		Matrix A = null;
-		if (idata != null)	A = new Matrix(newname, M - 1, N - 1, Matrix.Type.Null_Complex);
+		if (isComplex())	A = new Matrix(newname, M - 1, N - 1, Matrix.Type.Null_Complex);
 		else				A = new Matrix(newname, M - 1, N - 1, Matrix.Type.Null);
 		
 		for (int i = 0, ii = 0; i < M; i++) {
 			if (i != r) {
 				int iiAN = ii * A.N, iN = i * N;
 				// real-valued matrix case
-				if (idata == null) {
+				if (!isComplex()) {
 					for (int j = 0, jj = 0; j < N; j++)
 						if (j != c) A.data[iiAN + jj++] = data[iN + j];
 				// complex-valued matrix case
@@ -289,7 +292,7 @@ public class Matrix implements Cloneable {
 			for (int i = 0, iNj = j; i < M; i++, iNj += N) dataAc[iNj] -= avg;
 		}
 		dataAc = dataSet[1];
-		if (dataAc != null) {
+		if (isComplex()) {
 			double[] idataAc = Ac.idata;
 			for (int j = 0; j < N; j++) {
 				double avg = 0;
@@ -530,15 +533,15 @@ public class Matrix implements Cloneable {
 			double alpha = (a < 0 ? 1.0 : -1.0) * Math.sqrt(colSum);	// alpha = -sign(a(k+1,k) * sqrt(sum(a(j,k)^2)
 			double r = 0.5 / Math.sqrt(0.5 * alpha * (alpha - a));
 			
-			for (int kv = 0; kv <= k; kv++)							// set up v vector that will be multiplied up to a matrix
+			for (int kv = 0; kv <= k; kv++)								// set up v vector that will be multiplied up to a matrix
 				v.data[kv] = vT.data[kv] = 0;
 			v.data[k+1] = vT.data[k+1] = (a - alpha) * r;
 			for (int j = k + 2, kvN = j * N + k; j < N; j++, kvN += N)
 				v.data[j] = vT.data[j] = dataA[kvN] * r;
 			
-			V = v.multiply(vT).multiply(2, false);					// 2*v.v^T -> V
-			Matrix P = I.subtract(V, true);							// P = I - 2*v.v^T
-			A = P.multiply(A).multiply(P);						// A(k+1) = P(k).A(k).P(k)
+			V = v.multiply(vT).multiply(2, false);						// 2*v.v^T -> V
+			Matrix P = I.subtract(V, true);								// P = I - 2*v.v^T
+			A = P.multiply(A).multiply(P);								// A(k+1) = P(k).A(k).P(k)
 			dataA = A.data;
 		}
 		
@@ -639,7 +642,7 @@ public class Matrix implements Cloneable {
 		double temp;
 		for (int i = 0, or1 = r1 * N, or2 = r2 * N; i < N; i++, or1++, or2++) {
 			temp = data[or1]; data[or1] = data[or2]; data[or2] = temp;
-			if (idata != null) { temp = idata[or1]; idata[or1] = idata[or2]; idata[or2] = temp; }
+			if (isComplex()) { temp = idata[or1]; idata[or1] = idata[or2]; idata[or2] = temp; }
 		}
 		det = -det;						// determinant is inverted by row swapping
 		if (DEBUG_LEVEL > 2) System.out.println("swap:\n" + this.toString());
@@ -664,13 +667,13 @@ public class Matrix implements Cloneable {
 			else name = name + "^T"; 
 					
 			double[] newdata = new double[N * M], inewdata = null;
-			if (idata != null) inewdata = new double[N * M];
+			if (isComplex()) inewdata = new double[N * M];
 			
 			for (int i = 0; i < M; i++) {
 				int iN = i * N;
 				for (int j = 0, jMi = i, iNj = iN; j < N; j++, jMi += M, iNj++)
 					newdata[jMi] = data[iNj];
-				if (idata != null)
+				if (isComplex())
 					for (int j = 0, jMi = i, iNj = iN; j < N; j++, jMi += M, iNj++) inewdata[jMi] = idata[iNj];
 			}
 			
@@ -691,7 +694,7 @@ public class Matrix implements Cloneable {
 				for (int j = i + 1, jMpi, iNj = iN + j; j < N; j++, iNj++) {
 					jMpi = j * M + i;
 					temp = dataT[jMpi]; dataT[jMpi] = dataT[iNj]; dataT[iNj] = temp;
-					if (idata != null) { temp = idataT[jMpi]; idataT[jMpi] = idataT[iNj]; idataT[iNj] = temp; }
+					if (isComplex()) { temp = idataT[jMpi]; idataT[jMpi] = idataT[iNj]; idataT[iNj] = temp; }
 					T.bitImage.transposeBit(i, j);
 				}
 			}		
@@ -710,26 +713,24 @@ public class Matrix implements Cloneable {
 		if (copy) C = this.clone(); else C = this;
 		double[][] dataSet = C.getDataRef();
 		dataC = dataSet[0];
+		int MN = M * N;
 
 		if (M > 1)
 			// if we're not dealing with a transposed vector
 			for (int c = 0; c < N; c++) {
-				double norm = 0, sq;
-				for (int r = 0; r < M; r++) {
-					sq = dataC[r * N + c];
-					norm += sq * sq;									// Euclidean norm ||A||2
-				}
+				double norm = 0;
+				for (int r = c; r < MN; r+=N)
+					norm += dataC[r] * dataC[r];							// Euclidean norm ||A||2
 				norm = 1.0 / Math.sqrt(norm);
-				for (int r = 0; r < M; r++) dataC[r * N + c] *= norm;	// normalise
+				for (int r = c; r < MN; r += N) dataC[r] *= norm;			// normalise
 			}
 		else {
-			double norm = 0, sq;
-			for (int c = 0; c < N; c++) {
-				sq = dataC[c];
-				norm += sq * sq;										// Euclidean norm ||A||2
-			}
-			norm = Math.sqrt(norm);
-			for (int c = 0; c < N; c++) dataC[c] /= norm;		// normalise
+			double norm = 0;
+			for (int c = 0; c < N; c++)
+				norm += dataC[c] * dataC[c];								// Euclidean norm ||A||2
+
+			norm = 1.0 / Math.sqrt(norm);
+			for (int c = 0; c < N; c++) dataC[c] *= norm;					// normalise
 		}
 		
 		if (DEBUG_LEVEL > 1) System.out.println(this.toString());
@@ -768,7 +769,7 @@ public class Matrix implements Cloneable {
 		if (idataB != null) {
 			if (idataA != null) {
 				// there is imaginary data in A and B, make sure C has buffer allocated
-				if (idataC == null) C.idata = new double[M * N];
+				if (idataC == null) { C.idata = new double[M * N]; C.setComplex(); }
 				if (subtract)	for (int i = 0, MN = M * N; i < MN; i++) idataC[i] = idataA[i] - idataB[i];
 				else			for (int i = 0, MN = M * N; i < MN; i++) idataC[i] = idataA[i] + idataB[i];
 			} else idataC = idataB.clone();
@@ -795,10 +796,10 @@ public class Matrix implements Cloneable {
 		else if (M == 1)	{ i = 0; mN = 1; vLen = N; store = true; }	// transposed vector?
 		else {
 			if (i >= N) 	throw new RuntimeException("Matrix.absLength(): Column index out of bounds.");
-			mN = N; vLen = M;						// column vector from a matrix?
+			mN = N; vLen = M;											// column vector from a matrix?
 		}
 		
-		if (idata != null)	for (int c = 0, o = i; c < vLen; c++, o += mN) { sq = data[o] + idata[o]; vnorm += sq * sq; }
+		if (isComplex())	for (int c = 0, o = i; c < vLen; c++, o += mN) { sq = data[o] + idata[o]; vnorm += sq * sq; }
 		else				for (int c = 0, o = i; c < vLen; c++, o += mN) { sq = data[o]; vnorm += sq * sq; }
 		vnorm = Math.sqrt(vnorm);
 		if (store) det = vnorm;
@@ -2324,6 +2325,8 @@ public class Matrix implements Cloneable {
 	boolean isNull() { return (status & NULL_MATRIX) != 0; }
 	void clearNull() { status ^= NULL_MATRIX & status; }
 	void setNull() { status |= NULL_MATRIX; }
+	boolean isComplex() { return (status & COMPLEX_MATRIX) != 0; }
+	void setComplex() { status |= COMPLEX_MATRIX; }
 	
 	// get complex modulus of imaginary value
 	double complexM(double r, double i) { return Math.sqrt(r * r + i * i); };
