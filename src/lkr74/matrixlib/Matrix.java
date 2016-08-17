@@ -50,7 +50,7 @@ public class Matrix implements Cloneable {
 	volatile double vdet = 0;						// threadsafe determinant accumulator for multithreaded methods
 	
 	// global variables
-	protected static int DEBUG_LEVEL = 3;
+	protected static int DEBUG_LEVEL = 2;
 	protected volatile static int nameCount = 1;
 	// debugging global variables
 	protected static volatile int detL_DEBUG;

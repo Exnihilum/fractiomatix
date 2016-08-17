@@ -1,16 +1,13 @@
 package lkr74.matrixlib;
 
+import org.jfree.data.xy.MatrixSeriesCollection;
 import org.jfree.data.xy.XYDataset;
 import org.jfree.data.xy.XYSeries;
 import org.jfree.data.xy.XYSeriesCollection;
 import org.jfree.ui.RefineryUtilities;
-
-import com.jogamp.gluegen.DebugEmitter;
-
 import lkr74.mathgenerics.MiscMath;
 import lkr74.mathgenerics.MiscMath.RandFill;
 import lkr74.mathgenerics.XYLineChart_AWT;
-import lkr74.matrixlib.Matrix.Type;
 
 public class MatrixApp {
 	
@@ -123,8 +120,8 @@ public class MatrixApp {
 						0,0,0,0,0,0,7,3,1,
 						0,1,3,0,9,9,0,0,0,
 						0,4,0,2,1,0,0,9,9,
-						3,0,3,4,0,3,0,1,3,
-						0,9,0,0,0,0,3,0,0,
+						0,0,3,4,0,3,0,1,3,
+						3,9,0,0,0,0,3,0,0,
 						0,6,0,9,0,6,7,7,6};
 		double[] d4 = {	0,2,0,0,0,6,0,
 						5,0,8,0,0,0,0,
@@ -188,17 +185,47 @@ public class MatrixApp {
 //		matrixMultiTest(mtests);
 //		if(1==1) return;
 
+		int iters = 2000000;
+		long tstart = System.nanoTime(), tend;
+
+		// test NspNode finder with three search algorithms at different heuristic levels
+		// seems like the linear finder is generally superior to binary search
+//		int offs = (int)(Math.random()*600);
+//		NspNode[] nodes = new NspNode[300];
+//		for (int i = 0; i < nodes.length; i++)
+//			nodes[i] = new NspNode(0, offs + i*32+(int)(Math.random()*31), i, i);
+
+//		for (int k = 0; k < iters; k++) {
+//			int csought = (int)(Math.random()*(nodes[299].c - nodes[0].c));
+//			int found = CSRMatrix.findHVspNode(nodes, 0, 299, -1, csought);
+//			int cfound = (found < 0 ? nodes[-found-1].c : nodes[found].c);
+//			System.out.println("sought: " + csought + (found < 0 ? ", nearest: " : ", found: ") + cfound);
+//		}
+//		tend = System.nanoTime();
+//		System.out.printf("findHVspNode() averaged %.1f ns\n", (double)(tend - tstart)/iters);
+//		if(1==1) return;
+
 		//CSRMatrix G8 = new CSRMatrix("G", 10, 10, d20, null);
 		CSRMatrix G8 = new CSRMatrix("G", 9, 9, d3, null);
+		System.out.println(G8.toStringCSR2());
 		
-		System.out.println(G8.valueOf2(0, 5));
-		System.out.println(G8.valueOf2(1, 5));
-		System.out.println(G8.valueOf2(2, 5));
-		System.out.println(G8.valueOf2(3, 5));
-		System.out.println(G8.valueOf2(4, 5));
-		System.out.println(G8.valueOf2(5, 5));
-		System.out.println(G8.valueOf2(6, 5));
-		System.out.println(G8.valueOf2(7, 5));
+		G8.valueTo2(4, 3, 8);
+		for (int i = 0; i < 9; i++) {
+			for (int j = 0; j < 9; j++) { double v = G8.valueOf2(i, j); System.out.print((v != 0 ? v : " - ") + "  "); }
+			System.out.println("\n");
+		}
+		System.out.println("\n");
+//		G8.valueTo2(8, 0, -10000);
+//		G8.valueTo2(2, 0, 0);
+//		G8.valueTo2(6, 0, 0);
+//		G8.valueTo2(6, 0, 7);
+//		G8.swapHVspArrays(8, 0, 1);
+		double n = CSRMatrix.multiplyHVsp(G8.Hsp[1], G8.Hsp[0], G8.regHsp[1], G8.regHsp[0], 0, 0);
+		//NspNode[] nd = CSRMatrix.addHVsp(G8.Hsp[0], G8.Hsp[1], G8.regHsp[0], G8.regHsp[1], 5, 0, 0, 0);
+		for (int i = 0; i < 9; i++) {
+			for (int j = 0; j < 9; j++) { double v = G8.valueOf2(i, j); System.out.print((v != 0 ? v : " - ") + "  "); }
+			System.out.println("\n");
+		}
 		//if(1==1) return;
 
 		
@@ -207,7 +234,7 @@ public class MatrixApp {
 		Matrix Ch = new Matrix("C", 10, 10, d20, null);
 		Ch = Ch.transpose(true).multiply(Ch);
 		Ch.factoriseCholesky();
-		if(1==1) return;
+//		if(1==1) return;
 		
 		// Test Householder reduction form
 		Matrix HH = new Matrix("HH", 4, 4, testHH, null);
@@ -220,6 +247,7 @@ public class MatrixApp {
 		// Test conversion of MatrixMarket data to CSR sparse format
 		CSRMatrix MMcsr = CSRMatrix.convert(MM);
 		System.out.println(MMcsr.toString());
+		System.out.println(MMcsr.toStringCSR2());
 		
 		Matrix MM_Cholesky = MM.factoriseCholesky();
 		
@@ -227,6 +255,7 @@ public class MatrixApp {
 			MatrixBMPImage MM_image = new MatrixBMPImage(MM_Cholesky);
 			MM_image.write();
 		}
+		if(1==1) return;
 		
 		Matrix D8 = new Matrix("D8", 8, 8, d11, null);
 		D8.convergent();
@@ -264,8 +293,7 @@ public class MatrixApp {
 		// Test method that finds diagonal bandwidth of a sparse matrix
 		System.out.println("half bandwidth: " + new Matrix("Dd", 10, 10, d20, null).getHalfBandwidth());
 		
-		int iters = 100;
-		long tstart, tend;
+		iters = 100;
 
 		// Test partial pivoting Gauss solver
 		Matrix D5 = new Matrix("A", 3, 3, d5, null);
