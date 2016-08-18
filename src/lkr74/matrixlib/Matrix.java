@@ -160,6 +160,7 @@ public class Matrix implements Cloneable {
 		if (Matrix.DEBUG_LEVEL > 2) System.out.println(this.toString());
 		return A;
 	}
+	
 
 	// this clone operation will deconvert from other formats into row-column through overridden getData() method
 	public Matrix cloneMatrix() {
@@ -317,9 +318,11 @@ public class Matrix implements Cloneable {
 		switch (type) {
 			case Null_Complex:
 				idata = new double[M * N];
+				setComplex();
 			case Null:
 				data = new double[M * N];
 				halfBandwidth = -1;
+				setNull();
 				break;
 			case Unit:
 				data = new double[M * N];
@@ -335,6 +338,7 @@ public class Matrix implements Cloneable {
 			case Random_Complex:
 				idata = new double[M * N];
 				for (int i = 0; i < M * N; i++) idata[i] = Math.random();
+				setComplex();
 			case Random:
 				data = new double[M * N];
 				for (int i = 0; i < M * N; i++) data[i] = Math.random();
@@ -2340,7 +2344,7 @@ public class Matrix implements Cloneable {
 	// -XXXXi		v >= 100
 	// -XX.Di		v >= 10
 	// -X.DDi		v < 10
-	private static String to5chars(double v, boolean complex) {
+	static String to5chars(double v, boolean complex) {
 		int decimals = 0;
 		if (v >= 10000 || v <= -10000) {
 			for (; v >= 100 || v <= -100; v /= 10.0) decimals++;

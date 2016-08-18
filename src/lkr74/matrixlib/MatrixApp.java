@@ -197,7 +197,7 @@ public class MatrixApp {
 
 //		for (int k = 0; k < iters; k++) {
 //			int csought = (int)(Math.random()*(nodes[299].c - nodes[0].c));
-//			int found = CSRMatrix.findHVspNode(nodes, 0, 299, -1, csought);
+//			int found = NSPMatrix.findHVspNode(nodes, 0, 299, -1, csought);
 //			int cfound = (found < 0 ? nodes[-found-1].c : nodes[found].c);
 //			System.out.println("sought: " + csought + (found < 0 ? ", nearest: " : ", found: ") + cfound);
 //		}
@@ -205,28 +205,39 @@ public class MatrixApp {
 //		System.out.printf("findHVspNode() averaged %.1f ns\n", (double)(tend - tstart)/iters);
 //		if(1==1) return;
 
-		//CSRMatrix G8 = new CSRMatrix("G", 10, 10, d20, null);
-		CSRMatrix G8 = new CSRMatrix("G", 9, 9, d3, null);
-		System.out.println(G8.toStringCSR2());
+		// test sparse dynamic NSPMatrix, creation, multiplying, printout, value setting and zeroing, row/column swapping
+		NSPMatrix G8 = new NSPMatrix("G", 9, 9, d3, null);
+		G8 = G8.multiply(G8);
+		System.out.println(G8.toString());
+		Matrix G9 = new Matrix("G", 9, 9, d3, null);
+		G9 = G9.multiply(G9);
+		System.out.println(G9.toString());
+		//if(1==1) return;
 		
-		G8.valueTo2(4, 3, 8);
+		G8.valueTo(4, 3, 8);
 		for (int i = 0; i < 9; i++) {
-			for (int j = 0; j < 9; j++) { double v = G8.valueOf2(i, j); System.out.print((v != 0 ? v : " - ") + "  "); }
+			for (int j = 0; j < 9; j++) { double v = G8.valueOf(i, j); System.out.print((v != 0 ? v : " - ") + "  "); }
 			System.out.println("\n");
 		}
 		System.out.println("\n");
-//		G8.valueTo2(8, 0, -10000);
-//		G8.valueTo2(2, 0, 0);
-//		G8.valueTo2(6, 0, 0);
-//		G8.valueTo2(6, 0, 7);
-//		G8.swapHVspArrays(8, 0, 1);
-		double n = CSRMatrix.multiplyHVsp(G8.Hsp[1], G8.Hsp[0], G8.regHsp[1], G8.regHsp[0], 0, 0);
-		//NspNode[] nd = CSRMatrix.addHVsp(G8.Hsp[0], G8.Hsp[1], G8.regHsp[0], G8.regHsp[1], 5, 0, 0, 0);
+		G8.valueTo(8, 0, -10000);
+		G8.valueTo(2, 0, 0);
+		G8.valueTo(6, 0, 0);
+		G8.valueTo(6, 0, 7);
+		G8.swapHVspArrays(8, 0, 1);
 		for (int i = 0; i < 9; i++) {
-			for (int j = 0; j < 9; j++) { double v = G8.valueOf2(i, j); System.out.print((v != 0 ? v : " - ") + "  "); }
+			for (int j = 0; j < 9; j++) { double v = G8.valueOf(i, j); System.out.print((v != 0 ? v : " - ") + "  "); }
 			System.out.println("\n");
 		}
-		//if(1==1) return;
+		double n = NSPMatrix.multiplyHVsp(G8.Hsp[1], G8.Hsp[0], 0, 0);
+		System.out.println("multiplyHVsp: " + n);
+		NspArray nd = NSPMatrix.addHVsp(G8.Hsp[0], G8.Vsp[6], 2.0, 0, 1, 1);
+		System.out.println(nd.toString());
+		for (int i = 0; i < 9; i++) {
+			for (int j = 0; j < 9; j++) { double v = G8.valueOf(i, j); System.out.print((v != 0 ? v : " - ") + "  "); }
+			System.out.println("\n");
+		}
+		if(1==1) return;
 
 		
 		// Test Cholesky factorisation
@@ -247,7 +258,6 @@ public class MatrixApp {
 		// Test conversion of MatrixMarket data to CSR sparse format
 		CSRMatrix MMcsr = CSRMatrix.convert(MM);
 		System.out.println(MMcsr.toString());
-		System.out.println(MMcsr.toStringCSR2());
 		
 		Matrix MM_Cholesky = MM.factoriseCholesky();
 		
