@@ -102,6 +102,32 @@ public class MatrixApp {
 	}
 	
 	
+	public static void testLUdecomposure() {
+		
+		double[] vB = {
+			0,0,0,1,2,3,4,0,0,0,6,5,4,3,2,1,0,0,0,0,8,0,0,0,0,0,0,0,0,5,4,3,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,5,4,3,0,0,0,0,0,9,1,1,1,1,0,9,4,4,4,5,5,5,1,1,1,0,0,9,8,7,6,5,4,0,0,0,0,0,0,0,
+			0,0,0,0,0,0,0,0,2,3,0,0,0,0,0,1,1,0,0,0,0,0,0,9,9,9,0,0,0,0,0,0,0,0,0,0,6,5,4,0,0,0,0,0,0,2,0,3,0,0,0,0,0,0,0,0,0,0,3,4,5,6,7,8,0,9,4,4,4,5,5,5,1,1,1,0,0,9,8,7,6,5,4,0,0,0,0,0,0,0};
+		
+		// try loading, toString, LU decomposing and writing to BMP of a Matix type
+		MatrixMarketIO mmIO = new MatrixMarketIO("data/mcca.mtx", 0);
+		Matrix MM = mmIO.getMatrix();
+		//System.out.println(MM.toString());		
+		Matrix[] LU = MM.decomposeLU(false, false);	
+		if (LU[0] != null) { MatrixBMPImage MM_image = new MatrixBMPImage(LU[0]); MM_image.write(); }
+		Matrix vectorB = new Matrix("b", 180, 1, vB, null);
+		Matrix bLU[] = vectorB.backSubstituteLU(null, LU[0], true);
+
+		// try loading, toString, LU decomposing and writing to BMP of a NSPMatix type
+		mmIO = new MatrixMarketIO("data/mcca.mtx", 2);
+		NSPMatrix MM2 = (NSPMatrix)mmIO.getMatrix();
+		//System.out.println(MM2.toString());		
+		NSPMatrix[] LU2 = MM2.decomposeLU(false, false);	
+		if (LU[0] != null) { NSPMatrixBMPImage MM_image = new NSPMatrixBMPImage(LU2[0]); MM_image.write(); }
+		NSPMatrix vectorB2 = new NSPMatrix("b", 180, 1, vB, null);
+		NSPMatrix bLU2[] = vectorB2.backSubstituteLU(null, LU2[0], true);
+	}
+	
+	
 	// test client
 	public static void main(String[] args) {
 				
@@ -186,7 +212,7 @@ public class MatrixApp {
 //		if(1==1) return;
 
 		int iters = 2000000;
-		long tstart = System.nanoTime(), tend;
+		long tstart, tend;
 
 		// test NspNode finder with three search algorithms at different heuristic levels
 		// seems like the linear finder is generally superior to binary search
@@ -195,6 +221,7 @@ public class MatrixApp {
 //		for (int i = 0; i < nodes.length; i++)
 //			nodes[i] = new NspNode(0, offs + i*32+(int)(Math.random()*31), i, i);
 
+//		tstart = System.nanoTime();
 //		for (int k = 0; k < iters; k++) {
 //			int csought = (int)(Math.random()*(nodes[299].c - nodes[0].c));
 //			int found = NSPMatrix.findHVspNode(nodes, 0, 299, -1, csought);
@@ -205,16 +232,28 @@ public class MatrixApp {
 //		System.out.printf("findHVspNode() averaged %.1f ns\n", (double)(tend - tstart)/iters);
 //		if(1==1) return;
 
-		// test sparse dynamic NSPMatrix, creation, multiplying, printout, value setting and zeroing, row/column swapping
-		NSPMatrix G8 = new NSPMatrix("G", 9, 9, d3, null);
-		G8 = G8.multiply(G8);
-		System.out.println(G8.toString());
-		Matrix G9 = new Matrix("G", 9, 9, d3, null);
-		G9 = G9.multiply(G9);
-		System.out.println(G9.toString());
-		//if(1==1) return;
+//		testLUdecomposure();
+//		if(1==1) return;
 		
-		G8.valueTo(4, 3, 8);
+		// test sparse dynamic NSPMatrix, creation, multiplying, printout,
+		// zeroes purging, value setting and zeroing, row/column swapping
+		NSPMatrix G8 = new NSPMatrix("G", 9, 7, d4, null);
+		NSPMatrix G8b = G8.transpose(true);
+		G8 = G8.multiply(G8b);
+		System.out.println(G8.toString());
+		Matrix G9 = new Matrix("G", 9, 7, d4, null);
+		Matrix G9b = G9.transpose(true);
+		G9 = G9.multiply(G9b);
+		System.out.println(G9.toString());
+		
+		G8.Hsp[1].array[0].v = 0;
+		G8.Hsp[2].array[0].v = 0;
+		G8.Hsp[3].array[0].v = 0;
+		System.out.println(G8.purgeZeroes());
+		System.out.println(G8.toString());
+		//if(1==1) return;
+
+		G8 = new NSPMatrix("G", 9, 9, d3, null);
 		for (int i = 0; i < 9; i++) {
 			for (int j = 0; j < 9; j++) { double v = G8.valueOf(i, j); System.out.print((v != 0 ? v : " - ") + "  "); }
 			System.out.println("\n");
@@ -237,7 +276,7 @@ public class MatrixApp {
 			for (int j = 0; j < 9; j++) { double v = G8.valueOf(i, j); System.out.print((v != 0 ? v : " - ") + "  "); }
 			System.out.println("\n");
 		}
-		if(1==1) return;
+		//if(1==1) return;
 
 		
 		// Test Cholesky factorisation
@@ -245,14 +284,13 @@ public class MatrixApp {
 		Matrix Ch = new Matrix("C", 10, 10, d20, null);
 		Ch = Ch.transpose(true).multiply(Ch);
 		Ch.factoriseCholesky();
-//		if(1==1) return;
 		
 		// Test Householder reduction form
 		Matrix HH = new Matrix("HH", 4, 4, testHH, null);
 		HH = HH.reduceHouseholder(true);
 		
 		// Test MarixMarket file loading routine
-		MatrixMarketIO mmIO = new MatrixMarketIO("data/mcca.mtx");
+		MatrixMarketIO mmIO = new MatrixMarketIO("data/mcca.mtx", 0);
 		Matrix MM = mmIO.getMatrix();
 		System.out.println(MM.toString());
 		// Test conversion of MatrixMarket data to CSR sparse format
@@ -265,7 +303,6 @@ public class MatrixApp {
 			MatrixBMPImage MM_image = new MatrixBMPImage(MM_Cholesky);
 			MM_image.write();
 		}
-		if(1==1) return;
 		
 		Matrix D8 = new Matrix("D8", 8, 8, d11, null);
 		D8.convergent();

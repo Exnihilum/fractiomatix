@@ -34,6 +34,7 @@ public class CSRMatrix extends Matrix {
 	public CSRMatrix(String name, int M, int N, Type type) {
 		super(name, M, N);								// get skeleton Matrix superclass instance
 		this.generateData(type, 1);
+		data = idata = null;
 		if (type != Matrix.Type.Null && type != Matrix.Type.Null_Complex) clearNull();
 		bitImage = new BinBitImage(this);
 		if (Matrix.DEBUG_LEVEL > 2) System.out.println(this.toString());
@@ -136,11 +137,20 @@ public class CSRMatrix extends Matrix {
 			// for complex number case, any of real or imaginary = nonzero will store a value doublet
 			if (idata != null)
 				for (int i = 0, jNi = j * N; i < N; i++, jNi++) {
-					if (!nearZero(data[jNi]) || !nearZero(idata[jNi])) { A[c1] = data[jNi]; iA[c1] = idata[jNi]; JA[c1++] = i; }
+					if (!nearZero(data[jNi]) || !nearZero(idata[jNi])) {
+						A[c1] = data[jNi];
+						iA[c1] = idata[jNi];
+						JA[c1++] = i; nNZ++;
+						readjustHalfBandwidth(j, i);
+					}
 				}
 			else
 				for (int i = 0, jNi = j * N; i < N; i++, jNi++) {
-					if (!nearZero(data[jNi])) { A[c1] = data[jNi]; JA[c1++] = i; }
+					if (!nearZero(data[jNi])) {
+						A[c1] = data[jNi];
+						JA[c1++] = i; nNZ++;
+						readjustHalfBandwidth(j, i);
+					}
 				}
 		}
 	}

@@ -11,24 +11,31 @@ import io.nayuki.bmpio.BmpWriter;
 
 // uses https://github.com/nayuki/BMP-IO image file in/out class
 // to output a BMP image of the matrix
-final class MatrixBMPImage extends AbstractRgb888Image {
+final class NSPMatrixBMPImage extends AbstractRgb888Image {
 
 	double vMax = Matrix.ROUNDOFF_ERROR, vMedian = 0;
 	BmpImage bmp = null;
-	Matrix A;
+	NSPMatrix A;
 
-	public MatrixBMPImage(Matrix A) {
+	public NSPMatrixBMPImage(NSPMatrix A) {
+		
 		super(A.isComplex() ? A.N * 2 : A.N, A.M * 2);
 		bmp = new BmpImage();
 		bmp.image = this;
 		this.A = A;
 		// find largest value of matrix to divide all others by
-		for(double v: A.data) {
-			if (v < 0) v = -v;
-			if (vMax < v) vMax = v;
-			vMedian += v;
+		for (int j = 0; j < A.N; j++) {
+			NspNode[] bVsp = A.Vsp[j].array;
+			int nNodes = A.Vsp[j].nodes;
+			for (int offH = 0; offH < nNodes; offH++) {
+				double v = bVsp[offH].v;
+				if (v < 0) v = -v;
+				vMedian += v;
+				if (vMax < v) vMax = v;
+			}
 		}
-		vMedian /= (double)(A.data.length);
+		vMedian /= (double)(A.M * A.N);
+		System.out.println("NSPMatrixBMPImage() median value: " + vMedian + ", max.value: " + vMax);
 	}
 
 	public int getRgb888Pixel(int c, int r) {

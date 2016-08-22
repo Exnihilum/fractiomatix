@@ -1,5 +1,6 @@
 package lkr74.matrixlib;
 
+import java.util.Arrays;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////
 //			HELPER CLASSES FOR SPARSE NODE METHODS
@@ -48,7 +49,6 @@ public class NSPMatrix extends Matrix {
 	// Hsp & Vsp are sparse row/column arrays, preallocated to CSR2_ALLOCBLOCK positions each for fast fill-in
 	// at end of list, each array is reallocated on hitting CSR2_ALLOCBLOCK-element bounds with another CSR2_ALLOCBLOCK
 	
-	int nNsp;
 	NspArray[] Hsp;				// horisontally/row aligned sparse arrays pointing to nodes (resembling JA in typical CSR)
 	NspArray[] Vsp;				// vertically/column aligned sparse arrays
 	NspNode[] pivotNsp;			// fast-access to the diagonal nodes
@@ -60,7 +60,7 @@ public class NSPMatrix extends Matrix {
 	
 	
 	private void initNSPMatrix() { // initialises all NSPMatric arrays from scratch
-		nNsp = 0;
+		nNZ = 0;
 		Hsp = new NspArray[M];
 		for (int i = 0; i < Hsp.length; i++) Hsp[i] = new NspArray(0, 0, null);
 		Vsp = new NspArray[N];
@@ -89,8 +89,11 @@ public class NSPMatrix extends Matrix {
 	public NSPMatrix(String name, int M, int N, Type type) {
 		super(name, M, N);								// get skeleton Matrix superclass instance
 		initNSPMatrix();
-		this.generateData(type, 1);
-		if (type != Matrix.Type.Null && type != Matrix.Type.Null_Complex) clearNull();
+		if (type != Matrix.Type.Null && type != Matrix.Type.Null_Complex) {
+			this.generateData(type, 1);
+			data = idata = null;
+			clearNull();
+		}
 		//bitImage = new BinBitImage(this);
 		if (Matrix.DEBUG_LEVEL > 2) System.out.println(this.toString());
 	}
@@ -100,23 +103,31 @@ public class NSPMatrix extends Matrix {
 	@Override
 	public NSPMatrix clone() {
 		NSPMatrix A = (NSPMatrix)super.clone();					// will first call Matrix superclass clone() method
-		if (Hsp != null) {
-			A.Hsp = Hsp.clone();
-			int i = 0;
-			for (NspArray aHVsp : Hsp) {
-				A.Hsp[i] = aHVsp.clone();
-				for (int j = 0; j < aHVsp.nodes; j++)
-					if (aHVsp.array[j] != null) A.Hsp[i].array[j] = aHVsp.array[j].clone();
-				i++;
-			}
-		}
-		if (Vsp != null) {
-			A.Vsp = Vsp.clone();
+
+		if (Vsp != null) {										// duplicate Vsp reference arrays first
+			A.Vsp = new NspArray[Vsp.length];					// as we will put references in them when iterating Hsp
 			int i = 0;
 			for (NspArray aHVsp : Vsp) {
 				A.Vsp[i] = aHVsp.clone();
-				for (int j = 0; j < aHVsp.nodes; j++)
-					if (aHVsp.array[j] != null) A.Vsp[i].array[j] = aHVsp.array[j].clone();
+				if (aHVsp.array != null) A.Vsp[i].array = new NspNode[aHVsp.array.length];
+				i++;
+			}
+		}
+
+		if (Hsp != null) {
+			A.Hsp = new NspArray[Hsp.length];
+			int i = 0;
+			for (NspArray aHVsp : Hsp) {
+				A.Hsp[i] = aHVsp.clone();
+				NspArray aHspA = A.Hsp[i];
+				if (aHVsp.array != null) {
+					aHspA.array = new NspNode[aHVsp.array.length];
+					for (int j = 0; j < aHVsp.nodes; j++) {
+						NspNode node = aHVsp.array[j];
+						aHspA.array[j] = node.clone();
+						A.Vsp[node.c].array[node.offV] = aHspA.array[j];
+					}
+				}
 				i++;
 			}
 		}
@@ -167,83 +178,32 @@ public class NSPMatrix extends Matrix {
 		// first loop  inserts elements in proper order int Hsp
 		for (int i = 0; i < M; i++) {
 
-			NspNode[] bHsp = Hsp[i].array;								// set up fast access references for JA2, regJA2, nodeJA2, A2 & iA2
-			NspArray bregHsp = Hsp[i];
-			int iN = i * N, eLeft = bregHsp.nodes - bregHsp.size;		// eLeft = number of free elements left in current JA2 buffer	
-			int offsHsp = 0;											// offset into current A2 & JA2 buffer
+			NspArray aHsp = Hsp[i];
+			NspNode[] bHsp = aHsp.array;
+			int iN = i * N, offsHsp = 0;							// offsHsp = offset into current Hsp buffer
 			
 			// iterate over values in the matrix row
 			for (int j = iN, jEnd = iN + N, col = 0; j < jEnd; j++, col++) {
-				
-				// if current JA2 is full (tBl - tEc = 0), add another 16 elements
-				if (eLeft <= 0) {				
-					int newSize = bregHsp.size + CSR2_ALLOCBLOCK;
-					NspNode[] oldbHsp = bHsp;
-					bHsp = Hsp[i].array = new NspNode[newSize];					// allocate row-wise reference array Hsp
-					eLeft += CSR2_ALLOCBLOCK;
-					
-					int eTotal = bregHsp.nodes;
-					for (int c = 0; c < eTotal; c++) bHsp[c] = oldbHsp[c];		// copy over data into new JA2 buffer		
-					bregHsp.size = newSize;										// update length of buffer
-				}
-				
+								
 				// we're inserting only nonzero values
 				if (!nearZero(data[j]) || (isComplex() && !nearZero(idata[j]))) {
+					
+					// if current sparse Hsp array is full, add another CSR2_ALLOCBLOCK elements
+					if (updateArraySize(aHsp.nodes + 1, aHsp)) bHsp = aHsp.array;
+
 					bHsp[offsHsp] = new NspNode(i, col, data[j], idata != null ? idata[j] : 0);	// insert column index
-					nNsp++;											// global node count incremented
+					nNZ++;											// global node count incremented
 					if (i == col) pivotNsp[i] = bHsp[offsHsp];		// if it's a pivot, put in fast-access array
 					
 					bHsp[offsHsp].offH = offsHsp;					// store the node's reference offset in Hsp
 					offsHsp++;
-					bregHsp.nodes++;								// total element count incremented
-					eLeft--; 										// decrease number of free elements left in JA2
+					readjustHalfBandwidth(i, col);					// readjust half bandwidth if value coordinates are "sticking out" from diagonal
 				}
 			}
-			if (bregHsp.nodes == 0) Hsp[i].array = null;					// dereference empty rows
+			if (aHsp.nodes == 0) Hsp[i].array = null;				// dereference empty rows
 		}
 
-		int nodeCnt = 0;											// counts up number of assembled nodes so far
-		int[] idxHsp = new int[M];									// stores indexes into JA2 arrays to use in crosslinking
-		int[] linkRow = new int[M];
-		int[] offsHsp = new int[M];									// holds current offsets from left into every Hsp sparse row
-
-		// iterate over columns, this sets up a left-to-right marching through sparse column data
-		for (int c = 0; c < N; c++) {
-			
-			int toLink = 0;											// counts number of vertical JA2 matches found for crosslinking
-			// find all JA2 arrays containing current column c
-			for (int r = 0; r < M; r++) {
-				NspNode[] bHsp = Hsp[r].array;
-				NspArray bregHsp = Hsp[r];
-				if (offsHsp[r] >= 0 && bHsp != null && bHsp[offsHsp[r]].c == c) {
-					linkRow[toLink] = r;
-					idxHsp[toLink++] = offsHsp[r];
-					offsHsp[r]++;									// increment the marching offset into this JA2 row
-					if (offsHsp[r] >= bregHsp.nodes)				// if we have exhausted current JA2 row...
-						offsHsp[r] = -1;							// ...flag it as deactivated
-				}
-			}
-			
-			// create the column-wise group
-			if (toLink > 0) {
-				int groupSize = trimToAllocBlock(toLink + 1);		// allocates in CSR2_ALLOCBLOCK sizes
-				//int groupSize = toLink + 1;						// minimal +1 node allocation option
-				Vsp[c].array = new NspNode[groupSize];
-				Vsp[c].size = groupSize;							// store total buffer length
-			}
-			Vsp[c].nodes = toLink;									// store node count in Vsp register
-
-			// reference all found nodes for this column into current Vsp array
-			int nodeCnt2 = nodeCnt + toLink;
-			for (int node = nodeCnt, r = 0; node < nodeCnt2; node++, r++) {
-				Vsp[c].array[r] = Hsp[linkRow[r]].array[idxHsp[r]];
-				// for convenience, store the node's reference offset in Vsp, this allows to find a pivot quicker
-				Vsp[c].array[r].offV = r;	
-			}
-			
-			nodeCnt = nodeCnt2;
-		}
-
+		crosslinkVsp();
 	}
 	
 	
@@ -265,6 +225,18 @@ public class NSPMatrix extends Matrix {
 		return 0;
 	}
 	
+	// looks up a value in a Mx1 vector
+	public double valueOf(int r) {
+		
+		if (r < 0 || r >= M) throw new RuntimeException("NSPMatrix.valueOf(): Invalid matrix coordinates.");
+		NspArray aVsp = Vsp[0];
+		if (aVsp == null) return 0;
+		int offset = findHVspNode(aVsp.array, 0, aVsp.nodes - 1, r, -1);
+		if (offset >= 0) return aVsp.array[offset].v;					// return the value
+		return 0;
+	}
+
+	
 	
 	@Override
 	public void valueTo(int r, int c, double v) {
@@ -279,15 +251,36 @@ public class NSPMatrix extends Matrix {
 			if (offH >= 0) offV = bHsp[offH].offV;						// get node's offset into Vsp if node existed in Hsp
 			else return;												// a node that doesn't exist in Hsp will not exist in corresponding Vsp
 			removeLocalHVspNode(Hsp[r], offH, 0);						// dereference node from horisontal sparse array
-			removeLocalHVspNode(Vsp[c], offV, 1); nNsp--;				// dereference node from vertical sparse array
+			removeLocalHVspNode(Vsp[c], offV, 1); nNZ--;				// dereference node from vertical sparse array
 			return;
 		}
-		NspNode node = new NspNode(r, c, v, 0); nNsp++;
+		NspNode node = new NspNode(r, c, v, 0); nNZ++;
 		int offset = 		insertHVspNode(r, c, 0, node);				// insert value as new node into Hsp
 		if (offset >= 0) 	insertHVspNode(r, c, 1, node);				// if node didn't exist already, insert value as new node into Vsp
 	}
 
 		
+	
+	public NSPMatrix transpose(boolean copy) {
+		if (M < 1 || N < 1) throw new RuntimeException("NSPMatrix.transpose(): Invalid matrix dimensions.");
+
+		NSPMatrix T = copy ? this.clone() : this;
+		T.name = name + "^T"; 
+
+		for (int i = 0; i < M; i++) {
+			NspNode[] bHsp = T.Hsp[i].array;
+			int nNodes = T.Hsp[i].nodes;
+			// need to swap row & column indexes in every node
+			for (int offH = 0; offH < nNodes; offH++) {
+				NspNode node = bHsp[offH];
+				int temp = node.r; node.r = node.c; node.c = temp;
+				temp = node.offH; node.offH = node.offV; node.offV = temp;
+			}
+		}
+		NspArray[] aTemp = T.Hsp; T.Hsp = T.Vsp; T.Vsp = aTemp;			// swap horisontal & vertical sparse arrays
+		int d = T.M; T.M = T.N; T.N = d;
+		return T;
+	}
 
 	
 	
@@ -308,13 +301,11 @@ public class NSPMatrix extends Matrix {
 				double v = multiplyHVsp(Hsp[i], T.Vsp[j], 0, 1);
 				if (!nearZero(v)) {
 					NspArray aVspU = U.Vsp[j];
-					aHspU.nodes++;
-					aVspU.nodes++;
-					updateArraySize(aHspU);				// increment target horisontal array and check need for reallocation
-					updateArraySize(aVspU);				// increment target vertical array and check need for reallocation
+					updateArraySize(aHspU.nodes + 1, aHspU);	// increment target horisontal array and check need for reallocation
+					updateArraySize(aVspU.nodes + 1, aVspU);	// increment target vertical array and check need for reallocation
 					aHspU.array[j1] = node = new NspNode(i, j, v, 0, j1++, offsetV[j]);
 					aVspU.array[offsetV[j]++] = node;
-					U.nNsp++;
+					U.nNZ++;
 					if (i == j) U.pivotNsp[i] = node;		// if it's a pivot, insert in fast-access array
 				}
 			}
@@ -322,6 +313,314 @@ public class NSPMatrix extends Matrix {
 		return U;
 	}
 	
+	
+	
+	public NSPMatrix[] decomposeLU(boolean copy, boolean generateLandU) {
+		
+		if (M != N)	throw new RuntimeException("NSPMatrix.decomposeLU2(): Matrix not square.");
+		if (M < 1)	throw new RuntimeException("NSPMatrix.decomposeLU2(): Invalid matrix.");
+		
+		NSPMatrix[] lLU = new NSPMatrix[2];
+		int[] mutatorLU = null;
+		NSPMatrix LU = this;
+		if (copy) {
+			LU = clone();
+			LU.name = "LU" + nameCount++;
+			if (mutator == null) mutatorLU = LU.mutator = new int[M];
+		} else {
+			name = "LU" + nameCount++;			// this matrix will be modified, change it's name
+			mutatorLU = mutator = new int[M];
+		}
+		
+		double[] vv = new double[M];
+		double d = 1;								// every permutation toggles sign of d
+
+		for (int i = 0; i < M; i++) {			// looping over rows getting scaling factor of every row, putting it in vv
+			double vMax = 0;
+			NspNode[] bHsp = LU.Hsp[i].array;
+			for (int j = 0, jEnd = LU.Hsp[i].nodes; j < jEnd; j++) {
+				double v = bHsp[j].v;
+				if (v < -vMax || v > vMax) vMax = (v < 0 ? -v : v);
+			}
+			if (nearZero(vMax)) { status |= SINGULAR_MATRIX; return null; }		// if singular matrix found, return null
+			vv[i] = 1.0 / vMax;													// save scaling factor
+		}
+		
+		for (int j = 0; j < M; j++) {
+			NspArray aVsp = LU.Vsp[j];
+			NspNode[] bVsp = aVsp.array;
+			int i = 0, offV = 0, nNodes = aVsp.nodes;							// we will continue using i & offH in next loop
+			for (; i < j; i++) {
+				
+				double sum = 0;
+				if (offV < nNodes && bVsp[offV].r == i) {						// case of operating on a non-zero node
+					sum = bVsp[offV].v; 										// sum = LU[i][j]
+					if (i == 0) offV++; else {
+						sum -= multiplyLUHVsp(LU.Hsp[i], aVsp, 0, 1, i - 1);	// for(k=1;k<i;k++) sum -= LU[i][k]*LU[k](j]
+						bVsp[offV++].v = sum;
+					}
+				} else if (i > 0) {												// node was zero, we'll need to insert result
+					sum -= multiplyLUHVsp(LU.Hsp[i], aVsp, 0, 1, i - 1);		// for(k=1;k<i;k++) sum -= LU[i][k]*LU[k](j]
+					if (!nearZero(sum)) {
+						NspNode newNsp = new NspNode(i, j, sum, 0, 0, offV);	// we know the vertical offset for the new node
+						LU.nNZ++;
+						insertHVspNode(i, j, 0, newNsp);						// horisontal insertion
+						insertLocalHVspNode(aVsp, offV, 1, newNsp);				// LU[i][j] = sum
+						bVsp = aVsp.array;
+						nNodes = aVsp.nodes;
+					}
+				}
+			}
+			
+			int iMax = j;
+			double vMax = 0;													// vMax will store the largest pivot element found
+			for (; i < M; i++) {
+
+				// note, this is same operation as before, only for range of (j <= i < M)
+				double sum = 0;
+				if (offV < nNodes && bVsp[offV].r == i) {						// case of operating on a non-zero node
+					sum = bVsp[offV].v; 										// sum = LU[i][j]
+					if (j == 0) offV++; else {
+						sum -= multiplyLUHVsp(LU.Hsp[i], aVsp, 0, 1, j - 1);	// for(k=1;k<i;k++) sum -= LU[i][k]*LU[k](j]
+						bVsp[offV++].v = sum;
+					}
+					double v = vv[i] * (sum < 0 ? -sum : sum);
+					// have we found a better pivot than the best so far?
+					if (v > vMax) { vMax = v; iMax = i; }
+
+				} else if (j > 0) {												// node was zero, we'll need to insert result
+					sum -= multiplyLUHVsp(LU.Hsp[i], aVsp, 0, 1, j - 1);		// for(k=1;k<i;k++) sum -= LU[i][k]*LU[k](j]
+					if (!nearZero(sum)) {
+						NspNode newNsp = new NspNode(i, j, sum, 0, 0, offV);	// we know the vertical offset for the new node
+						LU.nNZ++;
+						insertHVspNode(i, j, 0, newNsp);						// horisontal insertion
+						insertLocalHVspNode(aVsp, offV, 1, newNsp);				// LU[i][j] = sum
+						bVsp = aVsp.array;
+						nNodes = aVsp.nodes;
+						double v = vv[i] * (sum < 0 ? -sum : sum);
+						if (v > vMax) { vMax = v; iMax = i; }
+					}
+				}
+
+			}
+			if (j != iMax) {									// test if there's a better pivot and we need to swap rows
+				LU.swapHVspArrays(iMax, j, 0);					// yes
+				d = -d;
+				vv[iMax] = vv[j];								// also change scale factor
+			}
+			mutatorLU[j] = iMax;
+			// zero at pivot element implies a singular matrix, but some applications can get by with tweaking away the zero
+			if (LU.pivotNsp[j] == null) {
+				status |= SINGULAR_MATRIX;
+				double v = ROUNDOFF_ERROR * (norm1 < 0 ? this.norm1() : norm1);
+				NspNode newNsp = LU.pivotNsp[j] = new NspNode(j, j, v, 0);
+				insertHVspNode(j, j, 0, newNsp);				// horisontal & vertical insertion
+				insertHVspNode(j, j, 1, newNsp);
+			} else if (nearZero(LU.pivotNsp[j].v))				// did a zero value node end up at pivot position?
+				LU.pivotNsp[j].v = ROUNDOFF_ERROR * (norm1 < 0 ? this.norm1() : norm1);
+
+			if (j < M - 1) {
+				double v = 1.0 / LU.pivotNsp[j].v;
+				int i2End = aVsp.nodes;
+				for (int i2 = LU.pivotNsp[j].offV + 1; i2 < i2End; i2++) bVsp[i2].v *= v;	// divide column by pivot element
+			}
+		}
+		lLU[0] = LU;
+
+		// use d to calculate determinant, put it in LU
+		NspNode[] pivots = LU.pivotNsp;
+		for (int i = 0; i < M; i++) d *= pivots[i].v;
+		if (copy) LU.det = d; else this.det = d;
+
+		// was generation of individual L & U matrices requested?
+		if (generateLandU) {
+			// convert LU into L, moving it's upper triangle data into U
+			lLU[0].name = "L";									// here we treat dataLU as if containing data of L
+			lLU[1] = new NSPMatrix("U", M, N, Matrix.Type.Null);
+
+			for (int i = 0; i < M; i++) {
+				NspArray aHspLU = LU.Hsp[i];
+				NspNode[] bHspLU = aHspLU.array, bHspU = lLU[1].Hsp[i].array;
+				for (int j = LU.pivotNsp[i].offH; j < aHspLU.nodes; j++) {	// iterate over the top triangle
+
+					bHspU[j] = bHspLU[j];
+					if (bHspLU[j].r == bHspLU[j].c)  bHspLU[j].v = 1;		// L's diagonal has only 1:s
+					else bHspLU[j].v = 0;									// L's top triangle is zero
+				}
+			}
+			LU.purgeZeroes();												// purge L's top triangle zeroes
+			lLU[0].det = lLU[1].det = d;
+			lLU[1].mutator = mutatorLU;
+		}
+		
+		if (DEBUG_LEVEL > 1) {
+			System.out.println("NSPMatrix.decomposeLU2() result:");
+			System.out.println(LU.toString());
+			if (generateLandU) System.out.println(lLU[1].toString());
+			System.out.println("LU row mutator:");
+			System.out.println(Arrays.toString(mutatorLU));
+		}
+		return lLU;
+	}
+	
+	
+	
+	// unpermute a matrix with mutator values altered
+	public void unpermute(int[] mutator) {
+		if (mutator == null) return;
+		for (int i = M - 1; i >= 0; i--)
+			if (mutator[i] != i)	swapHVspArrays(i, mutator[i], 0);
+		halfBandwidth = -1;
+	}
+
+	
+	// method takes the combined factorised LU matrix using it to solve a linear system
+	// where only the constant vector is changing, the matrix coefficients assumed to be fixed
+	// adapted from NUMERICAL RECIPES IN C: THE ART OF SCIENTIFIC COMPUTING (ISBN 0-521-43108-5)
+	// the triangular matrices L & U come here in a COMBINED form in matrix LU, split by l(ii)+u(ii) in the diagonal; l(ii) = 1
+	// matrix A, LU are applied on this vector, matrix array with solution vector and LU matrix is the return value
+	// if LU is null, then the method calls decomposeLU2() with A, if A is null then LU is used
+	// method optimisation takes into account that b might contain many leading zero elements
+	public NSPMatrix[] backSubstituteLU(NSPMatrix A, NSPMatrix LU, boolean copy) {
+		
+		if (A == null && LU == null)	throw new RuntimeException("NSPMatrix.backSubstituteLU(): Null matrices/vector.");
+		if (N != 1 || M != (A == null ? LU.M : A.M))
+										throw new RuntimeException("NSPMatrix.backSubstituteLU(): Invalid constant vector.");			
+		NSPMatrix[] bLU = new NSPMatrix[2];
+		
+		// LU = null tells algorithm to create a new LU decomposure, which will be returned in the matrix array
+		if (LU == null) {
+			if (A.M != A.N)	throw new RuntimeException("NSPMatrix.decomposeLU(): Matrix A not square.");			
+			if (A.M < 1)	throw new RuntimeException("NSPMatrix.decomposeLU(): Invalid matrix.");
+			// copy A into a LU matrix and decompose LU, if copy=false it will destroy matrix A returning it as LU
+			bLU[1] = A.decomposeLU(copy, false)[0];
+			// decompose failed on a singular matrix, return null
+			if (bLU[1] == null)	return null;	
+		} else
+			bLU[1] = LU;
+		
+		// if copy=true, do not return solution vector in b vector, but in a copy
+		if (copy) bLU[0] = this.clone(); else bLU[0] = this;
+		if (Matrix.DEBUG_LEVEL > 1) bLU[0].name = "x((" + bLU[1].name + ")^-1*" + name + ")";
+		else						bLU[0].name = "x" + nameCount++;
+
+		int ii = -1, N = bLU[1].N;							// when ii > 0 it will become an index of first nonvanishing element of b
+		int[] mutatorLU = bLU[1].mutator;
+		double sum = 0;
+		
+		NSPMatrix vectorB = bLU[0];
+		NspArray aVspB = vectorB.Vsp[0];
+		NspNode[] bVspB = aVspB.array;
+		int nNodes = aVspB.nodes;
+		
+		for (int i = 0, offVi = 0; i < N; i++) {
+			
+			boolean bImatch = offVi < nNodes && bVspB[offVi].r == i ? true : false;
+			// the permutations of decomposition stage need to be unpermuted during the passes
+			int ip = mutatorLU[i];
+			int offVip = findHVspNode(bVspB, 0, nNodes - 1, ip, -1);				// see if b[ip] exists in sparse array
+			if (offVip >= 0) {														// if b[ip] is a non-zero, existing node...
+				sum = bVspB[offVip].v;												// sum = b[ip]
+				if (bImatch)														// if b[i] matches current row index i (thus is non-zero)
+					bVspB[offVip].v = bVspB[offVi].v;								// b[ip] = b[i] (assigning to existing node)
+				else {
+					removeLocalHVspNode(aVspB, offVip, 1);							// if assigning to a zero, remove the node
+					nNodes = aVspB.nodes;
+					vectorB.nNZ--;
+					bVspB = aVspB.array;
+				}
+			} else {
+				insertLocalHVspNode(aVspB, -offVip-1, 1, bVspB[offVi].clone());		// b[ip] = b[i]	(assigning by inserting a node)
+				nNodes = aVspB.nodes;
+				vectorB.nNZ++;
+				bVspB = aVspB.array;
+			}
+
+			if (ii >= 0)
+				sum -= multiplyStartEndHVsp(bLU[1].Hsp[i], aVspB, 0, 1, ii, i - 1);	// for (ii <= j < i), sum -= a[i][j] * b[j]
+			else
+				if (!nearZero(sum)) ii = i;					// nonzero element found, we'll have to do the sums in loop above from now on
+			
+			if (bImatch) {
+				if (nearZero(sum))	{
+					removeLocalHVspNode(aVspB, offVi, 1);							// b[i] = sum (b[i] exists as nonzero, but is assigned a zero)
+					bVspB = aVspB.array;
+					vectorB.nNZ--;
+				} else bVspB[offVi].v = sum;										// b[i] = sum (simple assignment if b[i] exists as non-zero)
+				offVi++;
+			} else {
+				if (nearZero(sum)) {
+					insertLocalHVspNode(aVspB, offVi, 1, bVspB[offVi].clone());		// b[i] = sum (b[i] was zero/nonexistent, assigned value was nonzero)
+					bVspB = aVspB.array;
+					vectorB.nNZ++;
+				}																	// b[i] = sum (b[i] was zero and assignment was zero, nothing happens)
+			}
+		}
+		
+		NspArray[] lHspLU = bLU[1].Hsp;
+		NspNode[] pivotNspA = bLU[1].pivotNsp;
+		for (int i = N - 1, offVi = nNodes - 1; i >= 0; i--) {						// backsubstitution pass
+			
+			while (offVi > 0 && bVspB[offVi].r > i) offVi--;						// seek backwards in sparse array for a row matching or below i
+			boolean bImatch = (bVspB[offVi].r == i ? true : false);
+			if (bImatch)	sum = bVspB[offVi].v;									// sum = b[i] (zero if b[0] is nonexistante/zero value
+			else 			sum = 0;
+			sum -= multiplyStartEndHVsp(lHspLU[i], aVspB, 0, 1, ii, i - 1);			// for (i+1 <= j < N), sum -= a[i][j] * b[j]
+
+			// store an element of solution vector X
+			if (bImatch)
+				if (nearZero(sum)) {
+					removeLocalHVspNode(aVspB, offVi, 1);							// if assigning node to a zero, remove that node
+					nNodes = aVspB.nodes;
+					bLU[0].nNZ--;
+					bVspB = aVspB.array;					
+				} else
+					bVspB[offVi].v = sum / pivotNspA[i].v;							// sum = b[i] / a[i][i] (case when b[i] exists as nonzero value)					
+			else {
+				if (!nearZero(sum)) {
+					insertLocalHVspNode(aVspB, offVi, 1, bVspB[offVi].clone());		// sum = b[i] / a[i][i] (b[i] is zero/nonexistent, insert new node
+					bLU[0].nNZ++;
+				}
+			}
+		}
+				
+		if (DEBUG_LEVEL > 1) {
+			System.out.println("Backsubstitution LU solver:");
+			System.out.println(bLU[0].toString());
+			if (A != null) System.out.println(bLU[1].toString());
+		}
+		return bLU;
+	}
+
+	
+	
+	
+
+	// calculates 1-norm of a NSPMatrix
+	public double norm1() {
+		for (int j = 0; j < N; j++) {
+			double sum = 0;
+			NspNode[] bVsp = Vsp[j].array;
+			int nNodes = Vsp[j].nodes;
+			for (int offH = 0; offH < nNodes; offH++) {
+				double v = bVsp[offH].v;
+				sum += v < 0 ? -v : v; }
+			if (sum > norm1) norm1 = sum;
+		}
+		return norm1;
+	}
+
+	// calculates Frobenius norm of a NSPMatrix
+	public double normFrobenius() {
+		double sum = 0;
+		for (int j = 0; j < N; j++) {
+			NspNode[] bVsp = Vsp[j].array;
+			int nNodes = Vsp[j].nodes;
+			for (int offH = 0; offH < nNodes; offH++) { double v = bVsp[offH].v; sum += v * v; }
+		}
+		return Math.sqrt(sum);
+	}
+
 
 
 
@@ -504,6 +803,85 @@ public class NSPMatrix extends Matrix {
 		return v;
 	}
 
+	
+	
+	// sparse CSR2 inner vector product for LU decomposition algorithm
+	static double multiplyLUHVsp(NspArray aHVspA, NspArray aHVspB, int aspectA, int aspectB, int k) {
+		
+		int nNa = aHVspA.nodes, nNb = aHVspB.nodes;
+		//if (nNa == 0 || nNb == 0) return 0;					// base case: one of the arrays is all zeroes
+		NspNode[] bHVspA = aHVspA.array, bHVspB = aHVspB.array;
+		double v = 0;
+	
+		for (int ia = 0, ib = 0; ia < nNa && ib < nNb;) {	// march through each node in the two arrays
+			NspNode nA = bHVspA[ia], nB = bHVspB[ib];	
+			if (aspectA == 0) {
+				if (aspectB == 0) {
+					if (nA.c > k || nB.c > k) return v;
+					if (nA.c == nB.c) { v += nA.v * nB.v; ia++; ib++; }
+					else if (nA.c < nB.c) ia++; else ib++;
+				} else {
+					if (nA.c > k || nB.r > k) return v;
+					if (nA.c == nB.r) { v += nA.v * nB.v; ia++; ib++; }
+					else if (nA.c < nB.r) ia++; else ib++;
+				}
+			} else {
+				if (aspectB == 0) {
+					if (nA.r > k || nB.c > k) return v;
+					if (nA.r == nB.c) { v += nA.v * nB.v; ia++; ib++; }
+					else if (nA.r < nB.c) ia++; else ib++;
+				} else {
+					if (nA.r > k || nB.r > k) return v;
+					if (nA.r == nB.r) { v += nA.v * nB.v; ia++; ib++; }
+					else if (nA.r < nB.r) ia++; else ib++;
+				}				
+			}
+		}
+		return v;
+	}
+
+	
+	// sparse CSR2 inner vector product of an index range between start (iS) & end (iE)
+	static double multiplyStartEndHVsp(NspArray aHVspA, NspArray aHVspB, int aspectA, int aspectB, int iS, int iE) {
+		
+		int nNa = aHVspA.nodes, nNb = aHVspB.nodes, ia = 0, ib = 0;
+		//if (nNa == 0 || nNb == 0) return 0;					// base case: one of the arrays is all zeroes
+		NspNode[] bHVspA = aHVspA.array, bHVspB = aHVspB.array;
+		double v = 0;
+	
+		if (aspectA == 0)	ia = findHVspNode(bHVspA, 0, nNa, -1, iS);
+		else				ia = findHVspNode(bHVspA, 0, nNa, iS, -1);
+		if (aspectB == 0)	ib = findHVspNode(bHVspB, 0, nNb, -1, iS);
+		else				ib = findHVspNode(bHVspB, 0, nNb, iS, -1);
+
+		for (; ia < nNa && ib < nNb;) {	// march through each node in the two arrays
+			NspNode nA = bHVspA[ia], nB = bHVspB[ib];	
+			if (aspectA == 0) {
+				if (aspectB == 0) {
+					if (nA.c > iE || nB.c > iE) return v;
+					if (nA.c == nB.c) { v += nA.v * nB.v; ia++; ib++; }
+					else if (nA.c < nB.c) ia++; else ib++;
+				} else {
+					if (nA.c > iE || nB.r > iE) return v;
+					if (nA.c == nB.r) { v += nA.v * nB.v; ia++; ib++; }
+					else if (nA.c < nB.r) ia++; else ib++;
+				}
+			} else {
+				if (aspectB == 0) {
+					if (nA.r > iE || nB.c > iE) return v;
+					if (nA.r == nB.c) { v += nA.v * nB.v; ia++; ib++; }
+					else if (nA.r < nB.c) ia++; else ib++;
+				} else {
+					if (nA.r > iE || nB.r > iE) return v;
+					if (nA.r == nB.r) { v += nA.v * nB.v; ia++; ib++; }
+					else if (nA.r < nB.r) ia++; else ib++;
+				}				
+			}
+		}
+		return v;
+	}
+
+	
 		
 	// method inserts node into a Hsp/Vsp reference array, reallocating it if necessary
 	// method returns the passed buffer, or the new buffer if reallocation happened
@@ -512,40 +890,41 @@ public class NSPMatrix extends Matrix {
 	private int insertHVspNode(int r, int c, int aspect, NspNode node) {
 
 		NspNode[] bHVsp = null;
-		NspArray regHVsp = null;
+		NspArray aHVsp = null;
 		int offset = 0;
 		switch (aspect) {
-			case 0:	{	bHVsp = Hsp[r].array; regHVsp = Hsp[r];
-						offset = findHVspNode(bHVsp, 0, regHVsp.nodes - 1, -1, c); break; }
-			case 1:	{	bHVsp = Vsp[c].array; regHVsp = Vsp[c];
-						offset = findHVspNode(bHVsp, 0, regHVsp.nodes - 1, r, -1); break; }
+			case 0:	{	bHVsp = Hsp[r].array; aHVsp = Hsp[r];
+						offset = findHVspNode(bHVsp, 0, aHVsp.nodes - 1, -1, c); break; }
+			case 1:	{	bHVsp = Vsp[c].array; aHVsp = Vsp[c];
+						offset = findHVspNode(bHVsp, 0, aHVsp.nodes - 1, r, -1); break; }
 		}
 		// if we didn't find element, insert it
 		if (offset < 0) {
 			offset = -offset-1;
-			regHVsp.nodes++;
+			aHVsp.nodes++;
 			if (r == c) pivotNsp[r] = bHVsp[offset];			// if pivot, insert in fast-access array
 
 			// does Hsp/Vsp reference array need allocation/reallocation ?
-			if (regHVsp.nodes > regHVsp.size) {
-				NspNode[] bHVsp2 = new NspNode[trimToAllocBlock(regHVsp.nodes)];
-				if (aspect == 0) Hsp[r].array = bHVsp2; else Vsp[c].array = bHVsp2;
+			if (aHVsp.nodes >= aHVsp.size) {
+				NspNode[] bHVsp2 = new NspNode[aHVsp.size = trimToAllocBlock(aHVsp.nodes)];
 				
-				int i = regHVsp.nodes - 1;
+				int i = aHVsp.nodes - 1;
 				// choose inner offset update type, depending on whether we're processing Hsp or Vsp
-				if ((aspect & 1)==0) {
+				if (aspect == 0) {
 					for (int j = i - 1; j >= offset; i--, j--) { bHVsp2[i] = bHVsp[j]; bHVsp2[i].offH++; }
 					node.offH = offset;
+					Hsp[r].array = bHVsp2;
 				} else {
 					for (int j = i - 1; j >= offset; i--, j--) { bHVsp2[i] = bHVsp[j]; bHVsp2[i].offV++; }
 					node.offV = offset;
+					Vsp[c].array = bHVsp2;
 				}
 				bHVsp2[offset] = node;										// reference the node
 	
 				for (i -= 1; i >= 0; i--) bHVsp2[i] = bHVsp[i];				// move the remaining elements
 			} else {
-				int i = regHVsp.nodes - 1;
-				if ((aspect & 1)==0) {
+				int i = aHVsp.nodes - 1;
+				if (aspect == 0) {
 					for (int j = i - 1; j >= offset; i--, j--) { bHVsp[i] = bHVsp[j]; bHVsp[i].offH++; }
 					node.offH = offset;
 				} else {
@@ -567,17 +946,17 @@ public class NSPMatrix extends Matrix {
 	private NspArray insertLocalHVspNode(NspArray aHVsp, int offset, int aspect, NspNode node) {
 
 		NspNode[] bHVsp = aHVsp.array;
-		int nNodes = aHVsp.nodes++;
-		if (bHVsp[offset].r == bHVsp[offset].c)
-			pivotNsp[bHVsp[offset].r] = bHVsp[offset];		// if pivot, insert in fast-access array
+		int nNodes = ++aHVsp.nodes;
+//		if (bHVsp[offset].r == bHVsp[offset].c)
+//			pivotNsp[bHVsp[offset].r] = bHVsp[offset];		// if pivot, insert in fast-access array
 
 		// does Hsp/Vsp reference array need allocation/reallocation ?
-		if (nNodes > aHVsp.size) {
-			NspNode[] bHVsp2 = aHVsp.array = new NspNode[trimToAllocBlock(nNodes)];
+		if (nNodes >= aHVsp.size) {
+			NspNode[] bHVsp2 = aHVsp.array = new NspNode[aHVsp.size = trimToAllocBlock(nNodes)];
 			
 			int i = nNodes - 1;
 			// choose inner offset update type, depending on whether we're processing Hsp or Vsp
-			if ((aspect & 1)==0) {
+			if (aspect == 0) {
 				for (int j = i - 1; j >= offset; i--, j--) { bHVsp2[i] = bHVsp[j]; bHVsp2[i].offH++; }
 				node.offH = offset;
 			} else {
@@ -588,7 +967,7 @@ public class NSPMatrix extends Matrix {
 			for (i -= 1; i >= 0; i--) bHVsp2[i] = bHVsp[i];				// move the remaining elements
 		} else {
 			int i = nNodes - 1;
-			if ((aspect & 1)==0) {
+			if (aspect ==0 ) {
 				for (int j = i - 1; j >= offset; i--, j--) { bHVsp[i] = bHVsp[j]; bHVsp[i].offH++; }
 				node.offH = offset;
 			} else {
@@ -605,30 +984,30 @@ public class NSPMatrix extends Matrix {
 	private int removeHVspNode(int r, int c, int aspect) {
 
 		NspNode[] bHVsp = null;
-		NspArray regHVsp = null;
+		NspArray aHVsp = null;
 		int offset = 0;
 		
 		switch (aspect) {
-			case 0:	{	bHVsp = Hsp[r].array; regHVsp = Hsp[r];
-						offset = findHVspNode(bHVsp, 0, regHVsp.nodes-1, -1, c); break; }
-			case 1:	{	bHVsp = Vsp[c].array; regHVsp = Vsp[c];
-						offset = findHVspNode(bHVsp, 0, regHVsp.nodes-1, r, -1); break; }
+			case 0:	{	bHVsp = Hsp[r].array; aHVsp = Hsp[r];
+						offset = findHVspNode(bHVsp, 0, aHVsp.nodes-1, -1, c); break; }
+			case 1:	{	bHVsp = Vsp[c].array; aHVsp = Vsp[c];
+						offset = findHVspNode(bHVsp, 0, aHVsp.nodes-1, r, -1); break; }
 		}
 		
 		// if we found element, remove it
 		if (offset >= 0) {
 			if (r == c) pivotNsp[r] = null;								// if it's a pivot, remove from fast-access array
 			
-			int nNodes = --regHVsp.nodes;
-			if (nNodes == 0) {
-				regHVsp.size = 0;
+			int nNodes = --aHVsp.nodes;
+			if (nNodes <= 0) {
+				aHVsp.size = 0;
 				if (aspect == 0) Hsp[r].array = null; else Vsp[c].array = null;		// last node in array removed, destroy this array
 				return offset;		
 			}
 			
 			// does Hsp/Vsp reference array need deallocation (over 63 nodes been removed)?
-			if (regHVsp.size - nNodes >= 64) {
-				NspNode[] bHVsp2 = new NspNode[regHVsp.size - 64];
+			if (aHVsp.size - nNodes >= CSR2_DEALLOCBLOCK) {
+				NspNode[] bHVsp2 = new NspNode[aHVsp.size = aHVsp.size - CSR2_DEALLOCBLOCK];
 				
 				int i = 0;
 				if ((aspect & 1) == 0)
@@ -656,7 +1035,7 @@ public class NSPMatrix extends Matrix {
 		
 		// does Hsp/Vsp reference array need deallocation (over 63 nodes been removed)?
 		if (aHVsp.size - nNodes >= CSR2_DEALLOCBLOCK) {
-			NspNode[] bHVsp2 = new NspNode[aHVsp.size - CSR2_DEALLOCBLOCK];
+			NspNode[] bHVsp2 = new NspNode[aHVsp.size = aHVsp.size - CSR2_DEALLOCBLOCK];
 			
 			int i = 0;
 			if ((aspect & 1) == 0)
@@ -669,6 +1048,125 @@ public class NSPMatrix extends Matrix {
 			else	for (int i = offset, j = i + 1; i < nNodes; i++, j++) { bHVsp[i] = bHVsp[j]; bHVsp[i].offV--; }
 		}
 	}
+	
+	
+	
+	// method eliminates zeroes from a sparse structure
+	public int purgeZeroes() {
+		
+		nNZ = 0;													// reset non-zeroes counter
+		int maxNodes = 0, foundZ = 0;
+		// first loop eliminates zeroes in the Hsp arrays
+		for (int i = 0; i < M; i++) {
+
+			NspArray aHsp = Hsp[i];
+			NspNode[] bHsp = aHsp.array;
+			int nodes2 = 0;
+			
+			// iterate over values in the matrix row
+			for (int j = 0; j < aHsp.nodes; j++) {
+								
+				// we're keeping only nonzero values
+				if (!nearZero(bHsp[j].v) || (isComplex() && !nearZero(bHsp[j].iv))) {
+					bHsp[nodes2] = bHsp[j];								// shift reference inside buffer
+					nNZ++;												// global node count incremented
+					if (bHsp[nodes2].r == bHsp[nodes2].c)
+						pivotNsp[bHsp[nodes2].r] = bHsp[nodes2];		// if it's a pivot, put in fast-access array					
+					bHsp[nodes2].offH = nodes2++;						// change node's offset in Hsp					
+				} else {
+					// if nonzero found and it was in pivot position, clear that position in fast-access array
+					if (bHsp[j].r == bHsp[j].c) pivotNsp[bHsp[j].r] = null;
+					foundZ++;
+				}
+			}
+			if (nodes2 > maxNodes) maxNodes = nodes2;
+			updateArraySize(nodes2, aHsp);								// check if Hsp array can be reduced
+		}
+		crosslinkVsp();
+		return foundZ;
+	}
+
+	
+	// method finalises an NSP structure by crossreferring Hsp's references in vertical Vsp arrays
+	// method is called by methods that have preconstructed a NSPMatrix in the Hsp aspect and need finalising Vsp aspect
+	void crosslinkVsp() {
+		
+		int nodeCnt = 0;											// counts up number of assembled nodes so far
+		int[] idxHsp = new int[M];									// stores indexes into Hsp arrays to use in crosslinking
+		int[] linkRow = new int[M];
+		int[] offsHsp = new int[M];									// holds current offsets from left into every Hsp array
+
+		// iterate over columns, this sets up a left-to-right marching through sparse column data
+		for (int c = 0; c < N; c++) {
+			
+			int toLink = 0;											// counts number of vertical matches found for crosslinking
+			// find all Hsp arrays containing current column c
+			for (int r = 0; r < M; r++) {
+				NspNode[] bHsp = Hsp[r].array;
+				NspArray aHsp = Hsp[r];
+				if (offsHsp[r] >= 0 && bHsp != null && bHsp[offsHsp[r]].c == c) {
+					linkRow[toLink] = r;
+					idxHsp[toLink++] = offsHsp[r];
+					offsHsp[r]++;										// increment the marching offset into Hsp array
+					if (offsHsp[r] >= aHsp.nodes) offsHsp[r] = -1;	// deactivate exhausted rows	
+				}
+			}
+			
+			// create the column-wise group
+			NspArray aVsp = Vsp[c];
+			updateArraySize(toLink, Vsp[c]);						// shrink Vsp array if it's possible
+
+			// reference all found nodes for this column into current Vsp array
+			int nodeCnt2 = nodeCnt + toLink;
+			for (int r = 0; r < toLink; r++) {
+				aVsp.array[r] = Hsp[linkRow[r]].array[idxHsp[r]];
+				aVsp.array[r].offV = r;	
+			}
+			nodeCnt = nodeCnt2;
+		}
+	}
+	
+	
+	
+	// method finalises an NSP structure by crossreferring Vsp's references in horisontal Hsp arrays
+	// method is called by methods that have preconstructed a NSPMatrix in the Vsp aspect and need finalising Hsp aspect
+	void crosslinkHsp() {
+		
+		int nodeCnt = 0;											// counts up number of assembled nodes so far
+		int[] idxVsp = new int[N];									// stores indexes into Vsp arrays to use in crosslinking
+		int[] linkCol = new int[N];
+		int[] offsVsp = new int[N];									// holds current offsets from left into every Vsp array
+
+		// iterate over columns, this sets up a top-to-bottom marching through sparse column data
+		for (int r = 0; r < M; r++) {
+			
+			int toLink = 0;											// counts number of vertical matches found for crosslinking
+			// find all Vsp arrays containing current row r
+			for (int c = 0; c < N; c++) {
+				NspNode[] bVsp = Vsp[c].array;
+				NspArray aVsp = Vsp[c];
+				if (offsVsp[c] >= 0 && bVsp != null && bVsp[offsVsp[c]].r == r) {
+					linkCol[toLink] = c;
+					idxVsp[toLink++] = offsVsp[c];
+					offsVsp[c]++;									// increment the marching offset into Vsp array
+					if (offsVsp[c] >= aVsp.nodes) offsVsp[c] = -1;	// deactivate exhausted rows	
+				}
+			}
+			
+			// create the row-wise group
+			NspArray aHsp = Hsp[r];
+			updateArraySize(toLink, Hsp[r]);						// shrink Hsp array if it's possible
+
+			// reference all found nodes for this column into current Vsp array
+			int nodeCnt2 = nodeCnt + toLink;
+			for (int c = 0; c < toLink; c++) {
+				aHsp.array[c] = Vsp[linkCol[c]].array[idxVsp[c]];
+				aHsp.array[c].offH = c;	
+			}
+			nodeCnt = nodeCnt2;
+		}
+	}
+
 
 
 	
@@ -880,31 +1378,36 @@ public class NSPMatrix extends Matrix {
 	//			INLINE/HELPER METHODS
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-	private static int trimToAllocBlock(int v) {
-		if ((v & 0xF) == 0) return (v & 0xFFFFFFF0); else return (v & 0xFFFFFFF0) + CSR2_ALLOCBLOCK;
-	}
+	private static int trimToAllocBlock(int v) { return (v & (0xFFFFFFFF - CSR2_ALLOCBLOCK + 1)) + CSR2_ALLOCBLOCK; }
 	
 	
-	private static boolean updateArraySize(NspArray aHVsp) {
-		int nodes = aHVsp.nodes;
+	// method checks if a Hsp or Vsp array is full and needs reallocation and duplication
+	// method also checks if a Hsp or Vsp array lost at least 64 elements and can be shrunk
+	static boolean updateArraySize(int nodes, NspArray aHVsp) {
+		
 		// check if array needs increasing
 		if (nodes >= aHVsp.size) {
-			NspNode[] newArray = new NspNode[aHVsp.size = trimToAllocBlock(aHVsp.nodes)], array = aHVsp.array;
-			if (array != null)
-				for (int i = 0; i < nodes; i++) newArray[i] = array[i];
+			NspNode[] newArray = new NspNode[aHVsp.size = trimToAllocBlock(nodes)], array = aHVsp.array;
+			if (array != null) {
+				int nodes2 = aHVsp.nodes;
+				for (int i = 0; i < nodes2; i++) newArray[i] = array[i];
+			}
 			aHVsp.array = newArray;
+			aHVsp.nodes = nodes;
 			return true;
 		}
 		// check if array needs shrinking
-		if (aHVsp.size - nodes <= CSR2_DEALLOCBLOCK) {
-			aHVsp.size = trimToAllocBlock(aHVsp.nodes);
+		if (aHVsp.size - nodes >= CSR2_DEALLOCBLOCK) {
+			aHVsp.size = trimToAllocBlock(nodes);
 			if (aHVsp.size == 0) { aHVsp.array = null; return true; }		// if last element removed, destroy node array
 			NspNode[] newArray = new NspNode[aHVsp.size], array = aHVsp.array;
 			if (array != null)
 				for (int i = 0; i < nodes; i++) newArray[i] = array[i];
 			aHVsp.array = newArray;
+			aHVsp.nodes = nodes;
 			return true;			
 		}
+		aHVsp.nodes = nodes;
 		return false;														// array wasn't changed, return false
 	}
 
@@ -951,14 +1454,17 @@ public class NSPMatrix extends Matrix {
 			NspNode[] bHsp = Hsp[i].array;
 			NspArray bregHsp = Hsp[i];
 			if (bHsp != null) {
-				sb.append("Hsp(" + i + "): Sorted: [");
+				sb.append("Hsp(" + i + "): [");
 				int maxHsp = bregHsp.nodes > MAX_PRINTEXTENT ? MAX_PRINTEXTENT : bregHsp.nodes;
 				for (int j = 0; j < maxHsp; j++)
 					sb.append("(" + 	bHsp[j].r + ", " + 
 										bHsp[j].c + ", " + 
 										bHsp[j].v + ", " + 
 										bHsp[j].offH + ", " + 
-										bHsp[j].offV + (j == maxHsp-1 ? ")]\n" : "), "));
+										bHsp[j].offV + (j == maxHsp-1 ? ")" : "), "));
+				if (bregHsp.nodes > MAX_PRINTEXTENT)
+						sb.append(" ... ]\n");
+				else	sb.append("]\n");
 				
 			} else
 				sb.append("Hsp(" + i + "): [empty]\n\n");
@@ -971,15 +1477,18 @@ public class NSPMatrix extends Matrix {
 			NspNode[] bVsp = Vsp[i].array;
 			NspArray bregVsp = Vsp[i];
 			if (bVsp != null) {
-				sb.append("Vsp(" + i + "): Sorted: [");
+				sb.append("Vsp(" + i + "): [");
 				int maxVsp = bregVsp.nodes > MAX_PRINTEXTENT ? MAX_PRINTEXTENT : bregVsp.nodes;
 				for (int j = 0; j < maxVsp; j++)
 					sb.append("(" +		bVsp[j].r + ", " +
 										bVsp[j].c + ", " +
 										bVsp[j].v + ", " +
 										bVsp[j].offH + ", " +
-										bVsp[j].offV + (j == maxVsp-1 ? ")]\n" : "), "));
+										bVsp[j].offV + (j == maxVsp-1 ? ")" : "), "));
 				
+				if (bregVsp.nodes > MAX_PRINTEXTENT)
+					sb.append(" ... ]\n");
+			else	sb.append("]\n");
 			} else
 				sb.append("Vsp(" + i + "): [empty]\n\n");
 		}

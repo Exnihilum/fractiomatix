@@ -149,7 +149,7 @@ public class BinBitImage {
 		// large matrix basecase
 		else { int a = c%64; data[r * bitSets + c/64] |= (0x1L << a); }
 		
-		if (debugTrigger(2)) System.out.println(this.toString());
+		if (debugTrigger(3)) System.out.println(this.toString());
 	}
 
 	// clear a bit in bitImage
@@ -159,7 +159,7 @@ public class BinBitImage {
 		// large matrix basecase
 		else { int a = c%64; data[r * bitSets + c/64] &= 0xFFFFFFFFFFFFFFFFL ^ (0x1L<<a); }
 		
-		if (debugTrigger(2)) System.out.println(this.toString());
+		if (debugTrigger(3)) System.out.println(this.toString());
 	}
 	
 	// transposes two bits across a square matrix
@@ -208,7 +208,7 @@ public class BinBitImage {
 			data[r2*bitSets + i] = bitset;
 		}
 		
-		if (debugTrigger(2)) System.out.println(this.toString());
+		if (debugTrigger(3)) System.out.println(this.toString());
 	}
 	
 	protected boolean equals(BinBitImage bI) {

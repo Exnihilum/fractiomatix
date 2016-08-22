@@ -35,8 +35,9 @@ public class Matrix implements Cloneable {
 	// optimisation hierarchies & variables
 	// binBitLength = no. of values gathered in binBit, procNum = number of concurrent processors available
 	protected boolean rowAspectSparsest = true;		// indicates whether row or column aspect is most sparse for determinant analysis
-	protected int halfBandwidth = -1;					// tells how far a sparse matrix deviates from it's diagonal band, p = |i - j|
+	protected int halfBandwidth = -1;				// tells how far a sparse matrix deviates from it's diagonal band, p = |i - j|
 	protected int detSign = 1;						// tells sign of the determinant, according to heuristics of analyseRowsColumns() 
+	protected int nNZ = 0;							// tells how many nonzeroes matrix contains
 	protected int[][] detAnalysis = null;			// used by analyseRowsColumns() for determinant finding heuristics
 	protected int[] mutator = null;					// used to index mutated rows for certain algorithms
 	protected BinBitImage bitImage;
@@ -266,16 +267,23 @@ public class Matrix implements Cloneable {
 	// calculates 1-norm of a matrix
 	private double norm1() {
 		int MN = M * N;
-		norm1 = 0;
 		double sum;
 		for (int j = 0; j < N; j++) {
 			sum = 0;
-			for (int i = j; i < MN; i += N) {
-				double v = data[i];
-				sum += v < 0 ? -v : v; }
+			for (int i = j; i < MN; i += N) { double v = data[i]; sum += v < 0 ? -v : v; }
 			if (sum > norm1) norm1 = sum;
 		}
 		return norm1;
+	}
+
+	
+	
+	// calculates Frobenius norm of a matrix
+	private double normFrobenius() {
+		int MN = M * N;
+		double sum = 0;
+		for (int i = 0; i < MN; i++) { double v = data[i]; sum += v * v; }
+		return Math.sqrt(sum);
 	}
 
 
@@ -649,7 +657,7 @@ public class Matrix implements Cloneable {
 			if (isComplex()) { temp = idata[or1]; idata[or1] = idata[or2]; idata[or2] = temp; }
 		}
 		det = -det;						// determinant is inverted by row swapping
-		if (DEBUG_LEVEL > 2) System.out.println("swap:\n" + this.toString());
+		if (DEBUG_LEVEL > 2) System.out.println("Matrix.swapRows:\n" + this.toString());
 		if (bitImage != null)
 			bitImage.swapRows(r1, r2);		// swap bitImage rows
 		halfBandwidth = -1;
@@ -904,6 +912,7 @@ public class Matrix implements Cloneable {
 		for (int i = 0, MN = M * N; i < MN; i++) dataC[i] = v * dataA[i];
 		
 		C.data = dataC;
+		if (M == N) C.det = Math.pow(v, M) * det;
 		C.clearNull();
 		if (DEBUG_LEVEL > 1) System.out.println(C.toString());
 		return C;
@@ -1780,7 +1789,7 @@ public class Matrix implements Cloneable {
 	// the combined decompose is stored directly in current matrix, unless copy = true, then a copy is returned
 	// if generateLandU = true, a normal two-matrix L & U result returned, otherwise a combined LU matrix returned
 	// also the row mutation result is stored in result matrixes mutator field
-	Matrix[] decomposeLU(boolean copy, boolean generateLandU) {
+	public Matrix[] decomposeLU(boolean copy, boolean generateLandU) {
 		
 		if (M != N)	throw new RuntimeException("Matrix.decomposeLU2(): Matrix not square.");
 		if (M < 1)	throw new RuntimeException("Matrix.decomposeLU2(): Invalid matrix.");
@@ -1800,7 +1809,7 @@ public class Matrix implements Cloneable {
 		}
 		
 		double[] vv = new double[M];
-		double d = 1;								// every permutation toggles sign of d
+		double d = 1;							// every permutation toggles sign of d
 		
 		for (int i = 0; i < M; i++) {			// looping over rows getting scaling factor of every row, putting it in vv
 			int iN = i * N;
@@ -1874,9 +1883,10 @@ public class Matrix implements Cloneable {
 		}
 		
 		if (DEBUG_LEVEL > 1) {
-			System.out.println("decomposeLU2() result:");
+			System.out.println("Matrix.decomposeLU2() result:");
 			System.out.println(LU.toString());
 			if (generateLandU) System.out.println(lLU[1].toString());
+			System.out.println("LU row mutator:");
 			System.out.println(Arrays.toString(mutatorLU));
 		}
 		return lLU;
@@ -1906,10 +1916,10 @@ public class Matrix implements Cloneable {
 		if (N != 1 || M != (A == null ? LU.M : A.M))	throw new RuntimeException("Matrix.backSubstituteLU2(): Invalid constant vector.");			
 		Matrix[] bLU = new Matrix[2];
 		
-		// LU = null tells algorithm to create a new LU decompose, which will be returned in the matrix array
+		// LU = null tells algorithm to create a new LU decomposure, which will be returned in the matrix array
 		if (LU == null) {
-			if (A.M != A.N)	throw new RuntimeException("Matrix.decomposeLU2(): Matrix A not square.");			
-			if (A.M < 1)	throw new RuntimeException("Matrix.decomposeLU2(): Invalid matrix.");
+			if (A.M != A.N)	throw new RuntimeException("Matrix.decomposeLU(): Matrix A not square.");			
+			if (A.M < 1)	throw new RuntimeException("Matrix.decomposeLU(): Invalid matrix.");
 			// copy A into a LU matrix and decompose LU, if copy=false it will destroy matrix A returning it as LU
 			bLU[1] = A.decomposeLU(copy, false)[0];
 			// decompose failed on a singular matrix, return null
@@ -1968,7 +1978,7 @@ public class Matrix implements Cloneable {
 		if (DEBUG_LEVEL > 1) {
 			System.out.println("Backsubstitution LU solver:");
 			System.out.println(bLU[0].toString());
-			System.out.println(bLU[1].toString());
+			if (A != null) System.out.println(bLU[1].toString());
 		}
 		return bLU;
 	}
@@ -2326,6 +2336,14 @@ public class Matrix implements Cloneable {
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	public static boolean nearZero(double v) { return (v < -ROUNDOFF_ERROR || v > ROUNDOFF_ERROR ? false : true); }
+	public static boolean nearZeroC(double[] iv) {
+		return (	iv[0] < -ROUNDOFF_ERROR || iv[0] > ROUNDOFF_ERROR ||
+					iv[1] < -ROUNDOFF_ERROR || iv[1] > ROUNDOFF_ERROR ? false : true);
+	}
+	public static boolean nearZeroC(double v, double iv) {
+		return (	v < -ROUNDOFF_ERROR || v > ROUNDOFF_ERROR ||
+					iv < -ROUNDOFF_ERROR || iv > ROUNDOFF_ERROR ? false : true);
+	}
 	boolean isNull() { return (status & NULL_MATRIX) != 0; }
 	void clearNull() { status ^= NULL_MATRIX & status; }
 	void setNull() { status |= NULL_MATRIX; }
@@ -2334,6 +2352,12 @@ public class Matrix implements Cloneable {
 	
 	// get complex modulus of imaginary value
 	double complexM(double r, double i) { return Math.sqrt(r * r + i * i); };
+	
+	public void readjustHalfBandwidth(int r, int c) {
+		int width = r - c;								// readjust half bandwidth if value coordinates are "sticking out" from diagonal
+		if (width < 0) width = -width;
+		if (halfBandwidth < width) halfBandwidth = width;
+	}
 	
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
 	//			OUTPUT METHODS
@@ -2423,7 +2447,7 @@ public class Matrix implements Cloneable {
 		if (M == N) {
 			sb.append("\ndeterminant: " + det + "\n");
 			if (halfBandwidth > 0)
-				sb.append("\nhalf bandwidth: " + halfBandwidth + "\n");
+				sb.append("half bandwidth: " + halfBandwidth + "\n");
 		}
 		else		sb.append("\n");
 			
