@@ -1,5 +1,9 @@
 package lkr74.matrixlib;
 
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -1985,6 +1989,8 @@ public class Matrix implements Cloneable {
 	
 	
 	
+	
+	
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
 	//			DETERMINANT HEURISTICS
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2372,6 +2378,7 @@ public class Matrix implements Cloneable {
 		int decimals = 0;
 		if (v >= 10000 || v <= -10000) {
 			for (; v >= 100 || v <= -100; v /= 10.0) decimals++;
+			if (decimals >= 10) { v /= 10.0; decimals++; }
 			if (complex)
 					return (v < 0 ? " " : "  ") + (int)v + "e" + decimals + "  ";
 			else	return (v < 0 ? " " : "  ") + (int)v + "e" + decimals + (complex ? "i " : " ");
@@ -2393,7 +2400,9 @@ public class Matrix implements Cloneable {
 		return complex ? String.format("%6.2fi", v) : String.format("%6.2f ", v);
 	}
 	
-	static int MAX_PRINTEXTENT = 20;
+	
+	
+	static int MAX_PRINTEXTENT = 50;
 	
 	@Override
 	public String toString() {
@@ -2453,6 +2462,69 @@ public class Matrix implements Cloneable {
 			
 		return sb.toString();	
 	}
+	
+	
+	public void toFile(int precision) {
+		
+		File file = new File(name + ".txt");
+		if (!file.exists()) {
+			try {	file.createNewFile();
+			} catch (IOException e) { e.printStackTrace(); }
+		}
+		BufferedWriter bw = null;
+		try {		bw = new BufferedWriter(new FileWriter(file));
+		} catch (IOException e) { e.printStackTrace(); }
+
+		double[][] dataSet = this.getDataRef();
+		double[] data = dataSet[0], idata = dataSet[1];
+		
+		StringBuilder sb = new StringBuilder();
+		
+		sb.append(((M == 1 || N == 1) ? "vector: " :"matrix: ") + name + (M == 1 ? "^T\n" : "\n"));
+		sb.append("size: " + M + ", " + N);
+		
+		if (data != null) {
+			for (int i = 0; i < M; i++) {
+				int iN = i * N;
+				if (sb.length() > 0) sb.append("\n");		// don't add newline at start of matrix printout
+				sb.append("|");
+				for (int j = 0; j < N; j++)
+					if (nearZero(data[iN + j])) sb.append("   -   ");
+					else	sb.append(precision > 0 ?
+								String.format("%." + precision + "f", data[iN + j]) :
+								to5chars(data[iN + j], false));
+
+				// any imaginary data comes as a second line under the real data line
+				if (idata != null) {
+					sb.append("     |\n|");
+					for (int j = 0; j < N; j++)
+						if (nearZero(data[iN + j])) sb.append("       ");
+						else	sb.append(precision > 0 ?
+									String.format("%." + precision + "f", data[iN + j]) :
+									to5chars(idata[iN + j], true));
+					
+					sb.append(" |\n|");
+					for (int j = 0; j < N; j++) sb.append("       ");
+				}
+				
+				sb.append(" |");
+			}
+		} else sb.append("[null]\n");
+		if (M == N) {
+			sb.append("\ndeterminant: " + det + "\n");
+			if (halfBandwidth > 0)
+				sb.append("half bandwidth: " + halfBandwidth + "\n");
+		}
+		else		sb.append("\n");
+
+		try {
+			bw.write(sb.toString());
+			bw.flush();
+			bw.close();
+		} catch (IOException e) { e.printStackTrace(); }
+
+	}
+
 	
 	
 	

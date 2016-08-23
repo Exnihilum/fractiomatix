@@ -102,30 +102,90 @@ public class MatrixApp {
 	}
 	
 	
-	public static void testLUdecomposure() {
+	
+	
+	public static void testLUdecomposure(String fileName, boolean toImage) {
 		
 		double[] vB = {
 			0,0,0,1,2,3,4,0,0,0,6,5,4,3,2,1,0,0,0,0,8,0,0,0,0,0,0,0,0,5,4,3,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,5,4,3,0,0,0,0,0,9,1,1,1,1,0,9,4,4,4,5,5,5,1,1,1,0,0,9,8,7,6,5,4,0,0,0,0,0,0,0,
 			0,0,0,0,0,0,0,0,2,3,0,0,0,0,0,1,1,0,0,0,0,0,0,9,9,9,0,0,0,0,0,0,0,0,0,0,6,5,4,0,0,0,0,0,0,2,0,3,0,0,0,0,0,0,0,0,0,0,3,4,5,6,7,8,0,9,4,4,4,5,5,5,1,1,1,0,0,9,8,7,6,5,4,0,0,0,0,0,0,0};
+		double[] d20 = {  1,-3, 0, 0, 0, 0, 0, 0, 0, 0,
+				 		  0,-4,-3, 0, 0, 0, 0, 0, 0, 0,
+				 		 -1, 7, 1, 0, 0, 0, 0, 0, 0, 0,
+				 		  0, 0, 0, 2,-2, 0, 0, 0, 0, 0,
+				 		  0, 0, 0, 0, 3, 0, 0, 0, 0, 0,
+				 		  0, 0, 0, 0, 0, 2, 0, 0, 0, 0,
+				 		  0, 0, 0, 0, 0, 0, 1, 0, 0, 0,
+				 		  0, 0, 0, 0, 0, 0, 9, 2, 1, 0,
+				 		  0, 0, 0, 0,-3, 0, 0, 2, 7, 0,
+				 		  0, 0, 0, 0, 0, 0, 0, 0, 0, 8};
 		
 		// try loading, toString, LU decomposing and writing to BMP of a Matix type
-		MatrixMarketIO mmIO = new MatrixMarketIO("data/mcca.mtx", 0);
-		Matrix MM = mmIO.getMatrix();
-		//System.out.println(MM.toString());		
-		Matrix[] LU = MM.decomposeLU(false, false);	
-		if (LU[0] != null) { MatrixBMPImage MM_image = new MatrixBMPImage(LU[0]); MM_image.write(); }
-		Matrix vectorB = new Matrix("b", 180, 1, vB, null);
+		Matrix MM = null;
+		if (fileName != "") {
+			MatrixMarketIO mmIO = new MatrixMarketIO(fileName, 0);
+			MM = mmIO.getMatrix();
+			//MM.toFile(0);
+		} else
+			MM = new Matrix("MM", 10, 10, d20, null);
+		
+		Matrix[] LU = null;
+		long tStart = 0, tEnd = 0, benchRuns = 11000, preRuns = 100;
+		Matrix.DEBUG_LEVEL--;
+		for (int r = 0; r < benchRuns; r++) {
+			if (r == preRuns) tStart = System.nanoTime();
+			LU = MM.decomposeLU(true, false);				
+		}
+		tEnd = System.nanoTime();
+		Matrix.DEBUG_LEVEL++;
+		System.out.printf("Matrix.decomposeLU() averaged %.1f ns\n", (double)(tEnd - tStart)/(benchRuns - preRuns));
+
+		if (LU[0] != null) {
+			LU[0].toFile(0);
+			if (toImage) {
+				MatrixBMPImage MM_image = new MatrixBMPImage(LU[0]);
+				MM_image.write();
+			}
+		}
+		Matrix vectorB = new Matrix("b", fileName != "" ? MM.M : 10, 1, vB, null);
 		Matrix bLU[] = vectorB.backSubstituteLU(null, LU[0], true);
+		bLU[0].name = "x" + Matrix.nameCount;
+		bLU[0].toFile(5);
 
 		// try loading, toString, LU decomposing and writing to BMP of a NSPMatix type
-		mmIO = new MatrixMarketIO("data/mcca.mtx", 2);
-		NSPMatrix MM2 = (NSPMatrix)mmIO.getMatrix();
-		//System.out.println(MM2.toString());		
-		NSPMatrix[] LU2 = MM2.decomposeLU(false, false);	
-		if (LU[0] != null) { NSPMatrixBMPImage MM_image = new NSPMatrixBMPImage(LU2[0]); MM_image.write(); }
-		NSPMatrix vectorB2 = new NSPMatrix("b", 180, 1, vB, null);
+		NSPMatrix MM2 = null;
+		if (fileName != "") {
+			MatrixMarketIO mmIO = new MatrixMarketIO(fileName, 2);
+			MM2 = (NSPMatrix)mmIO.getMatrix();				
+			//MM2.toFile(0);
+		} else
+			MM2 = new NSPMatrix("MM", 10, 10, d20, null);
+		
+		NSPMatrix[] LU2 = null;
+		benchRuns = 1100;
+		Matrix.DEBUG_LEVEL--;
+		for (int r = 0; r < benchRuns; r++) {
+			if (r == preRuns) tStart = System.nanoTime();
+			LU2 = MM2.decomposeLU(true, false);
+		}
+		tEnd = System.nanoTime();
+		Matrix.DEBUG_LEVEL++;
+		System.out.printf("NSPMatrix.decomposeLU() averaged %.1f ns\n", (double)(tEnd - tStart)/(benchRuns - preRuns));
+
+		if (LU2[0] != null) {
+			LU2[0].toFile(0);
+			if (toImage) {
+				NSPMatrixBMPImage MM_image = new NSPMatrixBMPImage(LU2[0]);
+				MM_image.write();
+			}
+		}
+		NSPMatrix vectorB2 = new NSPMatrix("b", fileName != "" ? MM.M : 10, 1, vB, null);
 		NSPMatrix bLU2[] = vectorB2.backSubstituteLU(null, LU2[0], true);
+		bLU2[0].name = "x" + Matrix.nameCount;
+		bLU2[0].toFile(5);
 	}
+	
+	
 	
 	
 	// test client
@@ -133,7 +193,6 @@ public class MatrixApp {
 				
 		double[] d = {1, 0, 3, 0, 5, 0, 0, 1, 3};
 		double[] d8 = {1,2,3,1,2}, d9 = {12,24,36,5,6,7}, d9b = {12,5,24,6,36,7}, v1 = {8,15,19};
-		double[] d1i = {1,2,3,4,5,6,7,8};
 		double[] d2 = {	5,1,2,0,4,
 						1,4,2,1,3,
 						2,2,5,4,0,
@@ -161,9 +220,6 @@ public class MatrixApp {
 		double[] d5 = {	1,2,3,
 						0,2,1,
 						2,1,3};
-		double[] gs = {	12,-5,4,
-						6,16,8,
-						-4,2,34};
 		double[] cn = {	3,1,1,
 						1,4,2,
 						2,1,5};
@@ -177,7 +233,6 @@ public class MatrixApp {
 							 1, 2, 0, 1,
 							-2, 0, 3,-2,
 							 2, 1,-2,-1 };
-		double[] testCh = {	 4,12,-16,12,37,-43,-16,-43,98};
 		double[] d10 = {1,2,3,4,5,6,7,8,7,6,
 						2,2,3,4,5,6,7,8,7,6,
 						3,3,3,4,5,6,7,8,7,6,
@@ -232,8 +287,8 @@ public class MatrixApp {
 //		System.out.printf("findHVspNode() averaged %.1f ns\n", (double)(tend - tstart)/iters);
 //		if(1==1) return;
 
-//		testLUdecomposure();
-//		if(1==1) return;
+		testLUdecomposure("data/mcca.mtx", false);
+		if(1==1) return;
 		
 		// test sparse dynamic NSPMatrix, creation, multiplying, printout,
 		// zeroes purging, value setting and zeroing, row/column swapping

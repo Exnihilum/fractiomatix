@@ -1,3 +1,94 @@
+            // alternative depermutation code for NSPMatrix.backsubstituteLU()
+
+       		for (int i = 0, offVi = 0; i < N; i++) {
+
+			boolean bImatch = offVi < nNodes && bVspB[offVi].r == i ? true : false;
+			// the permutations of decomposition stage need to be unpermuted during the passes
+			int ip = mutatorLU[i];
+			int offVip = findHVspNode(bVspB, 0, nNodes - 1, ip, -1);				// see if b[ip] exists in sparse array
+			if (offVip >= 0) {														// if b[ip] is a non-zero, existing node...
+				sum = bVspB[offVip].v;												// sum = b[ip]
+				if (bImatch)														// if b[i] matches current row index i (thus is non-zero)
+					bVspB[offVip].v = bVspB[offVi].v;								// b[ip] = b[i] (assigning to existing node)
+				else {
+					removeLocalHVspNode(aVspB, offVip, 1);							// if assigning to a zero, remove the node
+					nNodes = aVspB.nodes;
+					vectorB.nNZ--;
+					bVspB = aVspB.array;
+				}
+			} else {
+				sum = 0;
+				if (bImatch) {														// create node b[ip] only if b[i] is nonzero
+					NspNode newNode = bVspB[offVi].clone();
+					newNode.r = ip;
+					insertLocalHVspNode(aVspB, -offVip-1, 1, newNode);				// b[ip] = b[i]	(assigning by inserting a node)
+					insertLocalHVspNode(vectorB.Hsp[ip], 0, 0, newNode);
+					nNodes = aVspB.nodes;
+					vectorB.nNZ++;
+					bVspB = aVspB.array;
+				}
+			}
+
+			if (ii >= 0)
+				sum -= multiplyStartEndHVsp(bLU[1].Hsp[i], aVspB, 0, 1, ii, i - 1);	// for (ii <= j < i), sum -= a[i][j] * b[j]
+			else
+				if (!nearZero(sum)) ii = i;					// nonzero element found, we'll have to do the sums in loop above from now on
+
+			if (bImatch) {
+				if (nearZero(sum))	{
+					removeLocalHVspNode(aVspB, offVi, 1);							// b[i] = sum (b[i] exists as nonzero, but is assigned a zero)
+					bVspB = aVspB.array;
+					vectorB.nNZ--;
+				} else bVspB[offVi].v = sum;										// b[i] = sum (simple assignment if b[i] exists as non-zero)
+				offVi++;
+			} else {
+				if (!nearZero(sum)) {
+					NspNode newNode = new NspNode(i, 0, sum, 0, offVi, 0);
+					insertLocalHVspNode(aVspB, offVi, 1, newNode);					// b[i] = sum (b[i] was zero/nonexistent, assigned value was nonzero)
+					insertLocalHVspNode(vectorB.Hsp[i], 0, 0, newNode);				// insert also to horisontal aspect
+					bVspB = aVspB.array;
+					vectorB.nNZ++;
+				}																	// b[i] = sum (b[i] was zero and assignment was zero, nothing happens)
+			}
+		}
+
+ 		NspNode[] pivotNspA = bLU[1].pivotNsp;
+		for (int i = N - 1, offVi = nNodes - 1; i >= 0; i--) {						// backsubstitution pass
+
+			while (offVi > 0 && bVspB[offVi].r > i) offVi--;						// seek backwards in sparse array for a row matching or below i
+			boolean bImatch = (bVspB[offVi].r == i ? true : false);
+			if (bImatch)	sum = bVspB[offVi].v;									// sum = b[i] (zero if b[0] is nonexistante/zero value
+			else 			sum = 0;
+			sum -= multiplyStartEndHVsp(lHspLU[i], aVspB, 0, 1, ii, i - 1);			// for (i+1 <= j < N), sum -= a[i][j] * b[j]
+
+			// store an element of solution vector X
+			if (bImatch)
+				if (nearZero(sum)) {
+					removeLocalHVspNode(aVspB, offVi, 1);							// if assigning node to a zero, remove that node
+					nNodes = aVspB.nodes;
+					bLU[0].nNZ--;
+					bVspB = aVspB.array;
+				} else
+					bVspB[offVi].v = sum / pivotNspA[i].v;							// b[i] = sum / a[i][i] (case when b[i] exists as nonzero value)
+			else {
+				if (!nearZero(sum)) {
+					NspNode newNode = new NspNode(i, 0, sum / pivotNspA[i].v, 0, offVi, 0);
+					insertLocalHVspNode(aVspB, offVi, 1, newNode);					// b[i] = sum / a[i][i] (b[i] is zero/nonexistent, insert new node
+					insertLocalHVspNode(vectorB.Hsp[i], 0, 0, newNode);				// insert also to horisontal aspect
+					bLU[0].nNZ++;
+				}
+			}
+		}
+
+
+
+
+
+
+
+
+
+
 	// factorises/decomposes matrix into two diagonal matrices U and V, useful for the LU backsubstitution linear solving method:
 	//		uuu			v..
 	// U:	.uu		L:	vv.

@@ -1,5 +1,9 @@
 package lkr74.matrixlib;
 
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
 import java.util.Arrays;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -78,7 +82,6 @@ public class NSPMatrix extends Matrix {
 	
 	public NSPMatrix(String name, int M, int N, double[] data, double[] idata) {
 		super(name, M, N);								// get skeleton Matrix superclass instance
-		initNSPMatrix();
 		putData(data, idata);							// NSP dual-aspect dynamic list creation
 		if (data != null) clearNull();
 		if (idata != null) setComplex();
@@ -107,31 +110,33 @@ public class NSPMatrix extends Matrix {
 		if (Vsp != null) {										// duplicate Vsp reference arrays first
 			A.Vsp = new NspArray[Vsp.length];					// as we will put references in them when iterating Hsp
 			int i = 0;
-			for (NspArray aHVsp : Vsp) {
-				A.Vsp[i] = aHVsp.clone();
-				if (aHVsp.array != null) A.Vsp[i].array = new NspNode[aHVsp.array.length];
+			for (NspArray aVsp : Vsp) {
+				A.Vsp[i] = aVsp.clone();
+				if (aVsp.array != null) A.Vsp[i].array = new NspNode[A.Vsp[i].size = aVsp.nodes];
 				i++;
 			}
 		}
+		A.pivotNsp = new NspNode[M];							// create pivot fast-access array
 
 		if (Hsp != null) {
 			A.Hsp = new NspArray[Hsp.length];
 			int i = 0;
-			for (NspArray aHVsp : Hsp) {
-				A.Hsp[i] = aHVsp.clone();
+			for (NspArray aHsp : Hsp) {
+				A.Hsp[i] = aHsp.clone();
 				NspArray aHspA = A.Hsp[i];
-				if (aHVsp.array != null) {
-					aHspA.array = new NspNode[aHVsp.array.length];
-					for (int j = 0; j < aHVsp.nodes; j++) {
-						NspNode node = aHVsp.array[j];
-						aHspA.array[j] = node.clone();
-						A.Vsp[node.c].array[node.offV] = aHspA.array[j];
+				if (aHsp.array != null) {
+					aHspA.array = new NspNode[aHspA.size = aHsp.nodes];
+					for (int j = 0; j < aHsp.nodes; j++) {
+						NspNode node = aHsp.array[j].clone();
+						aHspA.array[j] = node;
+						if (node.r == node.c) A.pivotNsp[node.r] = node;
+						A.Vsp[node.c].array[node.offV] = node;
 					}
 				}
 				i++;
 			}
 		}
-		A.pivotNsp = pivotNsp.clone();
+		if (mutator != null) A.mutator = mutator.clone();
 		if (Matrix.DEBUG_LEVEL > 2) System.out.println(this.toString());
 		return A;
 	}
@@ -175,6 +180,8 @@ public class NSPMatrix extends Matrix {
 	@Override
 	public void putData(double[] data, double[] idata) {
 				
+		initNSPMatrix();		// clear NSP data, we're reinserting from scratch
+
 		// first loop  inserts elements in proper order int Hsp
 		for (int i = 0; i < M; i++) {
 
@@ -191,7 +198,7 @@ public class NSPMatrix extends Matrix {
 					// if current sparse Hsp array is full, add another CSR2_ALLOCBLOCK elements
 					if (updateArraySize(aHsp.nodes + 1, aHsp)) bHsp = aHsp.array;
 
-					bHsp[offsHsp] = new NspNode(i, col, data[j], idata != null ? idata[j] : 0);	// insert column index
+					bHsp[offsHsp] = new NspNode(i, col, data[j], isComplex() ? idata[j] : 0);	// insert column index
 					nNZ++;											// global node count incremented
 					if (i == col) pivotNsp[i] = bHsp[offsHsp];		// if it's a pivot, put in fast-access array
 					
@@ -204,6 +211,7 @@ public class NSPMatrix extends Matrix {
 		}
 
 		crosslinkVsp();
+		clearNull();
 	}
 	
 	
@@ -323,17 +331,19 @@ public class NSPMatrix extends Matrix {
 		NSPMatrix[] lLU = new NSPMatrix[2];
 		int[] mutatorLU = null;
 		NSPMatrix LU = this;
+		int swaps = 0;
+		
 		if (copy) {
-			LU = clone();
+			LU = this.clone();
 			LU.name = "LU" + nameCount++;
-			if (mutator == null) mutatorLU = LU.mutator = new int[M];
+			mutatorLU = LU.mutator = new int[M];
 		} else {
 			name = "LU" + nameCount++;			// this matrix will be modified, change it's name
 			mutatorLU = mutator = new int[M];
 		}
 		
 		double[] vv = new double[M];
-		double d = 1;								// every permutation toggles sign of d
+		double d = 1;							// every permutation toggles sign of d
 
 		for (int i = 0; i < M; i++) {			// looping over rows getting scaling factor of every row, putting it in vv
 			double vMax = 0;
@@ -346,26 +356,30 @@ public class NSPMatrix extends Matrix {
 			vv[i] = 1.0 / vMax;													// save scaling factor
 		}
 		
-		for (int j = 0; j < M; j++) {
+		for (int j = 0, jm1 = -1; j < M; j++, jm1++) {
 			NspArray aVsp = LU.Vsp[j];
 			NspNode[] bVsp = aVsp.array;
 			int i = 0, offV = 0, nNodes = aVsp.nodes;							// we will continue using i & offH in next loop
-			for (; i < j; i++) {
+			for (int im1 = -1; i < j; i++, im1++) {
 				
 				double sum = 0;
+				if (bVsp[0].r > im1 || LU.Hsp[i].array[0].c > im1) {			// skip row/column mult. if one of the ranges are all zeroes
+					if (offV < nNodes && bVsp[offV].r == i) offV++;
+					continue;
+				}
 				if (offV < nNodes && bVsp[offV].r == i) {						// case of operating on a non-zero node
 					sum = bVsp[offV].v; 										// sum = LU[i][j]
 					if (i == 0) offV++; else {
-						sum -= multiplyLUHVsp(LU.Hsp[i], aVsp, 0, 1, i - 1);	// for(k=1;k<i;k++) sum -= LU[i][k]*LU[k](j]
+						sum -= multiplyLUHVsp(LU.Hsp[i], aVsp, 0, 1, im1);		// for(k=1;k<i;k++) sum -= LU[i][k]*LU[k](j]
 						bVsp[offV++].v = sum;
 					}
 				} else if (i > 0) {												// node was zero, we'll need to insert result
-					sum -= multiplyLUHVsp(LU.Hsp[i], aVsp, 0, 1, i - 1);		// for(k=1;k<i;k++) sum -= LU[i][k]*LU[k](j]
+					sum -= multiplyLUHVsp(LU.Hsp[i], aVsp, 0, 1, im1);			// for(k=1;k<i;k++) sum -= LU[i][k]*LU[k](j]
 					if (!nearZero(sum)) {
 						NspNode newNsp = new NspNode(i, j, sum, 0, 0, offV);	// we know the vertical offset for the new node
 						LU.nNZ++;
-						insertHVspNode(i, j, 0, newNsp);						// horisontal insertion
-						insertLocalHVspNode(aVsp, offV, 1, newNsp);				// LU[i][j] = sum
+						LU.insertHVspNode(i, j, 0, newNsp);						// horisontal insertion
+						LU.insertLocalHVspNode(aVsp, offV++, 1, newNsp);		// LU[i][j] = sum
 						bVsp = aVsp.array;
 						nNodes = aVsp.nodes;
 					}
@@ -381,20 +395,22 @@ public class NSPMatrix extends Matrix {
 				if (offV < nNodes && bVsp[offV].r == i) {						// case of operating on a non-zero node
 					sum = bVsp[offV].v; 										// sum = LU[i][j]
 					if (j == 0) offV++; else {
-						sum -= multiplyLUHVsp(LU.Hsp[i], aVsp, 0, 1, j - 1);	// for(k=1;k<i;k++) sum -= LU[i][k]*LU[k](j]
+						if (bVsp[0].r <= jm1 && LU.Hsp[i].array[0].c <= jm1)
+							sum -= multiplyLUHVsp(LU.Hsp[i], aVsp, 0, 1, j - 1);	// for(k=1;k<j;k++) sum -= LU[i][k]*LU[k](j]
 						bVsp[offV++].v = sum;
 					}
 					double v = vv[i] * (sum < 0 ? -sum : sum);
 					// have we found a better pivot than the best so far?
 					if (v > vMax) { vMax = v; iMax = i; }
 
-				} else if (j > 0) {												// node was zero, we'll need to insert result
+				// node was zero, we'll need to insert result
+				} else if (j > 0 && bVsp[0].r <= jm1 && LU.Hsp[i].array[0].c <= jm1) {
 					sum -= multiplyLUHVsp(LU.Hsp[i], aVsp, 0, 1, j - 1);		// for(k=1;k<i;k++) sum -= LU[i][k]*LU[k](j]
 					if (!nearZero(sum)) {
 						NspNode newNsp = new NspNode(i, j, sum, 0, 0, offV);	// we know the vertical offset for the new node
 						LU.nNZ++;
-						insertHVspNode(i, j, 0, newNsp);						// horisontal insertion
-						insertLocalHVspNode(aVsp, offV, 1, newNsp);				// LU[i][j] = sum
+						LU.insertHVspNode(i, j, 0, newNsp);						// horisontal insertion
+						LU.insertLocalHVspNode(aVsp, offV++, 1, newNsp);		// LU[i][j] = sum
 						bVsp = aVsp.array;
 						nNodes = aVsp.nodes;
 						double v = vv[i] * (sum < 0 ? -sum : sum);
@@ -404,6 +420,7 @@ public class NSPMatrix extends Matrix {
 
 			}
 			if (j != iMax) {									// test if there's a better pivot and we need to swap rows
+				swaps++;
 				LU.swapHVspArrays(iMax, j, 0);					// yes
 				d = -d;
 				vv[iMax] = vv[j];								// also change scale factor
@@ -411,13 +428,13 @@ public class NSPMatrix extends Matrix {
 			mutatorLU[j] = iMax;
 			// zero at pivot element implies a singular matrix, but some applications can get by with tweaking away the zero
 			if (LU.pivotNsp[j] == null) {
-				status |= SINGULAR_MATRIX;
-				double v = ROUNDOFF_ERROR * (norm1 < 0 ? this.norm1() : norm1);
+				LU.status |= SINGULAR_MATRIX;
+				double v = ROUNDOFF_ERROR * (LU.norm1 < 0 ? LU.norm1() : LU.norm1);
 				NspNode newNsp = LU.pivotNsp[j] = new NspNode(j, j, v, 0);
-				insertHVspNode(j, j, 0, newNsp);				// horisontal & vertical insertion
-				insertHVspNode(j, j, 1, newNsp);
+				LU.insertHVspNode(j, j, 0, newNsp);				// horisontal & vertical insertion
+				LU.insertHVspNode(j, j, 1, newNsp);
 			} else if (nearZero(LU.pivotNsp[j].v))				// did a zero value node end up at pivot position?
-				LU.pivotNsp[j].v = ROUNDOFF_ERROR * (norm1 < 0 ? this.norm1() : norm1);
+				LU.pivotNsp[j].v = ROUNDOFF_ERROR * (LU.norm1 < 0 ? LU.norm1() : LU.norm1);
 
 			if (j < M - 1) {
 				double v = 1.0 / LU.pivotNsp[j].v;
@@ -430,7 +447,7 @@ public class NSPMatrix extends Matrix {
 		// use d to calculate determinant, put it in LU
 		NspNode[] pivots = LU.pivotNsp;
 		for (int i = 0; i < M; i++) d *= pivots[i].v;
-		if (copy) LU.det = d; else this.det = d;
+		LU.det = d;
 
 		// was generation of individual L & U matrices requested?
 		if (generateLandU) {
@@ -459,6 +476,7 @@ public class NSPMatrix extends Matrix {
 			if (generateLandU) System.out.println(lLU[1].toString());
 			System.out.println("LU row mutator:");
 			System.out.println(Arrays.toString(mutatorLU));
+			System.out.println("Row swaps: " + swaps);
 		}
 		return lLU;
 	}
@@ -504,85 +522,45 @@ public class NSPMatrix extends Matrix {
 		if (Matrix.DEBUG_LEVEL > 1) bLU[0].name = "x((" + bLU[1].name + ")^-1*" + name + ")";
 		else						bLU[0].name = "x" + nameCount++;
 
-		int ii = -1, N = bLU[1].N;							// when ii > 0 it will become an index of first nonvanishing element of b
+		int ii = -1, N = bLU[1].N;
 		int[] mutatorLU = bLU[1].mutator;
 		double sum = 0;
 		
-		NSPMatrix vectorB = bLU[0];
-		NspArray aVspB = vectorB.Vsp[0];
-		NspNode[] bVspB = aVspB.array;
-		int nNodes = aVspB.nodes;
+		NspArray[] lHspLU = bLU[1].Hsp;						// get Hsp array of the LU matrix
+		NSPMatrix vectorB = bLU[0];	
+		double datab[] = vectorB.getData()[0];				// convert sparse vector b to plain array for quicker depermutation
 		
-		for (int i = 0, offVi = 0; i < N; i++) {
-			
-			boolean bImatch = offVi < nNodes && bVspB[offVi].r == i ? true : false;
-			// the permutations of decomposition stage need to be unpermuted during the passes
+		for (int i = 0; i < N; i++) {						// do depermutation
 			int ip = mutatorLU[i];
-			int offVip = findHVspNode(bVspB, 0, nNodes - 1, ip, -1);				// see if b[ip] exists in sparse array
-			if (offVip >= 0) {														// if b[ip] is a non-zero, existing node...
-				sum = bVspB[offVip].v;												// sum = b[ip]
-				if (bImatch)														// if b[i] matches current row index i (thus is non-zero)
-					bVspB[offVip].v = bVspB[offVi].v;								// b[ip] = b[i] (assigning to existing node)
-				else {
-					removeLocalHVspNode(aVspB, offVip, 1);							// if assigning to a zero, remove the node
-					nNodes = aVspB.nodes;
-					vectorB.nNZ--;
-					bVspB = aVspB.array;
+			sum = datab[ip];
+			datab[ip] = datab[i];
+			if (ii >= 0) {									// on turning positive, ii will be the first nonvanishing element of b
+				NspNode[] bHspLU = lHspLU[i].array;
+				int nNodesLU = lHspLU[i].nodes;
+				int offH = findHVspNode(bHspLU, 0, nNodesLU - 1, -1, ii);
+				if (offH < 0) offH = -offH - 1;
+				for (; offH < nNodesLU && bHspLU[offH].c <= i - 1; offH++) {
+					sum -= bHspLU[offH].v * datab[bHspLU[offH].c];					// sum -= a[i][j] * b[j]
 				}
-			} else {
-				insertLocalHVspNode(aVspB, -offVip-1, 1, bVspB[offVi].clone());		// b[ip] = b[i]	(assigning by inserting a node)
-				nNodes = aVspB.nodes;
-				vectorB.nNZ++;
-				bVspB = aVspB.array;
-			}
-
-			if (ii >= 0)
-				sum -= multiplyStartEndHVsp(bLU[1].Hsp[i], aVspB, 0, 1, ii, i - 1);	// for (ii <= j < i), sum -= a[i][j] * b[j]
-			else
-				if (!nearZero(sum)) ii = i;					// nonzero element found, we'll have to do the sums in loop above from now on
-			
-			if (bImatch) {
-				if (nearZero(sum))	{
-					removeLocalHVspNode(aVspB, offVi, 1);							// b[i] = sum (b[i] exists as nonzero, but is assigned a zero)
-					bVspB = aVspB.array;
-					vectorB.nNZ--;
-				} else bVspB[offVi].v = sum;										// b[i] = sum (simple assignment if b[i] exists as non-zero)
-				offVi++;
-			} else {
-				if (nearZero(sum)) {
-					insertLocalHVspNode(aVspB, offVi, 1, bVspB[offVi].clone());		// b[i] = sum (b[i] was zero/nonexistent, assigned value was nonzero)
-					bVspB = aVspB.array;
-					vectorB.nNZ++;
-				}																	// b[i] = sum (b[i] was zero and assignment was zero, nothing happens)
-			}
+			} else if (!nearZero(sum)) ii = i;
+			datab[i] = sum;
 		}
-		
-		NspArray[] lHspLU = bLU[1].Hsp;
+						
 		NspNode[] pivotNspA = bLU[1].pivotNsp;
-		for (int i = N - 1, offVi = nNodes - 1; i >= 0; i--) {						// backsubstitution pass
-			
-			while (offVi > 0 && bVspB[offVi].r > i) offVi--;						// seek backwards in sparse array for a row matching or below i
-			boolean bImatch = (bVspB[offVi].r == i ? true : false);
-			if (bImatch)	sum = bVspB[offVi].v;									// sum = b[i] (zero if b[0] is nonexistante/zero value
-			else 			sum = 0;
-			sum -= multiplyStartEndHVsp(lHspLU[i], aVspB, 0, 1, ii, i - 1);			// for (i+1 <= j < N), sum -= a[i][j] * b[j]
-
+		
+		for (int i = N - 1; i >= 0; i--) {											// backsubstitution pass
+			sum = datab[i];
 			// store an element of solution vector X
-			if (bImatch)
-				if (nearZero(sum)) {
-					removeLocalHVspNode(aVspB, offVi, 1);							// if assigning node to a zero, remove that node
-					nNodes = aVspB.nodes;
-					bLU[0].nNZ--;
-					bVspB = aVspB.array;					
-				} else
-					bVspB[offVi].v = sum / pivotNspA[i].v;							// sum = b[i] / a[i][i] (case when b[i] exists as nonzero value)					
-			else {
-				if (!nearZero(sum)) {
-					insertLocalHVspNode(aVspB, offVi, 1, bVspB[offVi].clone());		// sum = b[i] / a[i][i] (b[i] is zero/nonexistent, insert new node
-					bLU[0].nNZ++;
-				}
+			NspNode[] bHspLU = lHspLU[i].array;
+			int nNodesLU = lHspLU[i].nodes;
+			int offH = findHVspNode(bHspLU, 0, nNodesLU - 1, -1, i + 1);
+			if (offH < 0) offH = -offH - 1;
+			for (; offH < nNodesLU; offH++) {
+				sum -= bHspLU[offH].v * datab[bHspLU[offH].c];						// sum -= a[i][j] * b[j]
 			}
+			datab[i] = sum / pivotNspA[i].v;
 		}
+		vectorB.putData(datab, null);
 				
 		if (DEBUG_LEVEL > 1) {
 			System.out.println("Backsubstitution LU solver:");
@@ -902,7 +880,7 @@ public class NSPMatrix extends Matrix {
 		if (offset < 0) {
 			offset = -offset-1;
 			aHVsp.nodes++;
-			if (r == c) pivotNsp[r] = bHVsp[offset];			// if pivot, insert in fast-access array
+			if (r == c) pivotNsp[r] = node;					// if pivot, insert in fast-access array
 
 			// does Hsp/Vsp reference array need allocation/reallocation ?
 			if (aHVsp.nodes >= aHVsp.size) {
@@ -1143,8 +1121,8 @@ public class NSPMatrix extends Matrix {
 			int toLink = 0;											// counts number of vertical matches found for crosslinking
 			// find all Vsp arrays containing current row r
 			for (int c = 0; c < N; c++) {
-				NspNode[] bVsp = Vsp[c].array;
 				NspArray aVsp = Vsp[c];
+				NspNode[] bVsp = aVsp.array;
 				if (offsVsp[c] >= 0 && bVsp != null && bVsp[offsVsp[c]].r == r) {
 					linkCol[toLink] = c;
 					idxVsp[toLink++] = offsVsp[c];
@@ -1154,8 +1132,12 @@ public class NSPMatrix extends Matrix {
 			}
 			
 			// create the row-wise group
+			if (toLink == 0) {
+				Hsp[r].array = null;
+				continue;
+			}
+			updateArraySize(toLink, Hsp[r]);						// set Hsp array to fit the linked nodes
 			NspArray aHsp = Hsp[r];
-			updateArraySize(toLink, Hsp[r]);						// shrink Hsp array if it's possible
 
 			// reference all found nodes for this column into current Vsp array
 			int nodeCnt2 = nodeCnt + toLink;
@@ -1188,8 +1170,8 @@ public class NSPMatrix extends Matrix {
 				
 				for (int ia = 0, ib = 0; ia < nNa || ib < nNb;) {			// march through each node in the two arrays
 					
-					nA = bHVspA == null ? null : bHVspA[ia];
-					nB = bHVspB == null ? null : bHVspB[ib];
+					nA = bHVspA == null || ia == nNa ? null : bHVspA[ia];
+					nB = bHVspB == null || ib == nNb ? null : bHVspB[ib];
 					// provide a fake boundary if one of the marching indexes run out of nodes
 					int nAc = (nA == null ? N: nA.c), nBc = (nB == null ? N : nB.c);
 					
@@ -1205,8 +1187,8 @@ public class NSPMatrix extends Matrix {
 						ia++; ib++;
 						
 					} else if (nAc < nBc)	{								// array A behind array B (meaning, zero at array B)?
+						if (nA.r == nAc) pivotNsp[a] = nB;					// see if A was a pivot
 						nA.r = b;											// change it's row to the other one
-						if (nA.r == nAc) pivotNsp[nAc] = nA;				// see if A ended up as a pivot
 						NspNode[] bVsp = Vsp[nAc].array;
 						if (a < b) {										// do the switch within higher part of array b
 							for (int j = nA.offV, k = j + 1, kEnd = Vsp[nAc].nodes; j < kEnd; j++, k++) {
@@ -1233,8 +1215,8 @@ public class NSPMatrix extends Matrix {
 						}
 						ia++;
 					} else {												// seems like nA.c > nB.c, do the same routine, but for nB
+						if (nB.r == nBc) pivotNsp[b] = nA;					// see if B was a pivot
 						nB.r = a;											// change it's row to the other one
-						if (nB.r == nBc) pivotNsp[nBc] = nB;				// see if B ended up as a pivot
 						NspNode[] bVsp = Vsp[nBc].array;
 						if (a < b) {										// do the switch within lower part of array b
 							for (int j = nB.offV, k = j - 1; j >= 0; j--, k--) {
@@ -1287,8 +1269,8 @@ public class NSPMatrix extends Matrix {
 						ia++; ib++;
 						
 					} else if (nAr < nBr)	{								// array A behind array B (meaning, zero at array B)?
+						if (nA.c == nAr) pivotNsp[a] = nB;					// see if A was a pivot
 						nA.c = b;											// change it's column to the other one
-						if (nA.c == nAr) pivotNsp[nAr] = nA;				// see if A ended up as a pivot
 						NspNode[] bHsp = Hsp[nAr].array;
 						if (a < b) {										// do the switch within right part (relative A) of array B
 							for (int j = nA.offH, k = j + 1, kEnd = Hsp[nAr].nodes; j < kEnd; j++, k++) {
@@ -1315,8 +1297,8 @@ public class NSPMatrix extends Matrix {
 						}
 						ia++;
 					} else {												// seems like nA.c > nB.c, do the same routine, but for nB
+						if (nB.c == nBr) pivotNsp[b] = nA;					// see if B was a pivot
 						nB.c = a;											// change it's column  to the other one
-						if (nB.c == nBr) pivotNsp[nBr] = nB;				// see if B ended up as a pivot
 						NspNode[] bHsp = Hsp[nB.r].array;
 						if (a < b) {										// do the switch within left part (relative A) of array B
 							for (int j = nB.offH, k = j - 1; j >= 0; j--, k--) {
@@ -1448,7 +1430,7 @@ public class NSPMatrix extends Matrix {
 		
 		sb.append(super.toString());
 		
-		sb.append("CSR2 data:\nHsp row groups:\n");
+		sb.append("NSP data:\nHsp row groups:\n");
 		for (int i = 0; i < maxIA; i++) {
 			
 			NspNode[] bHsp = Hsp[i].array;
@@ -1459,7 +1441,7 @@ public class NSPMatrix extends Matrix {
 				for (int j = 0; j < maxHsp; j++)
 					sb.append("(" + 	bHsp[j].r + ", " + 
 										bHsp[j].c + ", " + 
-										bHsp[j].v + ", " + 
+										String.format("%.3f", bHsp[j].v) + ", " + 
 										bHsp[j].offH + ", " + 
 										bHsp[j].offV + (j == maxHsp-1 ? ")" : "), "));
 				if (bregHsp.nodes > MAX_PRINTEXTENT)
@@ -1470,7 +1452,7 @@ public class NSPMatrix extends Matrix {
 				sb.append("Hsp(" + i + "): [empty]\n\n");
 		}
 		
-		sb.append("\n\nVsp column groups::\n");
+		sb.append("\n\nVsp column groups:\n");
 		maxIA = Vsp.length > MAX_PRINTEXTENT ? MAX_PRINTEXTENT : Vsp.length;
 		for (int i = 0; i < maxIA; i++) {
 			
@@ -1482,7 +1464,7 @@ public class NSPMatrix extends Matrix {
 				for (int j = 0; j < maxVsp; j++)
 					sb.append("(" +		bVsp[j].r + ", " +
 										bVsp[j].c + ", " +
-										bVsp[j].v + ", " +
+										String.format("%.3f", bVsp[j].v) + ", " +
 										bVsp[j].offH + ", " +
 										bVsp[j].offV + (j == maxVsp-1 ? ")" : "), "));
 				
@@ -1497,4 +1479,69 @@ public class NSPMatrix extends Matrix {
 		sb.append("Total NSP structure size: " + sizeOf() + "\n");
 		return sb.toString();
 	}
+	
+	
+	public void toFile(int precision) {
+		
+		super.toFile(precision);
+		
+		File file = new File(name + "_NspData.txt");
+		if (!file.exists()) {
+			try {	file.createNewFile();
+			} catch (IOException e) { e.printStackTrace(); }
+		}
+		BufferedWriter bw = null;
+		try {		bw = new BufferedWriter(new FileWriter(file));
+		} catch (IOException e) { e.printStackTrace(); }
+
+		StringBuffer sb = new StringBuffer();
+		
+		sb.append("NSP data:\nHsp row groups:\n");
+		for (int i = 0; i < Hsp.length; i++) {
+			
+			NspNode[] bHsp = Hsp[i].array;
+			NspArray bregHsp = Hsp[i];
+			if (bHsp != null) {
+				sb.append("Hsp(" + i + "): [");
+				for (int j = 0; j < bregHsp.nodes; j++)
+					sb.append("(" + 	bHsp[j].r + ", " + 
+										bHsp[j].c + ", " + 
+										String.format("%.3f", bHsp[j].v) + ", " + 
+										bHsp[j].offH + ", " + 
+										bHsp[j].offV + (j == bregHsp.nodes-1 ? ")" : "), "));
+				sb.append("]\n");			
+			} else
+				sb.append("Hsp(" + i + "): [empty]\n\n");
+		}
+		
+		sb.append("\n\nVsp column groups:\n");
+
+		for (int i = 0; i < Vsp.length; i++) {
+			
+			NspNode[] bVsp = Vsp[i].array;
+			NspArray bregVsp = Vsp[i];
+			if (bVsp != null) {
+				sb.append("Vsp(" + i + "): [");
+				for (int j = 0; j < bregVsp.nodes; j++)
+					sb.append("(" +		bVsp[j].r + ", " +
+										bVsp[j].c + ", " +
+										String.format("%.3f", bVsp[j].v) + ", " +
+										bVsp[j].offH + ", " +
+										bVsp[j].offV + (j == bregVsp.nodes-1 ? ")" : "), "));
+				
+				sb.append("]\n");
+			} else
+				sb.append("Vsp(" + i + "): [empty]\n\n");
+		}
+
+		sb.append("Matrix size: " + (M*N*4) + "\n");
+		sb.append("Total NSP structure size: " + sizeOf() + "\n");
+
+		try {
+			bw.write(sb.toString());
+			bw.flush();
+			bw.close();
+		} catch (IOException e) { e.printStackTrace(); }
+	}
+
 }

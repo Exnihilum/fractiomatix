@@ -156,7 +156,7 @@ public class MatrixMarketIO {
 
 						// update to next Vsp column array if we're on the next column in the file
 						if (c > cOld) {
-							if (aVsp.nodes == 0) M2.Vsp[i < 0 ? 0 : i].array = null;	// dereference empty rows
+							if (aVsp.nodes == 0) M2.Vsp[i < 0 ? 0 : i].array = null;	// check previous Vsp array, dereference if empty
 							cOld = c; i++;
 							aVsp = M2.Vsp[i];
 							bVsp = aVsp.array;
@@ -167,11 +167,9 @@ public class MatrixMarketIO {
 						if (NSPMatrix.updateArraySize(aVsp.nodes + 1, aVsp))
 							bVsp = aVsp.array;
 
-						bVsp[offV] = new NspNode(r, c, v, v2);			// insert row index
+						bVsp[offV] = new NspNode(r, c, v, v2, 0, offV);	// insert row index w. vertical array offset
 						M2.nNZ++;										// total node count incremented
 						if (r == c) M2.pivotNsp[r] = bVsp[offV];		// if it's a pivot, put in fast-access array
-						
-						bVsp[offV].offV = offV;							// store the node's reference offset in Vsp
 						M2.readjustHalfBandwidth(r, c);
 						offV++;
 
@@ -183,6 +181,7 @@ public class MatrixMarketIO {
 						keepReading = false;
 						break;
 						
+					// state 25 = end of file for NSPMatrix, fix the horisontal references
 					case 25:
 						M2.crosslinkHsp();
 						keepReading = false;
