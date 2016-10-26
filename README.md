@@ -10,8 +10,9 @@ Polymorphic methods getData(), getDataRef(), putData(), putDataRef() allow bring
 For CSR matrices, following methods implemented: add/subtract (both with matrix and value), multiply, swap rows, transpose, value insertion, row&column elimination, equal, toString, and conversion to/from CSR ofcourse.
 
 For NSP matrices, adding, multiplication, loading from MatrixMarket files, row/column swapping and sparse LU factorisarion/solving methods are implemented, plus conversion to/from Matrix ofcourse.
+The NSP Matrix can be written out to file in an overview mode with short-form 5-letter output of the values.
 
-Included are a Gaussian elimination with partial pivoting, 2 versions of Gauss-Jordan solver (one with partial pivoting, trivial sparse matrix optimisation and inverse matrix generation, one with full pivoting and destruction of original matrix), a static coefficient solver with LU decomposition.
+Included are a Gaussian elimination with partial pivoting, 2 versions of Gauss-Jordan solver (one with partial pivoting, trivial sparse matrix optimisation and inverse matrix generation, one with full pivoting and destruction of original matrix).
 QR and LU decompositions implemented.
 A finder of largest eigenvalue & vector included (the simple Power Method).
 A finder of all eigenvalues and vectors using orthogonalisation and Householder reduction implemented. Probably not the fastest on the planet, but we all have to start somewhere.
@@ -24,6 +25,7 @@ Therefore I have begun implementing the FrontalDAG symbolic factorisation framew
 The code is still in debugging stages I'm afraid, but the symbolic factorisation seem to work, the frontal construction has been altered to take care of the row/column index permutations & disassociations that happen during global pivoting.
 
 There is a dependency on [jfreechart] (https://github.com/jfree/jfreechart) for drawing routines.
+FrontalDAG class allows writing out the DAGs at any stage into the Graphviz format for visualisation, and can also call the Graphviz visualiser directly from the Java code, so getting http://www.graphviz.org/ is also recommended for the intrepid researcher that wants to know if his structural algorithm has done what's expected.
 
 Current contents (outdated, as FrontalMatrix & FrontalDAG classes have appeared):
 
