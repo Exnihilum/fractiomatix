@@ -9,7 +9,7 @@ Polymorphic methods getData(), getDataRef(), putData(), putDataRef() allow bring
 
 For CSR matrices, following methods implemented: add/subtract (both with matrix and value), multiply, swap rows, transpose, value insertion, row&column elimination, equal, toString, and conversion to/from CSR ofcourse.
 
-For NSP matrices, adding, multiplication, loading from MatrixMarket files, row/column swapping and sparse LU factorisarion/solving methods are implemented.
+For NSP matrices, adding, multiplication, loading from MatrixMarket files, row/column swapping and sparse LU factorisarion/solving methods are implemented, plus conversion to/from Matrix ofcourse.
 
 Included are a Gaussian elimination with partial pivoting, 2 versions of Gauss-Jordan solver (one with partial pivoting, trivial sparse matrix optimisation and inverse matrix generation, one with full pivoting and destruction of original matrix), a static coefficient solver with LU decomposition.
 QR and LU decompositions implemented.
