@@ -198,10 +198,7 @@ public class MatrixMarketIO {
 
 	}
 	
-	public Matrix getMatrix() {
-		if (M != null) return M;
-		if (M2 != null) return M2;
-		return null;
-	}
-	
+	public Matrix getMatrix() { return M; }
+	public NSPMatrix getNSPMatrix() { return M2; }
+
 }
