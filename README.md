@@ -21,6 +21,7 @@ I've implemented in Java the O(n^2.783) Strassen-Winograd matrix multiplicator (
 I am currently more interested in sparse-matrix fast-solving methods for physical applications. I'd like to be able to import 3D meshes into Java from ex. FBX format, decompose into tetrahedral volumes and run electromagnetic field simulations and stress/strain/displacement simulations with support for (hopefully) anisotropic materials.
 
 Therefore I have begun implementing the FrontalDAG symbolic factorisation framework class, which utilises Anshul Gupta's theorems (primarily I base my code on this work: http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.7.5466&rep=rep1&type=pdf) for sparse frontal matrix coefficient inclusion, which he implements in the WSMP LU decomposer. A matrix is loaded from MatrixMarket file format into NSP format, then converted into a task-DAG and a data-DAG. Then it is passed to the FrontalMatrix class for postorder traversal and frontal matrix construction, absorption and decomposition.
+The code is still in debugging stages I'm afraid, but the symbolic factorisation seem to work, the frontal construction has been altered to take care of the row/column index permutations & disassociations that happen during global pivoting.
 
 There is a dependency on [jfreechart] (https://github.com/jfree/jfreechart) for drawing routines.
 
