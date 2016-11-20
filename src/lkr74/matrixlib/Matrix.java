@@ -2069,8 +2069,8 @@ public class Matrix implements Cloneable {
 		
 		for (int i = 0; i < N; i++) {						
 			int iN = i * N, ip = mutatorLU[i];				// the permutations of decomposition stage need to be unpermuted during the passes
-			sum = datab[ip];
-			datab[ip] = datab[i];
+			sum = datab[ip];								// depermute: take a value from it's permuted position
+			datab[ip] = datab[i];							// depermute: return former value at this position to it's place
 			if (ii >= 0)
 				for (int jb = ii, j = iN + ii, jEnd = j + i - 1; j <= jEnd; j++, jb++)
 					sum -= dataLU[j] * datab[jb];

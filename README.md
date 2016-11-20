@@ -3,23 +3,31 @@ Mathematical code repository for matrices and specific combinatorial problems of
 
 Note: this is in no way a finished, streamlined library, but rather a collection of working algorithms with a surrounding structure still needing solid refactoring massage and organisation.
 
-Included are methods for processing flat-array matrices, both ordinary row/column and CSR matrices.
+Included are methods for processing FLAT-ARRAY matrices (note: not the ordinary 2D Java arrays), both ordinary row/column, CSR matrices and my sparse matrix implementation called NSPMatrix.
+
 Polymorphic methods getData(), getDataRef(), putData(), putDataRef() allow bringing in data from both ordinary and CSR packing into any algorithm (CSRMatrix class extends Matrix class), the basis data order will naturally be the row/column one.
 
 For CSR matrices, following methods implemented: add/subtract (both with matrix and value), multiply, swap rows, transpose, value insertion, row&column elimination, equal, toString, and conversion to/from CSR ofcourse.
 
-Included are a Gaussian elimination with partial pivoting, 2 versions of Gauss-Jordan solver (one with partial pivoting, trivial sparse matrix optimisation and inverse matrix generation, one with full pivoting and destruction of original matrix), a static coefficient solver with LU decomposition.
+For NSP matrices, adding, multiplication, loading from MatrixMarket files, row/column swapping and sparse LU factorisarion/solving methods are implemented, plus conversion to/from Matrix ofcourse.
+The NSP Matrix can be written out to file in an overview mode with short-form 5-letter output of the values.
+
+Included are a Gaussian elimination with partial pivoting, 2 versions of Gauss-Jordan solver (one with partial pivoting, trivial sparse matrix optimisation and inverse matrix generation, one with full pivoting and destruction of original matrix).
 QR and LU decompositions implemented.
 A finder of largest eigenvalue & vector included (the simple Power Method).
 A finder of all eigenvalues and vectors using orthogonalisation and Householder reduction implemented. Probably not the fastest on the planet, but we all have to start somewhere.
 
-I've implemented in Java the infamous O(n^2.783) Strassen-Winograd matrix multiplicator (which coincidentally would have to be taking on quite big matrices to be worth the bother, as it is changing stack levels and array context all the time. I've included a little speed test in the main() method). Eventually I will change the operations to a preallocated fixed array for all array operations, but I doubt it will gain any major speed improvement, as I suspect the allocations in Java happen in nearly O(1) time when a lot of free memory is available, as I have in these test cases. Perhaps getting rid of Java's constant array zeroing will give a little gain. So it's very low priority indeed.
+I've implemented in Java the O(n^2.783) Strassen-Winograd matrix multiplicator (which coincidentally would have to be taking on quite big matrices to be worth the bother, as it is changing stack levels and array context all the time. I've included a little speed test in the main() method). Eventually I will change the operations to a preallocated fixed array for all array operations, but I doubt it will gain any major speed improvement, as I suspect the allocations in Java happen in nearly O(1) time when a lot of free memory is available, as I have in these test cases. Perhaps getting rid of Java's incessant array zeroing will give a little gain. So it's very low priority indeed.
 
 I am currently more interested in sparse-matrix fast-solving methods for physical applications. I'd like to be able to import 3D meshes into Java from ex. FBX format, decompose into tetrahedral volumes and run electromagnetic field simulations and stress/strain/displacement simulations with support for (hopefully) anisotropic materials.
 
-There is a dependency on [jfreechart] (https://github.com/jfree/jfreechart) for drawing routines.
+Therefore I have begun implementing the FrontalDAG symbolic factorisation framework class, which utilises Anshul Gupta's theorems (primarily I base my code on this work: http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.7.5466&rep=rep1&type=pdf) for sparse frontal matrix coefficient inclusion, which he implements in the WSMP LU decomposer. A matrix is loaded from MatrixMarket file format into NSP format, then converted into a task-DAG and a data-DAG. Then it is passed to the FrontalMatrix class for postorder traversal and frontal matrix construction, absorption and decomposition.
+The code is still in debugging stages I'm afraid, but the symbolic factorisation seem to work, the frontal construction has been altered to take care of the row/column index permutations & disassociations that happen during global pivoting.
 
-Current contents:
+There is a dependency on [jfreechart] (https://github.com/jfree/jfreechart) for drawing routines.
+FrontalDAG class allows writing out the DAGs at any stage into the Graphviz format for visualisation, and can also call the Graphviz visualiser directly from the Java code, so getting http://www.graphviz.org/ is also recommended for the intrepid researcher that wants to know if his structural algorithm has done what's expected.
+
+Current contents (outdated, as FrontalMatrix & FrontalDAG classes have appeared):
 
 		lkr74.mathgenerics:
   			class MiscMath
