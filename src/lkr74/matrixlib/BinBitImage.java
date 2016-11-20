@@ -5,8 +5,6 @@ import java.nio.DoubleBuffer;
 import java.nio.IntBuffer;
 import java.util.Arrays;
 
-import jogamp.opengl.glu.nurbs.Bin;
-
 public class BinBitImage {
 
 	static final double ROUNDOFF_ERROR = Matrix.ROUNDOFF_ERROR;
@@ -117,7 +115,7 @@ public class BinBitImage {
 		bitimage.data = data.clone();
 		bitimage.bitSets = bitSets;
 		
-		if (debugTrigger(2)) System.out.println(this.toString());
+		if (debugTrigger(3)) System.out.println(this.toString());
 		return bitimage;
 	}
 	

@@ -1,6 +1,7 @@
 package lkr74.matrixlib;
 
-import org.jfree.data.xy.MatrixSeriesCollection;
+import java.util.Arrays;
+
 import org.jfree.data.xy.XYDataset;
 import org.jfree.data.xy.XYSeries;
 import org.jfree.data.xy.XYSeriesCollection;
@@ -11,6 +12,7 @@ import lkr74.mathgenerics.XYLineChart_AWT;
 
 public class MatrixApp {
 	
+	final static boolean COPY = true, NO_COPY = false;
 	
 	// create Chart data from timings of 2 compared tested functions, showing variation in one parameter (ex: size/fillrate)
 	static XYDataset createStatisticSet(double[][] timingLists, String[] testNames, int[] testCases)
@@ -47,10 +49,10 @@ public class MatrixApp {
 			long start;
 			// create matrices to copy between, we'll test copying from RC to CSR and back
 			// matrix size will keep increasing from 2x2 to 50x50
-			Matrix M0 = new Matrix("M0", mWidth, mWidth,  Matrix.Type.Null);
-			Matrix M1 = new Matrix("M1", mWidth, mWidth,  Matrix.Type.Null);
-			CSRMatrix M2 = new CSRMatrix("M2", mWidth, mWidth,  Matrix.Type.Null);
-			CSRMatrix M3 = new CSRMatrix("M3", mWidth, mWidth,  Matrix.Type.Null);
+			Matrix M0 = new Matrix("M0", mWidth, mWidth,  Matrix.Type.Null, 1);
+			Matrix M1 = new Matrix("M1", mWidth, mWidth,  Matrix.Type.Null, 1);
+			CSRMatrix M2 = new CSRMatrix("M2", mWidth, mWidth,  Matrix.Type.Null, 1);
+			CSRMatrix M3 = new CSRMatrix("M3", mWidth, mWidth,  Matrix.Type.Null, 1);
 			Matrix M4;
 			CSRMatrix M5;
 	
@@ -78,11 +80,11 @@ public class MatrixApp {
 					case -1:	M4 = M0.clone(); break;							// copy from RC to CSR
 					case -2:	M4 = M0.multiply(M1); break;					// RC multiply
 					case -3:	result = M0.equals(M1); break;					// RC equality
-					case -4:	M4 = M0.add(M1, true); break;					// RC add
+					case -4:	M4 = M0.add(M1, COPY); break;					// RC add
 					case 1:		M5 = M3.clone(); break;							// copy from CSR to RC
 					case 2:		M5 = M2.multiply(M3); break;					// CSR multiply
 					case 3:		M2.equals(M3); break;							// CSR equality
-					case 4:		M5 = M2.add(M3, true); break;					// CSR add
+					case 4:		M5 = M2.add(M3, COPY); break;					// CSR add
 					}
 			    testRuns[tcnt++][r] = (System.nanoTime() - start) / ITERATIONS;
 			}
@@ -96,7 +98,7 @@ public class MatrixApp {
 		XYDataset bestFitChartSet;
 		bestFitChartSet = createStatisticSet(testRuns, testNames, testCases);
 		XYLineChart_AWT bestFitChart = new XYLineChart_AWT("Matrix stress test", "matrix size", "nanosecs/matrix op.", bestFitChartSet, 1024, 768);
-		bestFitChart.pack( );          
+		bestFitChart.pack();          
 		RefineryUtilities.centerFrameOnScreen(bestFitChart);   
 		bestFitChart.setVisible( true ); 
 	}
@@ -104,87 +106,202 @@ public class MatrixApp {
 	
 	
 	
-	public static void testLUdecomposure(String fileName, boolean toImage) {
+	public static void testLUdecomposure(String fileName, boolean toImage, boolean toFile, boolean toGraphViz, int benchRuns) {
 		
 		double[] vB = {
 			0,0,0,1,2,3,4,0,0,0,6,5,4,3,2,1,0,0,0,0,8,0,0,0,0,0,0,0,0,5,4,3,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,5,4,3,0,0,0,0,0,9,1,1,1,1,0,9,4,4,4,5,5,5,1,1,1,0,0,9,8,7,6,5,4,0,0,0,0,0,0,0,
 			0,0,0,0,0,0,0,0,2,3,0,0,0,0,0,1,1,0,0,0,0,0,0,9,9,9,0,0,0,0,0,0,0,0,0,0,6,5,4,0,0,0,0,0,0,2,0,3,0,0,0,0,0,0,0,0,0,0,3,4,5,6,7,8,0,9,4,4,4,5,5,5,1,1,1,0,0,9,8,7,6,5,4,0,0,0,0,0,0,0};
-		double[] d20 = {  1,-3, 0, 0, 0, 0, 0, 0, 0, 0,
-				 		  0,-4,-3, 0, 0, 0, 0, 0, 0, 0,
-				 		 -1, 7, 1, 0, 0, 0, 0, 0, 0, 0,
-				 		  0, 0, 0, 2,-2, 0, 0, 0, 0, 0,
-				 		  0, 0, 0, 0, 3, 0, 0, 0, 0, 0,
-				 		  0, 0, 0, 0, 0, 2, 0, 0, 0, 0,
-				 		  0, 0, 0, 0, 0, 0, 1, 0, 0, 0,
-				 		  0, 0, 0, 0, 0, 0, 9, 2, 1, 0,
-				 		  0, 0, 0, 0,-3, 0, 0, 2, 7, 0,
-				 		  0, 0, 0, 0, 0, 0, 0, 0, 0, 8};
+		double[] d20 = {  1,-3, 0, 0, 0, 0, 0, 0, 0,
+				 		  0,-4, 0, 7, 0, 0, 0, 1, 0,
+				 		 -1, 1, 1, 1, 0, 0, 0, 1, 0,
+				 		  0, 0, 0, 2, 0, 5, 0, 0, 0,
+				 		  0, 0, 3, 1, 3, 1, 0, 1, 0,
+				 		  0, 0, 0, 0, 0, 1, 0, 7, 0,
+				 		  0, 0, 0, 0,-1, 1, 2, 1, 0,
+				 		  0, 0, 0, 0, 0, 0, 0,-1, 4,
+				 		  0, 0, 0, 0, 0, 0, 3, 7, 3};
 		
-		// try loading, toString, LU decomposing and writing to BMP of a Matix type
+		// if filename supplied, load in that matrix of MatrixMarket datatype
 		Matrix MM = null;
 		if (fileName != "") {
-			MatrixMarketIO mmIO = new MatrixMarketIO(fileName, 0);
+			MatrixMarketIO mmIO = new MatrixMarketIO(fileName, 0, true);
 			MM = mmIO.getMatrix();
 			//MM.toFile(0);
-		} else
-			MM = new Matrix("MM", 10, 10, d20, null);
-		
+		} else {
+			MM = new Matrix("MM", 9, 9, d20, null);
+			if (benchRuns < 2) System.out.println(MM.toString());
+		}
+		MM.analyse(true);
+
 		Matrix[] LU = null;
-		long tStart = 0, tEnd = 0, benchRuns = 11000, preRuns = 100;
-		Matrix.DEBUG_LEVEL--;
+		long tStart = 0, tEnd = 0, preRuns = benchRuns/100;
+		
+		if (benchRuns > 1) Matrix.DEBUG_LEVEL--;			// print matrix debug data if we're not benchmarking
+		
 		for (int r = 0; r < benchRuns; r++) {
 			if (r == preRuns) tStart = System.nanoTime();
-			LU = MM.decomposeLU(true, false);				
+			LU = MM.decomposeLU(COPY, false, true);			// decompose to a copy, don't split into L & U, use row permutation	
 		}
 		tEnd = System.nanoTime();
-		Matrix.DEBUG_LEVEL++;
+		
+		if (benchRuns > 1)  Matrix.DEBUG_LEVEL++;
+		
 		System.out.printf("Matrix.decomposeLU() averaged %.1f ns\n", (double)(tEnd - tStart)/(benchRuns - preRuns));
 
 		if (LU[0] != null) {
-			LU[0].toFile(0);
+			LU[0].name = "LU";
+			if (benchRuns < 2) System.out.println(LU[0].toString());
+			LU[0].analyse(false);
+			System.out.println(Arrays.toString(LU[0].mutator));
+			if (toFile) LU[0].toFile(0);
 			if (toImage) {
 				MatrixBMPImage MM_image = new MatrixBMPImage(LU[0]);
 				MM_image.write();
 			}
 		}
-		Matrix vectorB = new Matrix("b", fileName != "" ? MM.M : 10, 1, vB, null);
-		Matrix bLU[] = vectorB.backSubstituteLU(null, LU[0], true);
-		bLU[0].name = "x" + Matrix.nameCount;
-		bLU[0].toFile(5);
+		Matrix vectorB = new Matrix("b", fileName != "" ? MM.M : 9, 1, vB, null);
+		Matrix bLU[] = vectorB.backSubstituteLU(null, LU[0], COPY);
+		bLU[0].name = "x";
+		if (toFile) bLU[0].toFile(5);
 
 		// try loading, toString, LU decomposing and writing to BMP of a NSPMatix type
 		NSPMatrix MM2 = null;
 		if (fileName != "") {
-			MatrixMarketIO mmIO = new MatrixMarketIO(fileName, 2);
-			MM2 = (NSPMatrix)mmIO.getMatrix();				
-			//MM2.toFile(0);
-		} else
-			MM2 = new NSPMatrix("MM", 10, 10, d20, null);
+			MatrixMarketIO mmIO = new MatrixMarketIO(fileName, 2, true);
+			MM2 = mmIO.getNSPMatrix();				
+		} else {
+			MM2 = new NSPMatrix("MM", 9, 9, d20, null);
+			MM2.name = "MM_NSP";
+			if (benchRuns < 2) System.out.println(MM2.toString());
+			if (toGraphViz) MM2.toGraphViz(true, true, true);
+		}
+		System.out.println("MM2 non-zeroes: " + MM2.nNZ + ", percent: " + (100f * (float)MM2.nNZ / (MM2.M*MM2.N)) + "%");
 		
 		NSPMatrix[] LU2 = null;
-		benchRuns = 1100;
-		Matrix.DEBUG_LEVEL--;
+		
+		if (benchRuns > 1) Matrix.DEBUG_LEVEL--;
+		
 		for (int r = 0; r < benchRuns; r++) {
 			if (r == preRuns) tStart = System.nanoTime();
-			LU2 = MM2.decomposeLU(true, false);
+			LU2 = MM2.decomposeLU(COPY, false);				// decompose to a copy, don't split into L & U
 		}
 		tEnd = System.nanoTime();
-		Matrix.DEBUG_LEVEL++;
+		
+		if (benchRuns > 1) Matrix.DEBUG_LEVEL++;
+		
 		System.out.printf("NSPMatrix.decomposeLU() averaged %.1f ns\n", (double)(tEnd - tStart)/(benchRuns - preRuns));
 
 		if (LU2[0] != null) {
-			LU2[0].toFile(0);
+			LU2[0].name = "LU_NSP";
+			System.out.println("LU non-zeroes: " + LU2[0].nNZ + ", percent: " + (100f * (float)LU2[0].nNZ / (LU2[0].M*LU2[0].N)) + "%");
+			System.out.println(Arrays.toString(LU2[0].mutator));
+			if (toFile) LU2[0].toFile(0);
+			if (toGraphViz) LU2[0].toGraphViz(true, true, true);
+			if (benchRuns < 2) System.out.println(LU2[0].toString());
 			if (toImage) {
 				NSPMatrixBMPImage MM_image = new NSPMatrixBMPImage(LU2[0]);
 				MM_image.write();
 			}
 		}
-		NSPMatrix vectorB2 = new NSPMatrix("b", fileName != "" ? MM.M : 10, 1, vB, null);
+		NSPMatrix vectorB2 = new NSPMatrix("b", fileName != "" ? MM.M : 9, 1, vB, null);
 		NSPMatrix bLU2[] = vectorB2.backSubstituteLU(null, LU2[0], true);
-		bLU2[0].name = "x" + Matrix.nameCount;
-		bLU2[0].toFile(5);
+		bLU2[0].name = "x_NSP";
+		if (toFile) bLU2[0].toFile(5);
 	}
 	
+	
+	
+	
+	// test NspNode finder with three search algorithms (iterative, linear & binary) at different heuristic levels
+	// seems like the linear finder is generally faster than binary search, and searches faster than iterative after 50 elements	
+	public static void testFindHVSpNode(int arraySize, int iters) {
+		
+		long tstart, tend;
+		double[][] testRuns = new double[3][arraySize];
+		
+		int offs = (int)(Math.random()*arraySize) / 4, sizeStep = (int)Math.sqrt(arraySize), cMax = 0;
+		int itrLim = NSPMatrix.nodeSearch_iterateLim, linLim = NSPMatrix.nodeSearch_linearLim;
+		
+		NspNode[] nodes = new NspNode[arraySize];
+		//for (int i = 0, r = offs; i < arraySize; i++, r += 1 + (int)(Math.random()*31))
+		for (int i = 0, rstep = offs; i < arraySize; i++, rstep += 1 + (int)(Math.random() * sizeStep))
+			nodes[i] = new NspNode(0, rstep, i, i);
+		
+		// prerun
+		for (int k = 0; k < iters * 5; k++) {
+			int csought = (int)(Math.random()*(nodes[arraySize-1].c - nodes[0].c));
+			int found = NSPMatrix.findHVspNode(nodes, 0, arraySize-1, -1, csought);
+			found += csought; csought += found;
+		}
+
+		System.out.println("NSPMatrix.findHVspNode() search test for increasing seeking lengths in a randomly ascending array");
+		for (int sLen = 1; sLen < arraySize; sLen++) {
+			
+			// rerandomise node array on every test run
+			offs = (int)(Math.random()*arraySize) / 4;			// add random amount of zeroes at start of dataset
+			for (int i = 0, rstep = offs; i < sLen; i++, rstep += 1 + (int)(Math.random() * sizeStep)) {
+			//for (int i = 0, rstep = offs; i < sLen; i++, rstep++)
+				nodes[i].c = rstep;
+				cMax = rstep;
+			}
+			cMax += (int)(Math.random()*arraySize) / 4;			// add random amount of zeroes at end of dataset, cMax = "last c in dataset"
+			
+			NSPMatrix.nodeSearch_iterateLim = arraySize + 1; NSPMatrix.nodeSearch_linearLim = arraySize + 1;
+			tstart = System.nanoTime();
+			for (int k = 0; k < iters; k++) {
+				//int csought = (int)(Math.random()*(nodes[sLen - 1].c - nodes[0].c));
+				int csought = (int)(Math.random() * cMax);
+				int found = NSPMatrix.findHVspNode(nodes, 0, sLen - 1, -1, csought);
+				// show the finding, or the return of what was the nearest element
+				//int cfound = (found < 0 ? nodes[-found-1].c : nodes[found].c);
+				//System.out.println("sought: " + csought + (found < 0 ? ", nearest: " : ", found: ") + cfound);
+				found += csought; csought += found;				// fake variable usage to avoid compiler optimisations
+			}
+			tend = System.nanoTime();
+			testRuns[0][sLen-1] = (double)(tend - tstart)/iters;
+			if (sLen % sizeStep == 0)
+				System.out.printf("%d elems, it: %5.1f ", sLen, (double)(tend - tstart)/iters);
+			
+			NSPMatrix.nodeSearch_iterateLim = 0;
+			tstart = System.nanoTime();
+			for (int k = 0; k < iters; k++) {
+				//int csought = (int)(Math.random()*(nodes[sLen - 1].c - nodes[0].c));
+				int csought = (int)(Math.random() * cMax);
+				int found = NSPMatrix.findHVspNode(nodes, 0, sLen - 1, -1, csought);
+				found += csought; csought += found;				// fake variable usage to avoid compiler optimisations
+			}
+			tend = System.nanoTime();
+			testRuns[1][sLen-1] = (double)(tend - tstart)/iters;
+			if (sLen % sizeStep == 0)
+				System.out.printf("li: %5.1f ", (double)(tend - tstart)/iters);
+
+			NSPMatrix.nodeSearch_linearLim = 0;
+			tstart = System.nanoTime();
+			for (int k = 0; k < iters; k++) {
+				//int csought = (int)(Math.random()*(nodes[sLen - 1].c - nodes[0].c));
+				int csought = (int)(Math.random() * cMax);
+				int found = NSPMatrix.findHVspNode(nodes, 0, sLen - 1, -1, csought);
+				found += csought; csought += found;				// fake variable usage to avoid compiler optimisations
+			}
+			tend = System.nanoTime();
+			testRuns[2][sLen-1] = (double)(tend - tstart)/iters;
+			if (sLen % sizeStep == 0)
+				System.out.printf("bi: %5.1f\n", (double)(tend - tstart)/iters);
+		}
+		NSPMatrix.nodeSearch_iterateLim = itrLim; NSPMatrix.nodeSearch_linearLim = linLim;
+		
+		// chart for comparison timing runs
+		XYDataset bestFitChartSet;
+		String[] testNames = {"","","","","iterative search","linear search","binary search"};
+		int[] testCases = {0, 1, 2};
+		bestFitChartSet = createStatisticSet(testRuns, testNames, testCases);
+		XYLineChart_AWT bestFitChart = new XYLineChart_AWT(
+				"NSPMatrix.findHVspNode() test", "elements searched", "nanosecs/search op.", bestFitChartSet, 1024, 768);
+		bestFitChart.pack();          
+		RefineryUtilities.centerFrameOnScreen(bestFitChart);   
+		bestFitChart.setVisible( true ); 
+
+	}
 	
 	
 	
@@ -253,6 +370,25 @@ public class MatrixApp {
 						 0, 0, 0, 0, 0, 0, 9, 2, 1, 0,
 						 0, 0, 0, 0,-3, 0, 0, 2, 7, 0,
 						 0, 0, 0, 0, 0, 0, 0, 0, 0, 8};
+		double[] d21 = {	 1,-3, 0, 0, 0, 0, 0, 0, 0,
+							 0,-4, 0, 7, 0, 0, 0, 1, 0,
+							-1, 1, 1, 1, 0, 0, 0, 1, 0,
+							 0, 0, 0, 2, 0, 5, 0, 0, 0,
+							 0, 0, 3, 1, 3, 1, 0, 1, 0,
+							 0, 0, 0, 0, 0, 1, 0, 7, 0,
+							 0, 0, 0, 0,-1, 1, 2, 1, 0,
+							 0, 0, 0, 0, 0, 0, 0,-1, 4,
+							 0, 0, 0, 0, 0, 0, 3, 7, 3};
+		double[] d22 = {	 10, 2, 3, 4, 5, 0, 0, 0, 0, 0,
+							  1,-.1, 3, 4, 5, 0, 0, 0, 0, 0,
+							  1, 2,10, 4, 5, 0, 0, 0, 0, 0,
+							  1, 2, 3,10, 5, 0, 0, 0, 0, 0,
+							  1, 2, 9, 4,10, 0, 0, 0, 0, 0,
+							  0, 0, 0, 0, 0, 1, 2, 2, 0, 0,
+							  0, 0, 0, 0, 0, 2,10, 2, 0, 0,
+							  0, 0, 0, 0, 0, 2, 2,10, 0, 0,
+							  0, 0, 0, 0, 0, 0, 0, 0,10, 7,
+							  0, 0, 0, 0, 0, 0, 0, 0, 7,10};
 		double[] d11 = {1,2,3,4,5,6,7,8,
 						2,2,3,4,5,6,7,8,
 						3,3,3,4,5,6,7,8,
@@ -266,41 +402,106 @@ public class MatrixApp {
 //		matrixMultiTest(mtests);
 //		if(1==1) return;
 
-		int iters = 2000000;
-		long tstart, tend;
-
-		// test NspNode finder with three search algorithms at different heuristic levels
-		// seems like the linear finder is generally superior to binary search
-//		int offs = (int)(Math.random()*600);
-//		NspNode[] nodes = new NspNode[300];
-//		for (int i = 0; i < nodes.length; i++)
-//			nodes[i] = new NspNode(0, offs + i*32+(int)(Math.random()*31), i, i);
-
-//		tstart = System.nanoTime();
-//		for (int k = 0; k < iters; k++) {
-//			int csought = (int)(Math.random()*(nodes[299].c - nodes[0].c));
-//			int found = NSPMatrix.findHVspNode(nodes, 0, 299, -1, csought);
-//			int cfound = (found < 0 ? nodes[-found-1].c : nodes[found].c);
-//			System.out.println("sought: " + csought + (found < 0 ? ", nearest: " : ", found: ") + cfound);
-//		}
-//		tend = System.nanoTime();
-//		System.out.printf("findHVspNode() averaged %.1f ns\n", (double)(tend - tstart)/iters);
+		int iters = 100000;
+		long tStart, tEnd;
+		
+		// a test to show that cache-optimising and loop-unrolling matrix multiplication can be totally counterproductive
+//		Matrix R = new Matrix("R", 19, 12, Matrix.Type.Random);
+//		Matrix Rt = R.transpose(COPY), Rres;
+//		Matrix.DEBUG_LEVEL--;
+//		
+//		tStart = System.nanoTime();
+//		for (int i = 0; i < iters; i++) { Rres = R.multiply(Rt); Rres.det++; }
+//		tEnd = System.nanoTime();
+//		System.out.printf("Matrix.multiply() averaged %.1f ns\n", (double)(tEnd - tStart)/(double)iters);
+//
+//		tStart = System.nanoTime();
+//		for (int i = 0; i < iters; i++) { Rres = R.multiply_cacheopt(Rt); Rres.det++; }
+//		tEnd = System.nanoTime();
+//		System.out.printf("Matrix.multiply_cacheopt() averaged %.1f ns\n", (double)(tEnd - tStart)/(double)iters);
+//		Matrix.DEBUG_LEVEL++;
+//		if(1==1) return;
+		
+		// test element search heuristics of triple-method element finder testFindHVSpNode()
+		// this test will tell what element limits to set for each type of search approach: iterative/linear/binary search
+//		testFindHVSpNode(500, 200000);
 //		if(1==1) return;
 
-		testLUdecomposure("data/mcca.mtx", false);
+		
+		
+		boolean testAllSolvers = true;
+		Matrix[] LU2 = null;
+		if (testAllSolvers) {
+			Matrix A10x10 = new Matrix("Asubp", 10, 10, d22, null);
+			Matrix v10x1 = new Matrix("b", 10, 1, d2, null);
+			//A10x10.decomposeLU(NO_COPY, false, false);
+			v10x1.backSubstituteLU(A10x10, null, COPY);
+
+			NSPMatrix N10x10 = new NSPMatrix("Asubp", 10, 10, d22, null);
+			NSPMatrix vN10x1 = new NSPMatrix("b", 10, 1, d2, null);
+			vN10x1.backSubstituteLU(N10x10, null, COPY);
+
+			A10x10.solveGaussJordanPP(v10x1, null);
+			A10x10.solveGaussJordanFP(v10x1, COPY);
+			A10x10.solveGaussPP(v10x1);
+			A10x10.solveGaussSeidel(v10x1, 10, 0.02);
+			
+			// test direct construction of a FrontalMatrix, it's LU-decomposition and conversion to a Matrix, then backsubstitution with a problem vector
+			FrontalMatrix FA10x10 = new FrontalMatrix(10, 10, d22);
+			FA10x10.decomposeLU(true);
+			System.out.println(FA10x10.toString());
+			Matrix LU10x10f = new Matrix("Afm", FA10x10);
+			v10x1 = new Matrix("b", 10, 1, d2, null);
+			v10x1.backSubstituteLU(null, LU10x10f, false);
+			LU2 = A10x10.decomposeLU();
+		}
 		if(1==1) return;
+		
+		MatrixMarketIO mmIO = new MatrixMarketIO("data/d_dyn.mtx", 2, true);
+		//MatrixMarketIO mmIO = new MatrixMarketIO("data/mcca.mtx", 2, true);
+		NSPMatrix MM2 = mmIO.getNSPMatrix();
+		//MM2.toFile(0);
+		
+		boolean doMaxMatchingPermutation = true;
+		if (doMaxMatchingPermutation) {
+			// test maximum matching finding with Hopcroft-Karp algorithm
+			BipartiteDM biDM = new BipartiteDM(MM2);
+			//biDM.toString();
+			biDM.maximumMatchingHopcroftKarp();
+			biDM.findBTF();
+			// test permuting the paired rows-columns to the diagonal
+			MM2 = MM2.permuteMaximumMatching(biDM, NO_COPY, true);
+			//MM2.toFile(0);
+		}
+
+		// test construction of multifrontal unsymmetric DAG with transitive reduction
+		FrontalDAG dataDAG = null;
+		//MM2 = new NSPMatrix("MM2", 10, 10, d22, null);
+		tStart = System.nanoTime();
+		for (int i = 0; i < 1; i++) {
+			FrontalDAG taskDAG = FrontalDAG.taskDAG(MM2, false);
+			//taskDAG.toGraphViz(true, true, true);
+			dataDAG = taskDAG.dataDAG(MM2);
+			NSPMatrix LU = taskDAG.decomposeLU(MM2);
+			System.out.println(LU.toString());
+		}
+		tEnd = System.nanoTime();
+		System.out.printf("taskDAG.decomposeLU() averaged %.1f ns\n", (double)(tEnd - tStart)/10000);
+		dataDAG.clearVisits();
+		if(1==1) return;
+
+		// test LU decomposure for normal & NSP sparse matrix types, no output to image, nor file, nor graphviz
+		testLUdecomposure("data/mcca.mtx", false, false, false, 10000);
+		//testLUdecomposure("", false, false, false, 1);
 		
 		// test sparse dynamic NSPMatrix, creation, multiplying, printout,
 		// zeroes purging, value setting and zeroing, row/column swapping
 		NSPMatrix G8 = new NSPMatrix("G", 9, 7, d4, null);
-		NSPMatrix G8b = G8.transpose(true);
+		NSPMatrix G8b = G8.transpose(COPY);
 		G8 = G8.multiply(G8b);
 		System.out.println(G8.toString());
-		Matrix G9 = new Matrix("G", 9, 7, d4, null);
-		Matrix G9b = G9.transpose(true);
-		G9 = G9.multiply(G9b);
-		System.out.println(G9.toString());
 		
+		// test zero value purging of NSPMatrix by setting some values to zero and calling purgeZeroes()
 		G8.Hsp[1].array[0].v = 0;
 		G8.Hsp[2].array[0].v = 0;
 		G8.Hsp[3].array[0].v = 0;
@@ -308,6 +509,7 @@ public class MatrixApp {
 		System.out.println(G8.toString());
 		//if(1==1) return;
 
+		// test the valueTo() & valueOf() getters and setters of NSPMattix
 		G8 = new NSPMatrix("G", 9, 9, d3, null);
 		for (int i = 0; i < 9; i++) {
 			for (int j = 0; j < 9; j++) { double v = G8.valueOf(i, j); System.out.print((v != 0 ? v : " - ") + "  "); }
@@ -323,6 +525,8 @@ public class MatrixApp {
 			for (int j = 0; j < 9; j++) { double v = G8.valueOf(i, j); System.out.print((v != 0 ? v : " - ") + "  "); }
 			System.out.println("\n");
 		}
+		
+		// test sparse row inner product method multiplyHVsp() of NSPMatrix
 		double n = NSPMatrix.multiplyHVsp(G8.Hsp[1], G8.Hsp[0], 0, 0);
 		System.out.println("multiplyHVsp: " + n);
 		NspArray nd = NSPMatrix.addHVsp(G8.Hsp[0], G8.Vsp[6], 2.0, 0, 1, 1);
@@ -337,48 +541,48 @@ public class MatrixApp {
 		// Test Cholesky factorisation
 		//Matrix Ch = new Matrix("C", 3, 3, testCh, null);
 		Matrix Ch = new Matrix("C", 10, 10, d20, null);
-		Ch = Ch.transpose(true).multiply(Ch);
+		// convert unsymmetric matrix to symmetric, A^T.A style, since Cholesky only works for symmetric
+		Ch = Ch.transpose(COPY).multiply(Ch);
 		Ch.factoriseCholesky();
 		
 		// Test Householder reduction form
 		Matrix HH = new Matrix("HH", 4, 4, testHH, null);
-		HH = HH.reduceHouseholder(true);
+		HH = HH.reduceHouseholder(COPY);
 		
-		// Test MarixMarket file loading routine
-		MatrixMarketIO mmIO = new MatrixMarketIO("data/mcca.mtx", 0);
-		Matrix MM = mmIO.getMatrix();
+		// Test MatrixMarket file loading routine
+		MatrixMarketIO mmIO2 = new MatrixMarketIO("data/mcca.mtx", 0, true);
+		Matrix MM = mmIO2.getMatrix();
 		System.out.println(MM.toString());
-		// Test conversion of MatrixMarket data to CSR sparse format
+		// Test conversion of Matrix format to CSR sparse format
 		CSRMatrix MMcsr = CSRMatrix.convert(MM);
-		System.out.println(MMcsr.toString());
+		System.out.println(MMcsr.toString());	
+//		Matrix MM_Cholesky = MM.factoriseCholesky();	
+//		if (MM_Cholesky != null) {
+//			MatrixBMPImage MM_image = new MatrixBMPImage(MM_Cholesky);
+//			MM_image.write();
+//		}
 		
-		Matrix MM_Cholesky = MM.factoriseCholesky();
-		
-		if (MM_Cholesky != null) {
-			MatrixBMPImage MM_image = new MatrixBMPImage(MM_Cholesky);
-			MM_image.write();
-		}
-		
+		// test if a matrix will pass convergence criterion for a Gauss-Seidel type iteration
 		Matrix D8 = new Matrix("D8", 8, 8, d11, null);
-		D8.convergent();
+		D8.isConvergent();
 
 		// Test addition
 		Matrix D2 = new Matrix("D2", 6, 5, d2, null);
 		System.out.println(D2.toString());
-		D2 = D2.add(D2, true);
+		D2 = D2.add(D2, COPY);
 		// Test multiplication
-		D2 = D2.multiply(D2.transpose(true));
+		D2 = D2.multiply(D2.transpose(COPY));
 
 		// Test Gram-Schmidt orthonormalisation for non-tranposed & transposed
 		Matrix O = new Matrix("O", 5, 5, d2, null);
 		System.out.println(O.toString());
-		Matrix Q = O.orthogonalise(true);
-		O.transpose(true).orthogonalise(true);
+		Matrix Q = O.orthogonalise(COPY);
+		O.transpose(COPY).orthogonalise(COPY);
 		
-		// test LU = A decomposition with permutation and A = LU recomposition with depermutation
-		Matrix[] lLU = Q.decomposeLU(true, true);
+		// test LU = A decomposition with permutation and A = LU recomposition with unpermutation
+		Matrix[] lLU = Q.decomposeLU(COPY, true, true);
 		Matrix LU = lLU[0].multiply(lLU[1]);
-		LU.unpermute(lLU[0].mutator);
+		LU.unpermute();
 		System.out.println(LU);
 		
 		// Test eigenvalue & eigenvector finder findEigenQR(), which takes an orthonormalised matrix
@@ -392,7 +596,7 @@ public class MatrixApp {
 		Matrix x5 = new Matrix("x5", 5, 1, d8, null);
 		System.out.println("Largest eigenvalue: " + D2.eigenPowerValue(x5, 0.01, 100) + "\n");
 		
-		// Test method that finds diagonal bandwidth of a sparse matrix
+		// Test method that finds out how much sparse matrix data is "sticking out" from the diagonal
 		System.out.println("half bandwidth: " + new Matrix("Dd", 10, 10, d20, null).getHalfBandwidth());
 		
 		iters = 100;
@@ -404,66 +608,66 @@ public class MatrixApp {
 		D5.multiply(x6);
 		
 		Matrix N = new Matrix("N", 3, 3, cn, null);
-		N.convergent();
+		N.isConvergent();
 		x6 = N.solveGaussSeidel(new Matrix("v1", 3, 1, v1, null), 100, 0.1);
 		
 		// Test pivoting LU decomposer and back substitution methods
-		Matrix[] bLU = new Matrix("c2", 3, 1, d9, null).backSubstituteLU(D5, null, true);
+		Matrix[] bLU = new Matrix("c2", 3, 1, d9, null).backSubstituteLU(D5, null, COPY);
 		if (bLU == null) System.out.println("backSubstituteLU2() received singular matrix.");
 
 		// Test partial pivoting Gauss Jordan with inverse matrix creation and sparse diagonal matrix optimisation
 		Matrix D20 = new Matrix("D", 10, 10, d20, null);
 		x6 = D20.solveGaussJordanPPDO(
 				new Matrix("b", 10, 1, d10, null),
-				new Matrix("D", 10, 10, Matrix.Type.Null));
+				new Matrix("D", 10, 10, Matrix.Type.Null, 1));
 		if (x6 == null) System.out.println("solveGaussJordan() returned singular matrix.");
 		System.out.println("Determinant: " + D20.det);
 		
 		// Test full pivoting Gauss-Jordan with in-situ matrix & input vector -> solution vector transformation
 		Matrix c2 = new Matrix("c2", 3, 2, d9b, null), X;
 		Matrix.DEBUG_LEVEL--;
-		tstart = System.nanoTime();
+		tStart = System.nanoTime();
 		for (int i = 0; i < iters; i++)
-			X = D5.solveGaussJordanFP(c2, true);
-		tend = System.nanoTime();
+			X = D5.solveGaussJordanFP(c2, COPY);
+		tEnd = System.nanoTime();
 		Matrix.DEBUG_LEVEL++;
-		System.out.printf("solveGaussJordanFP() averaged %.1f ns\n", (double)(tend - tstart)/iters);
+		System.out.printf("solveGaussJordanFP() averaged %.1f ns\n", (double)(tEnd - tStart)/iters);
 
-		Matrix Q1 = new Matrix("Q1", 128, 128, Matrix.Type.Random), Q11;
-		Matrix Q2 = new Matrix("Q2", 128, 128, Matrix.Type.Random), Q22;
-		
 		// Test ordinary multiply versus Strassen-Winograd multiply algorithm
-//		Matrix.DEBUG_LEVEL--;
-//		for (int tests = 0; tests < 5; tests++) {
-//
-//			tstart = System.nanoTime();
-//			for (int i = 0; i < iters; i++) Q11 = Q1.multiply(Q1);
-//			tend = System.nanoTime();
-//
-//			System.out.printf("multiply() averaged %.1f ns\n", (double)(tend - tstart)/iters);
-//		    System.out.println("Mults: " + Matrix.mulFlops_DEBUG);
-//
-//		    tstart = System.nanoTime();
-//			for (int i = 0; i < iters; i++) Q22 = Matrix.multiplyStrasWin(Q2, Q2, 8);
-//			tend = System.nanoTime();
-//
-//			System.out.printf("multiplyStrasWin() averaged %.1f ns\n", (double)(tend - tstart)/iters);
-//		    System.out.println("Mults: " + Matrix.mulFlopsSW_DEBUG);
-//		    System.out.println("Adds: " + Matrix.mulAdopsSW_DEBUG);
-//		    System.out.println("Recurses: " + Matrix.mulSW_DEBUG);
-//		}
-//		Matrix.DEBUG_LEVEL++;
+		Matrix Q1 = new Matrix("Q1", 128, 128, Matrix.Type.Random, 1), Q11;
+		Matrix Q2 = new Matrix("Q2", 128, 128, Matrix.Type.Random, 1), Q22;
+		Matrix.DEBUG_LEVEL--;
+		for (int tests = 0; tests < 5; tests++) {
+
+			tStart = System.nanoTime();
+			for (int i = 0; i < iters; i++) Q11 = Q1.multiply(Q1);
+			tEnd = System.nanoTime();
+
+			System.out.printf("multiply() averaged %.1f ns\n", (double)(tEnd - tStart)/iters);
+		    System.out.println("Mults: " + Matrix.mulFlops_DEBUG);
+		    System.out.println("Adds: " + Matrix.mulAdops_DEBUG);
+
+		    tStart = System.nanoTime();
+			for (int i = 0; i < iters; i++) Q22 = Matrix.multiplyStrasWin(Q2, Q2, 8);
+			tEnd = System.nanoTime();
+
+			System.out.printf("multiplyStrasWin() averaged %.1f ns\n", (double)(tEnd - tStart)/iters);
+		    System.out.println("Mults: " + Matrix.mulFlopsSW_DEBUG);
+		    System.out.println("Adds: " + Matrix.mulAdopsSW_DEBUG);
+		    System.out.println("Recurses: " + Matrix.mulSW_DEBUG);
+		}
+		Matrix.DEBUG_LEVEL++;
 		
 		// Test if multiplication of rescaled matrices produce same results as unexpanded ones
 		Matrix S1 = new Matrix("S1", 6, 5, d2, null);
-		S1 = S1.multiply(S1.transpose(true));
+		S1 = S1.multiply(S1.transpose(COPY));
 		S1 = new Matrix("S1", 6, 5, d2, null);
-		S1 = S1.rescale(0, 0, 6, 6, true);
-		S1 = S1.multiply(S1.transpose(true));
+		S1 = S1.rescale(0, 0, 6, 6, COPY);
+		S1 = S1.multiply(S1.transpose(COPY));
 		
-		// Test value x matrix multiplication
+		// Test multiplicating matrix with a value
 		Matrix A1 = new Matrix("A1", 9, 9, d3, null);
-		A1 = A1.multiply(-2000, false);
+		A1 = A1.multiply(-2000, NO_COPY);
 
 		Matrix G = new CSRMatrix("G", 9, 9, d3, null);
 
@@ -481,23 +685,23 @@ public class MatrixApp {
 //		}
 //		Matrix.DEBUG_LEVEL++;
 
-		// Test CSR matrices, test vAv style multiplication
+		// Test CSR matrices, test vAv style inner product
 		CSRMatrix x1 = new CSRMatrix("x1", 1, 9, d, null);
 		CSRMatrix x2 = new CSRMatrix("x2", 7, 1, d, null);
 		CSRMatrix V = new CSRMatrix("V", 9, 7, d4, null);
 		x2.swap(6, 2);
-		CSRMatrix S = x1.multiply(V);
-		S = S.multiply(x2);
+		CSRMatrix S = x1.multiply(V).multiply(x2);
 
 		// Test CSRMatrix conversion and polymorphic access
 		CSRMatrix O2 = new CSRMatrix("O", 9, 7, d3, null);
-		O2.transpose(false);
+		O2.transpose(COPY);
 		G = O2.multiply(new CSRMatrix("R", 9, 7, d3, null));
 		G = G.eliminateRowColumn(6, 6, true);
 
 		// test centering method for Matrix
-		Matrix P = G.center(true);
+		Matrix P = G.center(COPY);
 
+		// test BinBitImage methods of bitflagging nonzero values, comparing matrices through their bit images
 		BinBitImage.compact(d2, O2.bitImage.data[0], 0);
 		System.out.println(BinBitImage.binBitToString());
 		CSRMatrix I = new CSRMatrix("I", O2.M, O2.N, O2.getDataRef()[0], O.getDataRef()[1]);
@@ -513,18 +717,18 @@ public class MatrixApp {
 		Matrix D = new Matrix("D", 3, 3, d, null);
 
 		D.doGaussEliminationPP();
-		CSRMatrix csrA = new CSRMatrix("A2", 5, 5,  Matrix.Type.Random);
+		CSRMatrix csrA = new CSRMatrix("A2", 5, 5,  Matrix.Type.Random, 1);
 
-		CSRMatrix csrS = new CSRMatrix("S", 5, 5, Matrix.Type.Null);
-		CSRMatrix csrT = new CSRMatrix("T", 5, 5, Matrix.Type.Identity);
+		CSRMatrix csrS = new CSRMatrix("S", 5, 5, Matrix.Type.Null, 1);
+		CSRMatrix csrT = new CSRMatrix("T", 5, 5, Matrix.Type.Identity, 1);
 		csrT.valueTo(1, 3, 9.9);
 		csrS.valueTo(2, 2, 9.9);
 		csrS.valueTo(0, 4, -8);
-		CSRMatrix csrU = csrS.add(csrT, true);
+		CSRMatrix csrU = csrS.add(csrT, COPY);
 		CSRMatrix csrD = csrU.multiply(csrT);
 		CSRMatrix B = csrD.clone();
 		
-		Matrix C = new Matrix("C", 5, 5, Matrix.Type.Identity);
+		Matrix C = new Matrix("C", 5, 5, Matrix.Type.Identity, 1);
 		System.out.println("Identity matrix\n" + C.toString());
 		System.out.println();
 
@@ -534,13 +738,13 @@ public class MatrixApp {
 		// shouldn't be equal since AB != BA in general
 		csrS = new CSRMatrix("S", 5, 5, d2, null);
 		csrT = new CSRMatrix("T", 5, 5, d2, null);
-		csrT = csrT.add(5, false);
+		csrT = csrT.add(5, NO_COPY);
 		System.out.println(csrS.multiply(csrT).equals(csrT.multiply(csrS)));
 		System.out.println();
 
-		Matrix b = new Matrix("b", 5, 1, Matrix.Type.Random);
+		Matrix b = new Matrix("b", 5, 1, Matrix.Type.Random, 1);
 
-		Matrix A = new Matrix("A3", csrA.M, csrA.N, Matrix.Type.Null);
+		Matrix A = new Matrix("A3", csrA.M, csrA.N, Matrix.Type.Null, 1);
 		A = csrA.clone();
 		Matrix x = A.solveGaussPP(b);
 		A = A.multiply(x);

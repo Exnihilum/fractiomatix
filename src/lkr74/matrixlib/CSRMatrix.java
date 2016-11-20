@@ -1,5 +1,7 @@
 package lkr74.matrixlib;
 
+import java.security.InvalidParameterException;
+
 public class CSRMatrix extends Matrix {
 	
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -31,9 +33,9 @@ public class CSRMatrix extends Matrix {
 		if (Matrix.DEBUG_LEVEL > 2)  System.out.println(this.toString());		
 	}
 
-	public CSRMatrix(String name, int M, int N, Type type) {
+	public CSRMatrix(String name, int M, int N, Type type, double v) {
 		super(name, M, N);								// get skeleton Matrix superclass instance
-		this.generateData(type, 1);
+		this.generateData(type, v);
 		data = idata = null;
 		if (type != Matrix.Type.Null && type != Matrix.Type.Null_Complex) clearNull();
 		bitImage = new BinBitImage(this);
@@ -106,7 +108,7 @@ public class CSRMatrix extends Matrix {
 	public void putDataM(double[] data, double[] idata) {
 
 		if (M < 1 || N < 1)
-			throw new RuntimeException("CSRMatrix.putData(): Invalid matrix size.");
+			throw new InvalidParameterException("CSRMatrix.putData(): Invalid matrix size.");
 
 		nIA = M + 1;
 		IA = new int[nIA];
@@ -163,13 +165,13 @@ public class CSRMatrix extends Matrix {
 	@Override
 	public CSRMatrix rescale(int Mi, int Ni, int Mo, int No, boolean doBitImage) {
 		
-		if (Mi > Mo || Ni > No) throw new RuntimeException("CSRMatrix.getData(): Invalid data subset size.");
+		if (Mi > Mo || Ni > No) throw new InvalidParameterException("CSRMatrix.getData(): Invalid data subset size.");
 		int newM = Mo - Mi, newN = No - Ni;
 		
 		String newname;
 		if (DEBUG_LEVEL > 1)	newname = name + "(r:" + Mi + "," + Ni + "," + "Mo" + "," + No + ")";
 		else					newname = name + "(r)";
-		CSRMatrix A = new CSRMatrix(newname, newM, newN, Matrix.Type.Null);
+		CSRMatrix A = new CSRMatrix(newname, newM, newN, Matrix.Type.Null, 1);
 		double[] newdata = A.data;
 
 		// nr & nc are indexes into the new dataset
@@ -198,7 +200,7 @@ public class CSRMatrix extends Matrix {
 	@Override
 	public double valueOf(int r, int c) {
 		if (r < 0 || c < 0 || r >= M || c >= N)
-			throw new RuntimeException("CSRMatrix.valueOf(): Invalid matrix coordinates.");
+			throw new InvalidParameterException("CSRMatrix.valueOf(): Invalid matrix coordinates.");
 
 		// iterate through row's sparse column indices, check if sought column exists -> a sparse value is stored
 		int iN = IA[r + 1]; 
@@ -214,7 +216,7 @@ public class CSRMatrix extends Matrix {
 	@Override
 	public void valueTo(int r, int c, double v) {
 		if (r < 0 || c < 0 || r >= M || c >= N)
-			throw new RuntimeException("CSRMatrix.valueTo(): Invalid matrix coordinates.");
+			throw new InvalidParameterException("CSRMatrix.valueTo(): Invalid matrix coordinates.");
 		
 		double[] A = this.A;
 		int[] JA = this.JA;
@@ -280,7 +282,7 @@ public class CSRMatrix extends Matrix {
 	
 	@Override
 	public CSRMatrix identity(int S, double v) {
-		CSRMatrix I = new CSRMatrix("I", S, S, Type.Identity);
+		CSRMatrix I = new CSRMatrix("I", S, S, Type.Identity, 1);
 		for (int i = 0; i < I.A.length; i++) I.A[i] *= v;
 		return I;
 	}
@@ -291,9 +293,9 @@ public class CSRMatrix extends Matrix {
 	public CSRMatrix eliminateRowColumn(int r, int c, boolean makeBitImage) {
 
 		if (r < 0 || r > M - 1 || c < 0 || c > N - 1)
-			throw new RuntimeException("CSRMatrix.eliminateRowColumn(): row or column out of bounds.");
+			throw new InvalidParameterException("CSRMatrix.eliminateRowColumn(): row or column out of bounds.");
 		if (M < 2 || N < 2)
-			throw new RuntimeException("CSRMatrix.eliminateRowColumn(): Invalid matrix size.");
+			throw new InvalidParameterException("CSRMatrix.eliminateRowColumn(): Invalid matrix size.");
 
 		// sA = elimination offset start of A & IA, eA = elimination offset end
 		int nrIA = IA.length - 1, sA = IA[r], eA = IA[r + 1], cA = eA - sA;
@@ -349,7 +351,7 @@ public class CSRMatrix extends Matrix {
 	@Override
 	public Matrix transpose(boolean copy) {
 		
-		if (M < 1 || N < 1) throw new RuntimeException("CSRMatrix.transpose(): Invalid matrix size.");
+		if (M < 1 || N < 1) throw new InvalidParameterException("CSRMatrix.transpose(): Invalid matrix size.");
 
 		CSRMatrix T = this;
 		if (copy) T = new CSRMatrix(name + "^T", N, M);
@@ -394,7 +396,7 @@ public class CSRMatrix extends Matrix {
 	// compares two matrices CSR style
 	public static boolean equal(CSRMatrix S, CSRMatrix T) {
 		if (T.M != S.M || T.N != S.N)
-			throw new RuntimeException("CSRMatrix.equal(): Nonmatching matrix dimensions.");
+			throw new InvalidParameterException("CSRMatrix.equal(): Nonmatching matrix dimensions.");
 
 		// fast-compare bitImages for non-matching non-zero fields
 		if (!S.bitImage.equals(T.bitImage)) return false;
@@ -431,7 +433,7 @@ public class CSRMatrix extends Matrix {
 	public void swap(int r1, int r2) {
 
 		if (r1 < 0 || r2 < 0 || r1 >= M || r2 >= M)
-			throw new RuntimeException("CSRMatrix.swap(): Invalid matrix rows.");
+			throw new InvalidParameterException("CSRMatrix.swap(): Invalid matrix rows.");
 		if (r1 == r2) return;
 		// change row1 to be a lower index than row2, to simplify algorithmics
 		if (r1 > r2) { int t = r1; r1 = r2; r2 = t; }
@@ -473,7 +475,7 @@ public class CSRMatrix extends Matrix {
 	// sums two matrices CSR style
 	public CSRMatrix addSub(CSRMatrix T, boolean subtract, boolean copy, double scl, boolean addScalar) {
 		if (T.M != M || T.N != N)
-			throw new RuntimeException("CSRMatrix.addSub(): Nonmatching matrix dimensions.");
+			throw new InvalidParameterException("CSRMatrix.addSub(): Nonmatching matrix dimensions.");
 
 		CSRMatrix S = this;
 		if (copy) {
@@ -549,7 +551,7 @@ public class CSRMatrix extends Matrix {
 	
 	public CSRMatrix multiply(CSRMatrix T) {
 
-		if (N != T.M) throw new RuntimeException("CSRMatrix.multiply(): Nonmatching matrix dimensions.");
+		if (N != T.M) throw new InvalidParameterException("CSRMatrix.multiply(): Nonmatching matrix dimensions.");
 
 		// results stored in new CSRMatrix U
 		CSRMatrix U = new CSRMatrix("M", M, T.N);

@@ -1,3 +1,659 @@
+
+		// block from findBTF() with proper array scanning of transferred BTF indexes
+		// has been replaced by a boolean array checking whether an element has been "used up"
+
+		int[] Hc = idxBTF[1], Hr = idxBTF[0];
+		int iHr = 0, iHc = 0;
+		while (iU != iEndU) {
+			int c = Hc[iHc++] = Uc[iU++];
+			int[] edge = vertex[c + partC].edge;
+			for (int e = 0, eEnd = vertex[c + partC].edges; e < eEnd; e++) {
+				int r = edge[e] & (0xFFFFFFFF - BipartiteVertex.FLAGS);
+				boolean inHr = false;
+				for (int i = 0; i < iHr; i++)									// test if r of adj(c) is already in Hr
+					if (Hr[i] == r) { inHr = true; break; }
+				if (!inHr) {
+					Hr[iHr++] = r;												// insert r into Hr[] if it didn't exist
+					flagR[r] = true;
+					int cMate = pairing[r];
+					if (cMate == -1) { continue; }
+					boolean inU = false, inHc = false;
+					for (int i = iU; i < iEndU; i++)							// if pairing of r is not in U...
+						if (Uc[i] == cMate) { inU = true; break; }
+					if (!inU) {
+						for (int i = 0; i < iHc; i++)							// and pairing of r is not in Hc
+							if (Hc[i] == cMate) { inHc = true; break; }	
+						if (!inHc) {
+							Uc[iEndU++] = cMate;								// then add it to U
+							flagC[cMate] = true;
+						}
+					}
+				}
+			}
+		}
+
+
+
+	public static Matrix multiply3(Matrix A, Matrix B, Matrix C, boolean copy) {
+
+		int aM = A.M, aN = A.N, bM = B.M, bN = B.N, cM = C.M, cN = C.N;
+		if (aM<1||aN<1||bM<1||bN<1||cM<1||cN<1) 	throw new InvalidParameterException("Matrix.multiply3(): Invalid matrix dimensions.");
+		if (aN != bM) 								throw new InvalidParameterException("Matrix.multiply3(): Nonmatching matrix dimensions.");
+		if (cM != aM && cN != bN) 					throw new InvalidParameterException("Matrix.multiply3(): Nonmatching matrix dimensions.");
+		
+		double[] dataA = A.getDataRef()[0], dataB = B.getDataRef()[0], dataC = C.getDataRef()[0];
+		
+		double[] dataD = dataC;
+		Matrix D = C;
+		if (copy) {
+			D = new Matrix((Matrix.DEBUG_LEVEL > 1 ? "(" + A.name + "." + B.name + ")" : "P"), aM, bN);
+			dataD = D.data = new double[aM * bN];
+		}
+
+		for (int k = 0, kM = k * aM; k < aN; k++) {
+			for (int i = 0, iNk = k; i < aM; i++, iNk += aN) {
+				int iM = i * aM;
+				double v = dataA[iNk];
+				if (!nearZero(v))
+						for (int kMj = kM, iMj = iM, kMjEnd = kMj + bM; kMj < kMjEnd; kMj++, iMj++)
+							dataD[iMj] = v * dataB[kMj] + dataC[iMj];
+				else	for (int iMj = iM, iMjEnd = iMj + bM; iMj < iMjEnd; iMj++)
+							dataD[iMj] += dataC[iMj];
+//				mulFlops_DEBUG += bN;
+//				mulAdops_DEBUG += bN;
+			}
+		}
+		
+		if (DEBUG_LEVEL > 1) System.out.println(D.toString());
+		D.clearNull();
+		D.halfBandwidth = -1;
+		D.bitImage = new BinBitImage(D);				// bitImage needs full reconstitution
+		return D;
+	}
+
+
+
+
+
+	// edge cut method takes an optional edge index if it has been found beforehand
+	public boolean cutEdge(int v1, int v2, int e) {
+		
+		FrontalDAGVertex vtx = vertex[v1];
+		if (vtx.cutedges > vtx.edges) vtx.purgeFlagged();			// clear exsessive erased edges
+		int e1 = 0, e1End = vtx.edges + vtx.cutedges;
+		boolean edgeFound = false;
+		
+		if (e == -1) {
+			for (; e1 < e1End; e1++)
+				if (vtx.edge(e1) == v2) { edgeFound = true; break; }		// if sought edge was found	
+			if (!edgeFound) return false;
+		} else e1 = e;
+
+		// TODO: this block seems irrelevant since cutedges are purged anyway when exceeding live edges
+		// and the optimal balance between the two must be about 50/50 anyway
+		if (e1End + vtx.cutedges >= vtx.edge.length) {		// overwrite some erased edge if array is full
+			for (int e2 = e1End - 1; e2 >= 0; e2--)
+				if (vtx.edge[e2] != -1)						// seek backwards for first non-flagged edge
+					vtx.edge[e1] = vtx.edge[e2];			// store it over the deleted edge
+		} else {
+		// end of block
+			// save the cut-flagged edge index at back of the array
+			if (--vtx.edges == 0) vtx.cutedges = 0;			// if last edge was cut, cut-flag count becomes irrelevant
+			else {
+				vtx.edge[vtx.edge.length - ++vtx.cutedges] = e1;
+				vtx.edge[e1] = -1;							// -1 cutflags an edge, making impossible to match it with another vertex
+			}
+			edges--;
+		}		
+		return true;
+	}
+
+
+
+
+		// test routine to check if cache misses happen because of usage of two separate arrays
+		// within same iteration, and whether splitting the iterators apart is a better strategy
+		// result:
+		// combined iterator averaged 86967,1 ns
+		// separated iterator averaged 95925,1 ns
+		// no cache gains from iterating arrays individually, combined iteration gives a shorter instruction run
+
+		double[] db = new double[100000];
+		int[] in = new int[100000];
+		tStart = System.nanoTime();
+		for (int i = 0; i < 10000; i++) {
+			for (int e = 0, eI = 1; e < (100000-6); e += eI) {
+				if (++eI > 6) eI = 1;
+				db[e] = (double)i * (double)e;
+				in[e] = i * e;
+			}
+		}
+		tEnd = System.nanoTime();
+		System.out.printf("combined iterator averaged %.1f ns\n", (double)(tEnd - tStart)/10000);
+		System.out.println(db[7]);
+		tStart = System.nanoTime();
+		for (int i = 0; i < 10000; i++) {
+			for (int e = 0, eI = 1; e < (100000-6); e += eI) {
+				if (++eI > 6) eI = 1;
+				db[e] = (double)i * (double)e;
+			}
+			for (int e = 0, eI = 1; e < (100000-6); e += eI) {
+				if (++eI > 6) eI = 1;
+				in[e] = i * e;
+			}
+		}
+		tEnd = System.nanoTime();
+		System.out.printf("separated iterator averaged %.1f ns\n", (double)(tEnd - tStart)/10000);
+		System.out.println(db[7]);
+		if(1==1) return;	
+
+
+
+
+// test routine microbenchmark for double operations versus float showed that float is only marginally (1-2%) faster than double
+
+		double xx = 3456, yy = 7890, zz = 1;
+		tStart = System.nanoTime();
+		for (int i = 0; i < iters; i++) {
+			xx -= zz; yy += zz;
+			if (zz > 10e6) zz /= xx;
+			if (zz < 10e-6) zz *= yy; 
+			if (xx > 10e6) xx /= 2;
+			if (yy > 10e6) yy /= 2;
+		}
+		tEnd = System.nanoTime();
+		System.out.println(xx + " " + yy + " " + zz);
+		System.out.printf("double ops averaged %.1f ns, took %.1f ns\n", (double)(tEnd - tStart)/iters, (double)(tEnd - tStart));
+		float xxf = 3456, yyf = 7890, zzf = 1;
+		tStart = System.nanoTime();
+		for (int i = 0; i < iters; i++) {
+			xxf -= zzf; yyf += zzf;
+			if (zzf > 10e6) zzf /= xxf;
+			if (zzf < 10e-6) zzf *= yyf; 
+			if (xxf > 10e6) xxf /= 2;
+			if (yyf > 10e6) yyf /= 2;
+		}
+		tEnd = System.nanoTime();
+		System.out.println(xxf + " " + yyf + " " + zzf);
+		System.out.printf("float ops averaged %.1f ns, took %.1f ns\n", (double)(tEnd - tStart)/iters, (double)(tEnd - tStart));
+
+
+
+
+	// extend-adds two supplied frontal matrices fm1 & fm2 into a parent frontal matrix fm3
+	static FrontalMatrix extendAdd(int pivot, FrontalMatrix  fm1, FrontalMatrix fm2) {
+		
+		FrontalMatrix fm3 = new FrontalMatrix();
+		fm3.pivot = pivot;
+		
+		// find out how many rows & columns we need to extend into the current frontal matrix
+		// duplicate rows/columns must be added, non-duplicate must receive extra space	
+		// idxM holds the interspersed indexation of the extend-added rows, thus allocated for worst-case
+		int[] idxM1 = fm1.idxCR, idxM2 = fm2.idxCR;
+		int i1 = 1, i2 = 1, sumM = 0, fm1M = fm1.r, fm2M = fm2.r;
+		// this.idxM holds the interspersed indexation of the extend-added rows, thus allocated for worst-case
+		int[] idxM = fm3.idxCR = new int[fm1M + fm2M + fm1.c + fm2.c];
+		int[] aRefM = new int[fm1M + fm2M];		// indexes array combinations for fast iterative access
+		
+		// create array idxM listing the resultant constituent row indexes
+		// and aRefM, storing type of operation to apply on resultant row
+		for (; i1 < fm1M && i2 < fm2M; sumM++) {
+			int idx1 = idxM1[i1], idx2 = idxM2[i2];
+			if (idx1 > idx2) { idxM[sumM] = idx2; i2++; aRefM[sumM] = 2; }
+			else if (idx1 < idx2) { idxM[sumM] = idx1; i1++; aRefM[sumM] = 1; }
+			else { idxM[sumM] = idx1; i1++; i2++; aRefM[sumM] = 3; }
+		}
+		// if one array was depleted before the other, deplete the other array too
+		while (i1 < fm1M) idxM[sumM++] = idxM1[i1++];
+		while (i2 < fm2M) idxM[sumM++] = idxM2[i2++];
+		fm3.r = sumM;
+
+		// this.idxN holds the interspersed indexation of the extend-added columns, thus allocated for worst-case
+		int[] idxN1 = fm1.idxCR, idxN2 = fm2.idxCR;
+		i1 = 1; i2 = 1;
+		int fm1N = fm1.c, fm2N = fm2.c, sumN = 0;
+		int[] idxN = fm3.idxCR = new int[fm1M + fm2M + fm1N + fm2N];
+		int[] aRefN = new int[fm1N + fm2N];		// indexes array combinations for fast iterative access
+		
+		// create array idxN listing the resultant constituent column indexes
+		// and aRefM, storing type of operation to apply on resultant column
+		for (; i1 < fm1N && i2 < fm2N; sumN++) {
+			int idx1 = idxN1[fm1.cTot + i1], idx2 = idxN2[fm2.cTot + i2];
+			if (idx1 > idx2) { idxN[fm3.cTot + sumN] = idx2; aRefN[sumN] = 2; }
+			else if (idx1 < idx2) { idxN[fm3.cTot + sumN] = idx1; aRefN[sumN] = 1; }
+			else { idxN[fm3.cTot + sumN] = idx1; i1++; i2++; aRefN[sumN] = 3; }
+		}
+		// if one array was depleted before the other, deplete the other array too
+		while (i1 < fm1N) idxN[fm3.cTot + sumN++] = idxN1[i1++];
+		while (i2 < fm2N) idxN[fm3.cTot + sumN++] = idxN2[i2++];
+		fm3.c = sumN;
+		
+		// allocate frontal matrix fm3, expand it out to square form for applying LU decomposition
+		int size_fm3 = sumM > sumN ? sumM : sumN;
+		double[] data3 = fm3.data = new double[size_fm3 * size_fm3];	
+		double[] data1 = fm1.data, data2 = fm2.data;
+		
+		// add-extend the contribution parts of fm1 & fm2 int fm3, aRefM & aRefN decide whether to add or copy
+		for (int i = 0, j1 = 1, j2 = 1; i < sumM; i++, j1++, j2++) {
+			int iN = i * size_fm3;
+			for (int j = 0; j < sumN; j++) {
+				switch (aRefM[i]) {
+				case 1: data3[iN + j] = data1[j1++]; break;						// extend with entire row from fm1
+				case 2: data3[iN + j] = data2[j2++]; break;						// extend with entire row from fm2
+				case 3:
+					switch (aRefN[j]) {											// combine row from fm1 & fm2
+					case 1: data3[iN + j] = data1[j1++]; break;					// extend with element from fm1
+					case 2: data3[iN + j] = data2[j2++]; break;					// extend with element from fm2
+					case 3: data3[iN + j] = data1[j1++] + data2[j2++]; break;	// combine elements from fm1 & fm2
+					}
+				}
+			}
+		}
+		
+		fm3.decomposeLU();									// apply LU decomposition, frontal matrix is finalised
+		return fm3;
+	}
+
+
+
+
+(This snippet is from FrontalMatrix.add() method)
+
+						// we need to continue adding to column within the extras field, but it has a separately sorted indexation
+						// so, we have to restart comparisons at this point, and extend iteration bounds
+						if (fmC.nExtraR > 0) {
+							idxC = idxCRC[iCEnd]; idxP = idxCR[iPEnd];
+							int iCEndE = iCEnd + fmC.nExtraR, iPEndE = iPEnd + nExtraR;
+							while (iC < iCEndE && iP < iPEndE) {
+								if (idxC < idxP) { idxC = idxCRC[++iC];	idC += cTotC; }		// child's column index lower than parents
+								else if (idxC > idxP) { idxP = idxCR[++iP];	idP += cTot; }	// child's column index higher than parents
+								else {	
+									data[idP] = dataC[idC];
+									data[idC] = 0;									// every contribution must only happen once, so zero it out
+									idC += cTotC; idP += cTot;						// step down both the matching columns
+									idxC = idxCRC[++iC]; idxP = idxCR[++iP];		// advance in both index arrays
+								}
+							}
+						}
+
+
+
+
+
+
+
+				// join in expected extras from root into children's extras indexes
+				extraJoinDataC[1][2] = fmP.nExtraC;							// how many extras column indexes from root
+				extraJoinDataC[1][3] = cPe + fmP.nContribC;					// the offset to extras indexes in root
+				extraJoinDataC[1][4] = 2;									// we want to get offsets for parent's indexes
+				joinIndexes(contribJoinDataC, fmP.idxCR);
+				extraJoinDataR[1][2] = fmP.nExtraC;							// how many extras column indexes from root
+				extraJoinDataR[1][3] = cPe + fmP.nContribC;					// the offset to extras indexes in root
+				extraJoinDataR[1][4] = 2;									// we want to get offsets for parent's indexes
+				joinIndexes(contribJoinDataC, fmP.idxCR);
+
+
+
+	public FrontalMatrix(NSPMatrix A, int pivot, int nExtraP, int[] contribR, int[] contribC, int nExtraR, int nExtraC) {
+
+		NspNode[] bHsp = A.Hsp[pivot].array, bVsp = A.Vsp[pivot].array;
+		// if there are no values in the row or column, return empty frontal matrix, let caller handle problemn
+		if (bHsp == null || bVsp == null) return;
+
+		this.pivot = pivot;
+
+		int offH = A.pivotNsp[pivot].offH, offV = A.pivotNsp[pivot].offV;
+		nContribR = A.Vsp[pivot].nodes - offV - 1;
+		nContribC = A.Hsp[pivot].nodes - offH - 1;
+		int nContribR2 = contribR[0] + 1, nContribC2 = contribC[0] + 1;
+		r = nExtraP + nContribR2 + nExtraR; rTot = r + r/4;
+		c = nExtraP + nContribC2 + nExtraC; cTot = c + c/4;
+		data = new double[rTot * cTot];
+		idxCR = new int[rTot + cTot];
+
+		// initialise frontal row & column from pivot's sparse row & column
+		int jP = nExtraP * cTot + nExtraP;					// offset beyond extra pivot rows & columns
+		int j = offH, j2 = 1, p = bHsp[offH].c, jFM = jP;
+		while (contribC[j2] < p) j2++;						// skip past contrib.column indexes lower than current pivot
+
+		while (j <= nContribC && j2 < nContribC2) {
+			int c1 = bHsp[j].c;
+			if (c1 > contribC[j2]) {
+				idxCR[jFM++] = contribC[j2++];				// fill-in from child matrices happened
+				continue;
+			} else if (c1 < contribC[j2])
+				data[jFM] = bHsp[j++].v;					// copy non-zero row value from sparse matrix into frontal matrix
+			else {
+				data[jFM] = bHsp[j++].v;					// fill-in coincident with sparse matrix index, copy value and advance both
+				j2++;
+			}
+			idxCR[jFM++] = c1;
+		}
+		// copy eventual values remaining in sparse matrix row
+		while (j <= nContribC) { data[jFM] = bHsp[j].v; idxCR[jFM++] = bHsp[j++].c; }
+
+		int i = offV, i2 = 1, iFM = jP, iFM2 = cTot; p = bVsp[offV].r;
+		while (contribR[i2] < p) i2++;						// skip past contrib.row indexes lower than current pivot
+
+		while (i <= nContribR && i2 < nContribR2) {
+			int r1 = bVsp[i].r;
+			if (r1 > contribR[i2]) {
+				idxCR[iFM2++] = contribR[i2++];				// fill-in from child matrices happened
+			} else if (r1 < contribR[i2])
+				data[iFM] = bVsp[i++].v;					// copy non-zero column value from sparse matrix into frontal matrix
+			else {
+				data[iFM] = bVsp[i++].v;					// fill-in coincident with sparse matrix index, copy value and advance both
+				i2++;
+			}
+			iFM += cTot;									// advance in frontal pivot column
+			idxCR[iFM2++] = r1;
+		}
+		// copy eventual values remaining in sparse matrix column
+		while (j <= nContribC) { data[jFM] = bHsp[j].v; idxCR[jFM++] = bHsp[j++].c; }
+	}
+
+
+
+
+	// method is supplied with a pivot/vertex index list (vList) carrying specific tree construction ordering
+	// method constructs a frontal matrix-carrying DAG
+	// the structure of the list is implicitly forming a binary tree:
+	// the index list repeats a vertex index to specify that next three indexes in the list
+	// form a branch, but if the index appears for the first time, then it is a leaf frontal matrix
+	FrontalMatrix buildFMDAG(NSPMatrix A, int[] vList) {
+		
+		if (A.M != A.N) throw new RuntimeException("FrontalMatrix.buildDAG(): Matrix not square.");
+		// the refList will be filled up with references to created frontal matrices facilitating fast check for branches
+		// there can only be as many frontal matrices as there are pivots (M = N) in a square matrix
+		FrontalMatrix[] refList = new FrontalMatrix[A.M];
+		
+		for (int i = 0; i < vList.length; i++) {
+			int fm1Idx = vList[i];
+			// a null in refList means that vertex wasn't created yet and is a leaf vertex
+			if (refList[fm1Idx] == null)
+				refList[fm1Idx] = new FrontalMatrix(A, A.M, 0, 0, 0, 0, 0);
+			// leaf node exists, the appearance of repeated index means it forms a branch with the two next indexes
+			// the two child matrices must have been constructed beforehand, otherwise vList was incorrectly layouted
+			else {
+				int fm2Idx = vList[++i], fm3idx = vList[++i];
+				if (refList[fm1Idx] == null || refList[fm2Idx] == null)
+					throw new RuntimeException("FrontalMatrix.buildDAG(): DAG build ordering list incorrectly ordered");
+				refList[fm3idx] = extendAdd(fm3idx, refList[fm1Idx], refList[fm2Idx]);
+			}
+		}
+		// the last index in vList is supposed to be the topmost frontal matrix, so return it's index into the refList
+		return refList[vList[vList.length - 1]];
+	}
+	
+	
+
+
+
+			// test current pivot and lower pivot for supernode joining criterion, if current pivot can join the lower pivot as a supernode,
+			// then we can skip adding edges to this vertex/pivot, as they will be identical to edges of the lower vertex/pivot
+
+			if (M.pivotNsp[v].offH > 0 && M.pivotNsp[v].offV > 0) {	// is this vertex/pivot both a U-ancestor & L-ancestor?
+				// yes it is, so it is candidate for supernode testing against next lower pivot
+				// check if this & lower pivots have similar row/column patterns
+				if (dagL.fitsSupernode(M, v - 1, v, 2, 1f/4f, edgeMissH, edgeMissV)) {
+					// this vertex will only have one child, and that child will be in it's supernode group
+					dagL.vertex[v].edge = edge = new int[1];		// only one edge needed		
+					edge[0] = v - 1 | FrontalDAGVertex.SUPERNODE;	// pointing to the lower pivot as a lower supernode member
+					dagL.vertex[v].edges = 1;
+					dagL.edges++;
+					superCount++;
+					// take care also of U-DAG, which won't need any edges added across a supernode
+					dagU.vertex[v] = new FrontalDAGVertex(v, new int[1]);
+					continue;
+				}
+				while (superCount > 0)										// finished symbolic supernode assembly, assign last supernode
+					dagL.vertex[v - superCount-- - 1].superIdx = v - 1;		// index to all members of supernode
+			}
+			
+			if (edgeMissH[0] > 1) {											// are there row edge misses to integrate from assembled supernode?
+				for (int im = 1, iEnd = edgeMissH[0]; im < iEnd; im++) {
+					dagL.addEdge(edgeMissH[im], v + superCount, FrontalDAGVertex.L_CHILD, true);
+					dagL.vertex[edgeMissH[im]].parentsL++;
+				}
+				edgeMissH[0] = 1;
+			}
+			if (edgeMissV[0] > 1) {											// are there column edge misses to integrate from assembled supernode?
+				for (int im = 1, iEnd = edgeMissV[0]; im < iEnd; im++) {
+					dagU.addEdge(edgeMissV[im], v + superCount, FrontalDAGVertex.U_CHILD, true);
+					dagL.vertex[edgeMissH[im]].parentsU++;
+				}
+				edgeMissV[0] = 1;
+			}
+			superCount = 0;
+			
+
+
+
+	// method makes union of edges between this DAG and DAG2, method expects vertex sets to be identical
+	public void uniteEdgeSetLU(FrontalDAG dag2) {
+		
+		boolean order = distantFirst;
+		
+		for (FrontalDAGVertex vtx : vertex) {
+			FrontalDAGVertex vtx2 = dag2.vertex[vtx.i];			// find equivalent vertex in DAG2
+			int edgeSum = vtx.edges + vtx2.edges;
+
+			// if edges of vertex2 can be added without reallocation
+			if (edgeSum <= vtx.edge.length) {
+				
+				int e2 = 0, e2End = vtx2.edges + vtx2.cutedges;
+				// fill up cut-flagged holes of vtx first
+				if (vtx2.cutedges > 0) {
+					// vtx2 has holes, make sure to bypass them
+					for (int e1End = vtx.edge.length, e1 = e1End - vtx.cutedges; e1 < e1End && e2 < e2End; e2++)
+						if (vtx2.edge[e2] != -1) {
+							
+							int e5 = vtx.edgeIndexS(vtx2.edge[e2], order);		// check if we're adding a duplicate edge
+							if (e5 >= 0) {
+								vtx.set_LU_edge(e5);							// found L-edge & U-edge duplicates, set to LU-edge
+								if (vertex[vtx2.edge(e2)].parentLU > vtx.i)		// set child's parent-LU index if a closer parent is found
+									vertex[vtx2.edge(e2)].parentLU = vtx.i;
+								edgeSum--;
+							} else {
+								vtx.edge[vtx.edge[e1++]] = vtx2.edge[e2];		// unique edge copy
+								vtx.cutedges--;
+								edges++;
+							}
+						}
+				} else {
+					// vtx2 had no holes to caretake
+					for (int e1End = vtx.edge.length, e1 = e1End - vtx.cutedges; e1 < e1End && e2 < e2End; e1++, e2++) {
+						
+						int e5 = vtx.edgeIndexS(vtx2.edge[e2], order);			// check if we're adding a duplicate edge
+						if (e5 >= 0) {
+							vtx.set_LU_edge(e5);								// found L-edge & U-edge duplicates, set to LU-edge
+							if (vertex[vtx2.edge(e2)].parentLU > vtx.i)			// set child's parent-LU index if a closer parent is found
+								vertex[vtx2.edge(e2)].parentLU = vtx.i;
+							edgeSum--;
+						}
+						else {
+							vtx.edge[vtx.edge[e1]] = vtx2.edge[e2];				// unique edge copy
+							vtx.cutedges--;
+							edges++;
+						}
+					}
+				}
+				
+				// copy rest unto end of vertex 1's edge array, skip flagged edges in vertex 2
+				if (vtx2.cutedges > 0) {
+					for (int e1 = vtx.edges; e2 < e2End; e2++)
+						if (vtx2.edge[e2] != -1) {
+							int e5 = vtx.edgeIndexS(vtx2.edge[e2], order);		// check if we're adding a duplicate edge
+							if (e5 >= 0) {
+								vtx.set_LU_edge(e5);							// found L-edge & U-edge duplicates, set to LU-edge
+								if (vertex[vtx2.edge(e2)].parentLU > vtx.i)		// set child's parent-LU index if a closer parent is found
+									vertex[vtx2.edge(e2)].parentLU = vtx.i;
+								edgeSum--;
+							} else {
+								vtx.edge[e1++] = vtx2.edge[e2];					// unique edge copy
+								edges++;
+							}
+						}
+				} else
+					for (int e1 = vtx.edges; e2 < e2End; e2++) {
+						
+						int e5 = vtx.edgeIndexS(vtx2.edge[e2], order);			// check if we're adding a duplicate edge
+						if (e5 >= 0) {
+							vtx.set_LU_edge(e5);								// found L-edge & U-edge duplicates, set to LU-edge
+							if (vertex[vtx2.edge(e2)].parentLU > vtx.i)			// set child's parent-LU index if a closer parent is found
+								vertex[vtx2.edge(e2)].parentLU = vtx.i;
+							edgeSum--;
+						} else {
+							vtx.edge[e1++] = vtx2.edge[e2];						// unique edge copy
+							edges++;
+						}
+					}
+				vtx.edges = edgeSum;
+	
+			// reallocation necessary, create new array
+			} else {
+				int e3 = 0;
+				int[] edge3 = new int[trimToAllocBlock(edgeSum)];
+	
+				// copy over edges of vtx, skipping delete-flagged ones
+				if (vtx.cutedges > 0) {
+					for (int e1 = 0, l1 = vtx.edges + vtx.cutedges; e1 < l1; e1++)
+						if (vtx.edge[e1] != -1) edge3[e3++] = vtx.edge[e1];
+					vtx.cutedges = 0;
+				// copy over edges of vtx, no delete-flagged check
+				} else {
+					for (int e1 = 0, l1 = vtx.edges; e1 < l1; e1++)
+						edge3[e3++] = vtx.edge[e1];
+				}		
+				
+				// copy over edges of vtx2, skipping delete-flagged ones
+				if (vtx2.cutedges > 0) {
+					for (int e2 = 0, l2 = vtx2.edges + vtx2.cutedges; e2 < l2; e2++) {
+						int e4 = vtx2.edge[e2];
+						if (e4 != -1) {
+							
+							int e5 = vtx.edgeIndexS(e4, order);						// check if we're adding a duplicate edge
+							if (e5 >= 0) {
+								edge3[e5] |= FrontalDAGVertex.LU_CHILD;				// found L-edge & U-edge duplicates, set to LU-edge
+								if (vertex[vtx2.edge(e2)].parentLU > vtx.i)			// set child's parent-LU index if a closer parent is found
+									vertex[vtx2.edge(e2)].parentLU = vtx.i;
+							} else {
+								edge3[e3++] = vtx2.edge[e2];						// unique edge copy
+								edges++;
+							}
+						}
+					}
+				// copy over edges of vtx2, no delete-flagged check
+				} else {
+					for (int e2 = 0, l2 = vtx2.edges; e2 < l2; e2++) {
+						
+						int e5 = vtx.edgeIndexS(vtx2.edge[e2], order);				// check if we're adding a duplicate edge
+						if (e5 >= 0) {
+							edge3[e5] |= FrontalDAGVertex.LU_CHILD;					// found L-edge & U-edge duplicates, set to LU-edge
+							if (vertex[vtx2.edge(e2)].parentLU > vtx.i)				// set child's parent-LU index if a closer parent is found
+								vertex[vtx2.edge(e2)].parentLU = vtx.i;
+						} else {
+							edge3[e3++] = vtx2.edge[e2];							// unique edge copy
+							edges++;
+						}
+					}
+				}
+				vtx.edge = edge3;
+				vtx.edges = e3;
+			}
+		}
+	}
+
+
+
+//			if (distantFirst) {
+//				// iterate from start of row-wise nodes of L-part of M and of column-wise nodes of U-part of M
+//				int iH = 0, iV = 0;
+//				for (; iH < toPivotH && iV < toPivotV; e++) {
+//					if (bHsp[iH].c < bVsp[iV].r) {
+//						edge[e] = bHsp[iH++].c | FrontalDAGVertex.L_CHILD;		// L-child found in L-part
+//					} else if (bHsp[iH].c > bVsp[iV].r) {
+//						edge[e] = bVsp[iV++].r | FrontalDAGVertex.U_CHILD;		// U-child found in U-part
+//					} else {
+//						edge[e] = bVsp[iV++].r | FrontalDAGVertex.LU_CHILD;		// L-child and U-child found in L & U
+//						if (dagLU.vertex[edge[e]].parentLU > v)					// if this vertex is a closer LU-ancestor to found LU-child than previous
+//							dagLU.vertex[edge[e]].parentLU = v;					// ...reassign LU-child's LU-ancestor to this vertex
+//						iH++;
+//					}
+//				}
+//				// if elements are left in bHsp or bVsp, finish them off
+//				for (; iH < toPivotH; iH++, e++) edge[e] = bHsp[iH].c | FrontalDAGVertex.L_CHILD;
+//				for (; iV < toPivotV; iV++, e++) edge[e] = bVsp[iV].r | FrontalDAGVertex.U_CHILD;
+//				
+//			} else {
+//				int iH = toPivotH - 1, iV = toPivotV - 1;
+//				for (; iH >= 0 && iV >= 0; e++) {
+//					if (bHsp[iH].c < bVsp[iV].r) {
+//						edge[e] = bHsp[iH--].c | FrontalDAGVertex.L_CHILD;		// L-child found in L-part
+//					} else if (bHsp[iH].c > bVsp[iV].r) {
+//						edge[e] = bVsp[iV--].r | FrontalDAGVertex.U_CHILD;		// U-child found in U-part
+//					} else {
+//						edge[e] = bVsp[iV--].r | FrontalDAGVertex.LU_CHILD;		// L-child and U-child found in L & U
+//						iH--;
+//					}
+//				}
+//				// if elements are left in bHsp or bVsp, finish them off
+//				for (; iH >= 0; iH--, e++) edge[e] = bHsp[iH].c | FrontalDAGVertex.L_CHILD;
+//				for (; iV >= 0; iV--, e++) edge[e] = bVsp[iV].r | FrontalDAGVertex.U_CHILD;
+//			}
+//
+
+
+
+
+	// method adds child-looking edges to DAG, and is best called when the DAG construction has been finished,
+	// to keep down complexity and avoid mixing up operations meant for the parent-looking edges
+	public void createChildEdges() {
+		for (FrontalDAGVertex vtx : vertex) {									// for all vertices in DAG
+			if (vtx.cutedges > 0) {
+				for (int e = 0, eEnd = vtx.edges + vtx.cutedges; e < eEnd; e++)		// for all edge destinations from this vertex
+					if (vtx.edge[e] != -1) 											// if it's not a deleted edge
+						addEdge(vtx.edge(e), vtx.i, 0, false);						// add edge pointing from parent toward this vertex
+			} else {
+				for (int e = 0, eEnd = vtx.edges; e < eEnd; e++)					// for all edge destinations from this vertex
+					addEdge(vtx.edge(e), vtx.i, 0, false);							// add edge pointing from parent toward this vertex
+			}
+		}
+	}
+
+
+	// transitively reduces graph
+	public void transitiveReduction() {
+		for (int jV = 0; jV < verts; jV++) {
+			for (int iV = 0; iV < verts; iV++) {
+				if (iV != jV && edgeTo(iV, jV)) {
+					for (int kV = 0; kV < verts; kV++) {
+						if (jV != kV && edgeTo(jV, kV))
+							cutEdge(iV, kV);
+					}
+				}
+			}
+		}
+	}
+
+	// transitively reduces a graph describing an upper or lower triangle of a connectivity matrix
+	// it is assumed that opposing triangle is already zero and doesn't need reduction
+	public void transitiveReductionLU() {
+		for (int jV = 0; jV < verts; jV++) {
+			for (int iV = jV + 1; iV < verts; iV++) {
+				if (iV != jV && edgeTo(iV, jV)) {
+					for (int kV = iV + 1; kV < verts; kV++) {
+						if (jV != kV && edgeTo(jV, kV))
+							cutEdge(iV, kV);
+					}
+				}
+			}
+		}
+	}
+
+
+
+
             // alternative depermutation code for NSPMatrix.backsubstituteLU()
 
        		for (int i = 0, offVi = 0; i < N; i++) {
