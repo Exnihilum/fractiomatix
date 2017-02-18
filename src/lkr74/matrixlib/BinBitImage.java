@@ -125,7 +125,7 @@ public class BinBitImage {
 	public void set() { for (int i = 0; i < data.length; i++) data[i] = 0xffffffffffffffffL; }
 	
 	// OR-s this another bitImage into this bitImage
-	void or(BinBitImage bI) {
+	public void or(BinBitImage bI) {
 		int l = data.length > bI.data.length ? bI.data.length : data.length;
 		for (int i = 0; i < l; i++) this.data[i] |= bI.data[i];
 		
@@ -133,7 +133,7 @@ public class BinBitImage {
 	}
 
 	// AND-s this another bitImage into this bitImage
-	void and(BinBitImage bI) {
+	public void and(BinBitImage bI) {
 		int l = data.length > bI.data.length ? bI.data.length : data.length;
 		for (int i = 0; i < l; i++) this.data[i] &= bI.data[i];
 		
@@ -142,17 +142,23 @@ public class BinBitImage {
 
 	
 	// set a bit in bitImage
-	void setBit(int r, int c) {
+	public void setBit(int r, int c) {
 		// 8x8 single-long matrix case
-		if (bitSets == 0)	data[0] |= 0x1L<<(r * M.N + c);
+		if (bitSets == 0)	data[0] |= (0x1L << (r * M.N + c));
 		// large matrix basecase
 		else { int a = c%64; data[r * bitSets + c/64] |= (0x1L << a); }
 		
 		if (debugTrigger(3)) System.out.println(this.toString());
 	}
+	
+	public boolean bitIsSet(int r, int c) {
+		if (bitSets == 0) return (data[0] & (0x1L << (r * M.N + c))) != 0;		// 8x8 single-long matrix case
+		int a = c%64;
+		return (data[r * bitSets + c/64] & (0x1L << a)) != 0;
+	}
 
 	// clear a bit in bitImage
-	void clearBit(int r, int c) {
+	public void clearBit(int r, int c) {
 		// 8x8 single-long matrix case
 		if (bitSets == 0)	data[0] &= 0xFFFFFFFFFFFFFFFFL ^ (0x1L<<(r * M.N + c));
 		// large matrix basecase
@@ -162,7 +168,7 @@ public class BinBitImage {
 	}
 	
 	// transposes two bits across a square matrix
-	void transposeBit(int r, int c) {
+	public void transposeBit(int r, int c) {
 		// 8x8 single-long matrix case
 		if (bitSets == 0) {
 			long rcmask = 0x1L<<(r * M.N + c), crmask = 0x1L<<(c * M.N + r);
@@ -189,7 +195,7 @@ public class BinBitImage {
 		if (debugTrigger(3)) System.out.println(this.toString());
 	}
 	
-	void swapRows(int r1, int r2) {
+	public void swapRows(int r1, int r2) {
 		// swap bitImage rows, special case for 8x8 matrices and less
 		if (bitSets == 0) {
 			int r1N = r1 * M.N, r2N = r2 * M.N;

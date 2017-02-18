@@ -13,7 +13,7 @@ public class FrontalDAGVertex implements Cloneable {
 	public int edges=0;					// edges = edge count
 	int cutedges=0;						// cutedges are the number of previously cut edges, they are appended from end of array
 	int checked=0;						// checked is an index telling how many edges have been checked by a DAG-walking algorithm
-	int parentLU = Integer.MAX_VALUE;	// fast-access-stores this vertex's neares LU parent
+	int parentLU = Integer.MAX_VALUE;	// fast-access-stores this vertex's nearest LU parent
 	int[] edge = null, edgeP = null;	// edge = parent->child edges, edgeP = child->parent edges
 	public FrontalMatrix fm = null;
 	// index to chief pivot of supernode, -1 if not a supernode, superChild is the last pivot of supernode and is referred to by the parents
@@ -88,7 +88,7 @@ public class FrontalDAGVertex implements Cloneable {
 	}
 	
 	
-	// method test if edge array needs expanding and is called with the requested number of additional elements
+	// method tests if edge array needs expanding and is called with the requested number of additional elements
 	boolean updateEdgeArray(int i) {
 		
 		int totaledges = edges + i, alength = edge.length;
@@ -157,7 +157,7 @@ public class FrontalDAGVertex implements Cloneable {
 
 	@Override
 	public String toString() {
-		StringBuffer sb = new StringBuffer();
+		StringBuilder sb = new StringBuilder();
 		
 		sb.append(	i + 
 					" pLU(" + (parentLU == Integer.MAX_VALUE ? "-" : parentLU) + 

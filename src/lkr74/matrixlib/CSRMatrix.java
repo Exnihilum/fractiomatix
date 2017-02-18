@@ -649,7 +649,7 @@ public class CSRMatrix extends Matrix {
 		int maxA = A.length > MAX_PRINTEXTENT ? MAX_PRINTEXTENT : A.length;
 		int maxIA = IA.length > MAX_PRINTEXTENT ? MAX_PRINTEXTENT : IA.length;
 		
-		StringBuffer sb = new StringBuffer();
+		StringBuilder sb = new StringBuilder();
 		sb.append(super.toString());						// get matrix data from superclass method
 		sb.append("CSR data:\nIA:  [");
 		for (int i = 1; i <= maxIA; i++) sb.append(IA[i-1] + (i==maxIA?"":", ") + (i%30==0?"\n      ":""));

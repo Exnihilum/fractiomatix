@@ -43,11 +43,11 @@ public class BipartiteDM {
 		this.verts = vertsR + vertsC + 1;
 		vertex = new BipartiteVertex[verts];				// allocate left (rows) + right (columns) side of bipartite, plus a supersink vertex
 		for (int i = 0; i < verts; i++) {
-			if (i == vertsR) vertex[i] = new BipartiteVertex(i, i | BipartiteVertex.SUPERSINK);
-			else vertex[i] = new BipartiteVertex(i, i <= vertsR ? i : (i - vertsR - 1) | BipartiteVertex.C_VERTEX);
+			if (i == vertsR)	vertex[i] = new BipartiteVertex(i, i | BipartiteVertex.SUPERSINK);		// supersink case
+			else				vertex[i] = new BipartiteVertex(i, i <= vertsR ? i : (i - vertsR - 1) | BipartiteVertex.C_VERTEX);
 		}
 		pairing = new int[verts];
-		visitBits = new long[bitSets = (verts >> 6) + 1];
+		visitBits = new long[bitSets = (verts >> 6) + 1];	// visit-flag bits are not used by Copcroft-Karp which uses another tracking mechanism
 
 		int partC = vertsR + 1;
 		
@@ -102,7 +102,7 @@ public class BipartiteDM {
 	
 	
 	// method finds the maximum matching for a supplied bipartite graph over a matrix, utilising Hopcroft-Karp algorithm
-	public int maximumMatchingHopcroftKarp() {
+	public int maximumMatchingHK() {
 
 		int maxAspect = vertsR > vertsC ? vertsR : vertsC;
 		int[] vStack = new int[maxAspect * 2];
@@ -111,8 +111,8 @@ public class BipartiteDM {
 		for (int i = vertsR + 1; i < verts; i++) pairing[i] = vertsR; 	// set all vertexes in pairings C=R to supersink vertex
 
 		// queue will keep vertex indexes for breadth first search and is allocated for worst case scenario, which is
-		// that every vertex will point to adjacent vertexes of a nnz FULL density row/column, but we also need cheap allocation
-		// with a buffer of buffers one has possibility to dynamically allocate consecutive buffers to keep all those adjacencies
+		// that every vertex will point to adjacent vertexes of a nz FULL density row/column, but we also need cheap allocation
+		// so with a buffer of buffers one has possibility to dynamically allocate consecutive buffers to keep ALL adjacencies
 		int[][] queue = new int[maxAspect][];
 		queue[0] = new int[vertsR];					// prepare for worst case element count (=rows of the matrix) of first layer of BFS
 		int[] queueCount = new int[maxAspect];
@@ -123,7 +123,7 @@ public class BipartiteDM {
 				if (pairing[r] == -1 && depthFirstSearchHK(r, vStack, true)) matching++;
 		}
 		
-		// erase the supersink edges, we don't need them anymore (removes some unnecessary computation)
+		// erase the supersink edges, we don't need them anymore (eliminates unnecessary computation)
 		for (int i = verts - 1; i > vertsR; i--) vertex[i].edges--;
 		
 		matched = true;													// allow toString() of the matched chains		
@@ -136,7 +136,7 @@ public class BipartiteDM {
 	
 	
 	
-	// method partition into layers the bipartite graph, starting from the remaining free vertices at current max.matching iteration
+	// method partitions into layers the bipartite graph, starting from the remaining free vertices at current max.matching iteration
 	// the traversed edges must alternate between matched & unmatched (augmentation path)
 	// the BFS search terminates at first layer where one or more free C-vertices are reached, these vertices are placed into a set
 	// this set is defined by setting equal distances at these terminal C-vertices
@@ -145,27 +145,29 @@ public class BipartiteDM {
 		int layerBFS = 0, qCnt = 0;
 		BipartiteVertex superSink = vertex[vertsR];
 		
-		for (int r = 0; r < vertsR; r++)						// collect the yet free vertexes (that are not in a matching)
-			if (pairing[r] == -1) {								// is this a free vertex?
+		for (int r = 0; r < vertsR; r++)									// collect the yet free vertexes (that are not in a matching)
+			if (pairing[r] == -1) {											// is this a free vertex?
 				vertex[r].distance = 0;
-				queue[layerBFS][qCnt++] = r;					// enqueue it in current layer
+				queue[layerBFS][qCnt++] = r;								// enqueue it in current layer
 			} else vertex[r].distance = Integer.MAX_VALUE;
-		superSink.distance = Integer.MAX_VALUE;					// set supersink vertex to "infinity"
+		superSink.distance = Integer.MAX_VALUE;								// set supersink vertex to "infinity"
 		queueCount[layerBFS] = qCnt - 1;
 		
-		while (layerBFS >= 0) {									// while layers of element queue of BFS are not exhausted
+		while (layerBFS >= 0) {												// while layers of element queue of BFS are not exhausted
 
-			if (--queueCount[layerBFS] < 0) { layerBFS--; continue; }		// if last element in layer dequeued, retract to previous layer
+			if (--queueCount[layerBFS] < 0) { layerBFS--; continue; }		// if last element in layer was dequeued, retract to previous layer
 
-			int r = queue[layerBFS][queueCount[layerBFS]];		// dequeue an element
+			int r = queue[layerBFS][queueCount[layerBFS]];					// dequeue an element
 			if (vertex[r].distance < superSink.distance) {
+				
 				BipartiteVertex vtx = vertex[r];
 				int eEnd = vtx.edges;
 				// allocate next BFS layer for worst case = no. of edges from previous layer's vertex
 				if (queue[++layerBFS] == null || queue[layerBFS].length < eEnd)
 					queue[layerBFS] = new int[eEnd];
-				queueCount[layerBFS] = 0;						// we start with zero elements in new layer
-				for (int e = 0; e < eEnd; e++) {				// process next layer in BFS shortest augm.path search
+				queueCount[layerBFS] = 0;									// we start with zero elements in new layer
+				
+				for (int e = 0; e < eEnd; e++) {							// process next layer in BFS shortest augm.path search
 					int cPair = pairing[vtx.edge(e)];
 					if (vertex[cPair].distance == Integer.MAX_VALUE) {
 						vertex[cPair].distance = vtx.distance + 1;
@@ -183,7 +185,7 @@ public class BipartiteDM {
 	
 	
 	// method does depth first search for either the supersink or for the currently shortest augmenting path
-	// method is used by Hopcraft-Karp algorithm
+	// method is used by Hopcroft-Karp algorithm
 	public boolean depthFirstSearchHK(int v1, int[] vStack, boolean clearVisits) {
 		
 		// allocate for maximal stacking length, potentially tracing through every vertex top-down
@@ -253,7 +255,9 @@ public class BipartiteDM {
 		int partC = vertsR + 1, iU = 0, iEndU = 0;								// iU & iEndU define boundaries for currently processed unmatched vertexes
 		
 		for (int c = partC, cEnd = c + vertsC; c < cEnd; c++)					// all unmatched C-vertexes -> U
-			if (pairing[c] == vertsR) { U[iEndU++] = c - partC; flagC[c - partC] = true; }
+			if (pairing[c] == vertsR) {
+				U[iEndU++] = c - partC;
+				flagC[c - partC] = true; }
 		
 		// note: Hr = rows reachable via altern.path from some unmatched column
 		// note: Hc = columns reachable by altern.path from some unmatched column
@@ -280,7 +284,9 @@ public class BipartiteDM {
 				
 		iU = 0; iEndU = 0;
 		for (int r = 0; r < vertsR; r++)										// all unmatched R-vertexes -> U
-			if (pairing[r] == -1) { U[iEndU++] = r; flagR[r] = true; }
+			if (pairing[r] == -1) {
+				U[iEndU++] = r;
+				flagR[r] = true; }
 		
 		// note: Vr = rows reachable via altern.path from some unmatched row
 		// note: Vc = columns reachable by altern.path from some unmatched row

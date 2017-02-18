@@ -16,12 +16,12 @@ public class FrontalMatrix {
 	// nFailed is number of failed pivot row/columns in top left position, nPivots is number of pivot row/columns
 	// m/nContrib is MxN rows/columns of contribution part, m/nExtra is MxN extra rows/columns at bottom-left:
 	//
-	// ffffffffff	<- failed pivots row/cols
-	// fPPPPPPPPP	<- pivoting row/cols
+	// ffffffffff	<- f:ailed pivots row/cols
+	// fPPPPPPPPP	<- P:ivoting row/cols
 	// fPPPPPPPPP
-	// fPPCCCCCee   <- contribution matrix
+	// fPPCCCCCee   <- C:ontribution matrix
 	// fPPCCCCCee
-	// fPPeeeeeee	<- extra col/rows
+	// fPPeeeeeee	<- e:xtra col/rows
 	// no. of failed pivot row/cols, no. of pivot row/cols, size of contrib.matrix
 	int nFailed = 0, nPivots = 0, nContribR = 0, nContribC = 0;
 	// no. of extra rows, no. of extra columns, no. of extra pivots
@@ -30,13 +30,31 @@ public class FrontalMatrix {
 	int[][] extraR = null, extraC = null;						// holds sorted list of extra appended rows & columns & pivot row/columns from children
 	int[] failedP = null;										// holds sorted list of failed pivot indexes
 	double[] data;												// data array, linear layout
-	byte[] mixCode;												// the optimisation of mixcodes allows fast sparse joining of child & parent values
+	byte[] mixCode = null;										// the optimisation of mixcodes allows fast sparse joining of child & parent values
 	int iTB;													// offset to temp.row/column assemblies
 	int childFlag = 0;											// child type flag for add() method
 	
 	// creates a skeleton frontal matrix
 	public FrontalMatrix() { super(); }
 
+	@Override
+	public FrontalMatrix clone() {
+		try {
+			FrontalMatrix F = (FrontalMatrix)super.clone();		// will first call superclass clone() method
+			F.idxCR = idxCR == null ? null : idxCR.clone();
+			// the following three are really only transitive index holders for parent nodes during symbolic factorising
+//			F.extraR = extraR == null ? null : extraR.clone();
+//			F.extraC = extraC == null ? null : extraC.clone();
+//			F.failedP = failedP == null ? null : failedP.clone();
+			F.data = data == null ? null : data.clone();
+			return F;
+		} catch (CloneNotSupportedException e) {
+			e.printStackTrace();
+		}
+		return null;
+	}
+	
+	
 	// creates a skeleton frontal matrix with parameter setting and allocated datafield
 	public FrontalMatrix(int p, int r, int c, int nContribR, int nContribC, int nExtraR, int nExtraC) {
 		pivot = p;
@@ -54,6 +72,8 @@ public class FrontalMatrix {
 		nFailed = 0;
 	}
 
+	
+	
 	// creates a FrontalMatrix for a supplied array of coefficients, so the frontal matrix can be used directly
 	// as a full pivoting factoriser with with decomposeLU() method
 	public FrontalMatrix(int r, int c, double[] dataIn) {
@@ -76,7 +96,10 @@ public class FrontalMatrix {
 		if (dataIn != null) for (int i = 0, iEnd = r * c; i < iEnd; i++) data[i] = dataIn[i];
 	}
 
+	
+	
 	// creates a frontal matrix with pivot row & column interspersed with expected contribution indexes
+	// note: gContribC/gContribR,gExtraC are arrays with a special structure, generated in FrontalDAG class
 	public FrontalMatrix(NSPMatrix A, int pivot, int nExtraP, int[][] gContribC, int[][] gContribR, int[][] gExtraC, int[][] gExtraR) {
 		
 		NspNode[] bHsp = A.Hsp[pivot].array, bVsp = A.Vsp[pivot].array;
@@ -94,7 +117,7 @@ public class FrontalMatrix {
 		nContribC = gContribC[2][0] - 1;
 		r = nExtraP + 1 + nContribR + nExtraR;
 		c = nExtraP + 1 + nContribC + nExtraC;
-		if (EXTRA_FM_SPACE) { rTot = r + r/4; cTot = c + c/4; }				// allocate with space for at least 1.25x extra space
+		if (EXTRA_FM_SPACE) { rTot = r + r/4; cTot = c + c/4; }				// allocate with at least 1.25x extra space (rTot=r*1.25, cTot=c*1.25)
 		else { rTot = r; cTot = c; }
 		data = new double[rTot * cTot + (rTot > cTot ? rTot : cTot)*2];
 		idxCR = new int[rTot + cTot + 1];
@@ -119,7 +142,7 @@ public class FrontalMatrix {
 			idxCR[jIdx++] = extras[jExC];
 
 		int i = offV, iO = FrontalDAG.HELPARRAY_SIZE + 1,  iIdx = cTot + nExtraP;
-		idxCR[iIdx++] = pivot;
+		idxCR[iIdx++] = pivot;												//
 		int[] contribR = gContribR[0];
 		offset = gContribR[2];
 		//while (contribR[i2] < p) i2++;									// skip past contrib.column indexes lower or equal than current pivot
@@ -178,8 +201,9 @@ public class FrontalMatrix {
 	// method combinatively checks for pattern match between pivot1 and pivot2 and assembles a supernode frontal matrix
 	// method demands that pivot1 < pivot2, if the caller is continuing assembly of a previous matrix, then it's supplied in "fm"
 	// pivot1 must be the supernode pivot of the supplied fm
+	// TODO: method currently tries matching both horisontally & vertically (which is less prone to make large supernodes), make switch to activate only horisontal matching
 	// zAllowed is the base number of zeroes allowed for fill-in to make a looser criterion for a supernode match
-	// zAllowedF is a factor of "zero fill-ins allowed" per element (for large supernodes)
+	// zAllowedF is a factor of "zero fill-ins allowed"/element (for large supernodes)
 	// after initial generation, all consecutive member candidates must fit element-count-wise into the supernode pivot's row & column
 	public static FrontalMatrix assembleSupernode(NSPMatrix M, int pivot1, int pivot2, int zAllowed, float zAllowedF, FrontalMatrix fm) {
 		
@@ -348,7 +372,7 @@ public class FrontalMatrix {
 	
 	
 	// method takes a list of expected contribution row & column indexes and index offsets and creates gaps for the
-	// contribution indexes that are not present in the frontal matrix
+	// contribution indexes that are not present in the absorbing frontal matrix
 	public void extend(int[][] gExtraP, int[][] gContribC, int[][] gContribR, int[][] gExtraC, int[][] gExtraR) {
 
 		// get matrix's new extended size
@@ -390,7 +414,7 @@ public class FrontalMatrix {
 			
 			// configure the new idxCR fields: failed pivots+extra pivots, pivots, contributions, extras
 			
-			// adding unsorted pivot indexes that possibly have disassociated row/column index because of intrapivoting
+			// adding unsorted pivot indexes that possibly have disassociated row/column index because of pivoting across frontal matrices
 			int ix2 = 0, ix2R = cTot;
 			for (int ix1 = 0, ix2End = nExtraP3; ix2 < ix2End; ix1 += 2, ix2++, ix2R++) {
 				idxCR2[ix2R] = gExtraP[0][ix1++];			// this is the possibly disassociated row index
@@ -460,9 +484,9 @@ public class FrontalMatrix {
 						jP--;
 					}					
 				}
-				
-			
+							
 			// configure the new idxCR fields: failed pivots+extra pivots, pivots, contributions, extras
+			
 			// copy over original pivot indexes into extended idxCR
 			ix2 = cTot2 + nExtraP3;
 			for (int ix1 = cTot + nExtraP, ix1End = ix1 + nPivots; ix1 < ix1End; ix1++, ix2++)
@@ -914,7 +938,8 @@ public class FrontalMatrix {
 					failedP[i3++] = i2;									// store offset to failed index
 				}
 				
-				if (i == 0) firstPivotFailure();						// if failure was on already the first pivot, flag this
+				// this case can't happen if everything was correctly initialised
+				//if (i == 0) firstPivotFailure();						// if failure was on already the first pivot, flag this
 				return;													// all consecutive candidates failed, we're done
 			}
 
@@ -936,7 +961,7 @@ public class FrontalMatrix {
 	
 	// method finds a better candidate for pivot p in frontal matrix, swapping in the row & column of the candidate, otherwise failing
 	// method also readjusts the indexation of global indexes in idxRC
-	// DEBUG: compareWithColumn will compare current pivot with it's ENTIRE column, and not just within the pivot block
+	// DEBUG: compareWithColumn will flag for comparing current pivot with it's ENTIRE column, and not just within the pivot block
 	public boolean intraPivoting(int p, boolean compareWithColumn) {
 		
 		// iterate over frontal matrix pivot block in search of a better pivot candidate
@@ -1081,7 +1106,7 @@ public class FrontalMatrix {
 
 	// method is optimising the sparse mixing of child & parent row data by accepting an array of stepcodes from analysing one row
 	// and using these codes to execute one of a set of 3-step mixing access patterns, thus avoiding indirect comparisons between
-	// child's & parent's indexation, which leads to a speed-up of execution
+	// child's & parent's indexation, which leads to a speed-up of execution (affirmed by microbanchmarking)
 	// method expects that every row has same access pattern as the predicted analysis given in the array of stepcodes
 	// codes: 0 = increment child, 1 = increment father, 2 = copy data from child to father	
 	// the mixCode is calculated by: code1<<4 + code2<<2 + code3

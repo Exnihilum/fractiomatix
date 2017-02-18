@@ -1,14 +1,22 @@
 package lkr74.matrixlib;
 
+import java.io.BufferedReader;
+import java.io.FileNotFoundException;
+import java.io.FileReader;
+import java.io.IOException;
 import java.util.Arrays;
 
 import org.jfree.data.xy.XYDataset;
 import org.jfree.data.xy.XYSeries;
 import org.jfree.data.xy.XYSeriesCollection;
 import org.jfree.ui.RefineryUtilities;
-import lkr74.mathgenerics.MiscMath;
-import lkr74.mathgenerics.MiscMath.RandFill;
+
+import lkr74.fem1.FEM1;
+import lkr74.fem1.FEM1Element;
+import lkr74.fem1.FEM1Octree;
+import lkr74.mathgenerics.RandFill;
 import lkr74.mathgenerics.XYLineChart_AWT;
+import lkr74.sizeof.SizeOf;
 
 public class MatrixApp {
 	
@@ -56,7 +64,7 @@ public class MatrixApp {
 			Matrix M4;
 			CSRMatrix M5;
 	
-			RandFill rfill = new MiscMath().new RandFill(mSize);
+			RandFill rfill = new RandFill(mSize);
 
 			// fill approx. 1/8 of matrix fields with random numbers
 			for (int j = 0; j < mSize/8; j++) {
@@ -214,7 +222,7 @@ public class MatrixApp {
 	
 	// test NspNode finder with three search algorithms (iterative, linear & binary) at different heuristic levels
 	// seems like the linear finder is generally faster than binary search, and searches faster than iterative after 50 elements	
-	public static void testFindHVSpNode(int arraySize, int iters) {
+	public static int[] testFindHVSpNode(int arraySize, int iters, int filterIter, boolean verbose) {
 		
 		long tstart, tend;
 		double[][] testRuns = new double[3][arraySize];
@@ -233,74 +241,177 @@ public class MatrixApp {
 			int found = NSPMatrix.findHVspNode(nodes, 0, arraySize-1, -1, csought);
 			found += csought; csought += found;
 		}
-
-		System.out.println("NSPMatrix.findHVspNode() search test for increasing seeking lengths in a randomly ascending array");
+		
+		if (verbose) System.out.println("NSPMatrix.findHVspNode() search test for increasing seeking lengths in a randomly ascending array");
+		//RandFill rFill = new RandFill(sizeStep);
+		int[] randSeek = new int[arraySize];
+		
 		for (int sLen = 1; sLen < arraySize; sLen++) {
 			
 			// rerandomise node array on every test run
-			offs = (int)(Math.random()*arraySize) / 4;			// add random amount of zeroes at start of dataset
-			for (int i = 0, rstep = offs; i < sLen; i++, rstep += 1 + (int)(Math.random() * sizeStep)) {
+			offs = (int)(Math.random()*arraySize);								// add random amount of zeroes at start of dataset
+			for (int i = 0, rstep = offs; i < sLen; i++) {
 			//for (int i = 0, rstep = offs; i < sLen; i++, rstep++)
-				nodes[i].c = rstep;
+				randSeek[i] = nodes[i].c = rstep;								// memorise what column values we randomly generated
 				cMax = rstep;
+				rstep += 1 + (int)(Math.random() * sizeStep);
 			}
-			cMax += (int)(Math.random()*arraySize) / 4;			// add random amount of zeroes at end of dataset, cMax = "last c in dataset"
+			cMax += (int)(Math.random()*arraySize);								// add random amount of zeroes at end of dataset, cMax = "last c in dataset"
+			for (int i = 0; i < sLen; i++) {									// switch around sought column values randomly
+				int r = (int)(Math.random() * sLen); int tmp = randSeek[i]; randSeek[i] = randSeek[r]; randSeek[r] = tmp; }
 			
-			NSPMatrix.nodeSearch_iterateLim = arraySize + 1; NSPMatrix.nodeSearch_linearLim = arraySize + 1;
+			//NSPMatrix.nodeSearch_iterateLim = arraySize + 1; NSPMatrix.nodeSearch_linearLim = arraySize + 1;
+			NSPMatrix.nodeSearch_iterateLim = Integer.MAX_VALUE; NSPMatrix.nodeSearch_linearLim = Integer.MAX_VALUE;
+			System.gc();
 			tstart = System.nanoTime();
-			for (int k = 0; k < iters; k++) {
+			for (int k = 0, s = 0; k < iters; k++) {
 				//int csought = (int)(Math.random()*(nodes[sLen - 1].c - nodes[0].c));
-				int csought = (int)(Math.random() * cMax);
-				int found = NSPMatrix.findHVspNode(nodes, 0, sLen - 1, -1, csought);
+				//int csought = (int)(Math.random() * cMax);
+				int found = NSPMatrix.findHVspNode(nodes, 0, sLen - 1, -1, randSeek[s++]);
+				if (s >= sLen) s = 0;
 				// show the finding, or the return of what was the nearest element
 				//int cfound = (found < 0 ? nodes[-found-1].c : nodes[found].c);
 				//System.out.println("sought: " + csought + (found < 0 ? ", nearest: " : ", found: ") + cfound);
-				found += csought; csought += found;				// fake variable usage to avoid compiler optimisations
+				found += found;													// fake variable usage to avoid compiler optimisations
 			}
 			tend = System.nanoTime();
 			testRuns[0][sLen-1] = (double)(tend - tstart)/iters;
-			if (sLen % sizeStep == 0)
-				System.out.printf("%d elems, it: %5.1f ", sLen, (double)(tend - tstart)/iters);
+			if (verbose && (sLen % sizeStep == 0 || sLen < sizeStep)) System.out.printf("%d elems, iter: %5.1f ", sLen, (double)(tend - tstart)/iters);
 			
 			NSPMatrix.nodeSearch_iterateLim = 0;
+			System.gc();
 			tstart = System.nanoTime();
-			for (int k = 0; k < iters; k++) {
+			for (int k = 0, s = 0; k < iters; k++) {
 				//int csought = (int)(Math.random()*(nodes[sLen - 1].c - nodes[0].c));
-				int csought = (int)(Math.random() * cMax);
-				int found = NSPMatrix.findHVspNode(nodes, 0, sLen - 1, -1, csought);
-				found += csought; csought += found;				// fake variable usage to avoid compiler optimisations
+				//int csought = (int)(Math.random() * cMax);
+				int found = NSPMatrix.findHVspNode(nodes, 0, sLen - 1, -1, randSeek[s++]);
+				if (s >= sLen) s = 0;
+				found += found;													// fake variable usage to avoid compiler optimisations
 			}
 			tend = System.nanoTime();
 			testRuns[1][sLen-1] = (double)(tend - tstart)/iters;
-			if (sLen % sizeStep == 0)
-				System.out.printf("li: %5.1f ", (double)(tend - tstart)/iters);
+			if (verbose && (sLen % sizeStep == 0 || sLen < sizeStep)) System.out.printf("linr: %5.1f ", (double)(tend - tstart)/iters);
 
 			NSPMatrix.nodeSearch_linearLim = 0;
+			System.gc();
 			tstart = System.nanoTime();
-			for (int k = 0; k < iters; k++) {
+			for (int k = 0, s = 0; k < iters; k++) {
 				//int csought = (int)(Math.random()*(nodes[sLen - 1].c - nodes[0].c));
-				int csought = (int)(Math.random() * cMax);
-				int found = NSPMatrix.findHVspNode(nodes, 0, sLen - 1, -1, csought);
-				found += csought; csought += found;				// fake variable usage to avoid compiler optimisations
+				//int csought = (int)(Math.random() * cMax);
+				int found = NSPMatrix.findHVspNode(nodes, 0, sLen - 1, -1, randSeek[s++]);
+				if (s >= sLen) s = 0;
+				found += found;													// fake variable usage to avoid compiler optimisations
 			}
 			tend = System.nanoTime();
 			testRuns[2][sLen-1] = (double)(tend - tstart)/iters;
-			if (sLen % sizeStep == 0)
-				System.out.printf("bi: %5.1f\n", (double)(tend - tstart)/iters);
+			if (verbose && (sLen % sizeStep == 0 || sLen < sizeStep)) System.out.printf("bina: %5.1f\n", (double)(tend - tstart)/iters);
 		}
 		NSPMatrix.nodeSearch_iterateLim = itrLim; NSPMatrix.nodeSearch_linearLim = linLim;
 		
-		// chart for comparison timing runs
-		XYDataset bestFitChartSet;
-		String[] testNames = {"","","","","iterative search","linear search","binary search"};
-		int[] testCases = {0, 1, 2};
-		bestFitChartSet = createStatisticSet(testRuns, testNames, testCases);
-		XYLineChart_AWT bestFitChart = new XYLineChart_AWT(
-				"NSPMatrix.findHVspNode() test", "elements searched", "nanosecs/search op.", bestFitChartSet, 1024, 768);
-		bestFitChart.pack();          
-		RefineryUtilities.centerFrameOnScreen(bestFitChart);   
-		bestFitChart.setVisible( true ); 
 
+		for (int f = 0; f < filterIter; f++) {									// do simple multipass filtering of the data curves
+			double[][] testRuns2 = testRuns.clone();
+			for (int i = 0; i < arraySize; i++) {
+				testRuns2[0][i] = (testRuns[0][i-1<0?0:i-1] + testRuns[0][i] + testRuns[0][i+1>=arraySize?arraySize-1:i+1]) * 0.3333;
+				testRuns2[1][i] = (testRuns[1][i-1<0?0:i-1] + testRuns[1][i] + testRuns[1][i+1>=arraySize?arraySize-1:i+1]) * 0.3333;
+				testRuns2[2][i] = (testRuns[2][i-1<0?0:i-1] + testRuns[2][i] + testRuns[2][i+1>=arraySize?arraySize-1:i+1]) * 0.3333;
+			}
+			testRuns = testRuns2;
+		}
+		
+		// find out which order and at what element counts to implement the methods (demands proper amount of data filtering)
+		int[] prioChoice = {0,Integer.MAX_VALUE,1,Integer.MAX_VALUE,2};
+		if (filterIter < 10) { int[] prioChoice2 = {0,50,1,Integer.MAX_VALUE,2}; prioChoice = prioChoice2;		// the default assignment
+		} else  {
+			if (testRuns[0][0] > testRuns[1][0]) { int tmp = prioChoice[0]; prioChoice[0] = prioChoice[2]; prioChoice[2] = tmp; }	// sort priorities
+			if (testRuns[1][0] > testRuns[2][0]) { int tmp = prioChoice[2]; prioChoice[2] = prioChoice[4]; prioChoice[4] = tmp; }
+			if (testRuns[0][0] > testRuns[1][0]) { int tmp = prioChoice[0]; prioChoice[0] = prioChoice[2]; prioChoice[2] = tmp; }
+			int i = 0;															// find breakeven element counts for priorities
+			for (; i < arraySize; i++) { if (testRuns[prioChoice[0]][i] > testRuns[prioChoice[2]][i]) { prioChoice[1] = i - 1; break; } }
+			for (; i < arraySize; i++) { if (testRuns[prioChoice[2]][i] > testRuns[prioChoice[4]][i]) { prioChoice[3] = i - 1; break; } }
+		}
+
+		
+		// chart for comparison timing runs
+		if (verbose) {
+			XYDataset bestFitChartSet;
+			String[] testNames = {"","","","","iterative search","linear search","binary search"};
+			int[] testCases = {0, 1, 2};
+			bestFitChartSet = createStatisticSet(testRuns, testNames, testCases);
+			XYLineChart_AWT bestFitChart = new XYLineChart_AWT(
+					"NSPMatrix.findHVspNode() test", "elements searched", "nanosecs/search op.", bestFitChartSet, 1024, 768);
+			bestFitChart.pack();          
+			RefineryUtilities.centerFrameOnScreen(bestFitChart);   
+			bestFitChart.setVisible( true );
+		}
+		return prioChoice;
+	}
+	
+	
+	// test what size of maximal node clustering per octant leaf gives fastest search of two closest nodes, method returns optimal cluster size for the data
+	// inputs: iterate creating and node searching octrees from clusterSize1 to clusterSize2
+	// filterIter tells how many filtering rounds to execute on data curve
+	public static int testOctreeBuildClosestNodes(String dataFile, int clusterSize1, int clusterSize2, int filterIter, boolean verbose) {
+		
+		if (clusterSize1 < 2) clusterSize1 = 2;
+		if (clusterSize2 < clusterSize1) clusterSize2 = clusterSize1 + 1;
+		
+		double[][] testRuns = new double[3][clusterSize2 - clusterSize1];
+		FEM1 fem = null;
+		try {
+			BufferedReader br = new BufferedReader(new FileReader(dataFile));
+			fem = new FEM1(br, FEM1.MESH_PSC);
+			br.close();
+		} catch (FileNotFoundException e) { e.printStackTrace();
+		} catch (IOException e) { 			e.printStackTrace(); }
+			
+		// test what size of maximal node clustering per octant leaf gives fastest search of two closest nodes
+		long tStart, tEnd, tEnd2;
+		for (int i = clusterSize1, warmup = 10; i < clusterSize2;) {
+			System.gc();
+			tStart = System.nanoTime();
+			tEnd = 0; tEnd2 = 0;
+			FEM1Octree octree = new FEM1Octree(fem);
+			octree.buildOctree(fem, i, 0);
+			tEnd = System.nanoTime() - tStart;
+			int[] closest = new int[fem.nodes * 2];					// worst case allocation
+			double[] distance = new double[fem.nodes];				// worst case allocation
+			int nPairs = fem.closestNodePairs(octree, closest, distance, null);
+			tEnd2 = System.nanoTime() - tStart;
+			if (warmup-- > 0) continue; else {
+				testRuns[0][i - clusterSize1] = tEnd *.001;
+				testRuns[1][i - clusterSize1] = tEnd2 *.001;
+				testRuns[2][i - clusterSize1] = (tEnd + tEnd2) *.001;
+				if (verbose)	System.out.printf("Max node cluster size " + i++ + " took %.1f ns, closest pairs took %.1f ns, sum: %.1f\n",
+													(double)tEnd, (double)tEnd2, (double)(tEnd+tEnd2));
+			}
+		}
+		int clSizeRange = clusterSize2 - clusterSize1 - 1;
+		for (int f = 0; f < filterIter; f++) {
+			double[][] testRuns2 = testRuns.clone();
+			for (int i = 1; i < clSizeRange; i++) {
+				//testRuns2[0][i] = (testRuns[0][i-1] + testRuns[0][i] + testRuns[0][i+1]) * 0.3333;
+				//testRuns2[1][i] = (testRuns[1][i-1] + testRuns[1][i] + testRuns[1][i+1]) * 0.3333;
+				testRuns2[2][i] = (testRuns[2][i-1] + testRuns[2][i] + testRuns[2][i+1]) * 0.3333;
+			}
+			testRuns = testRuns2;
+		}
+		double lowest = testRuns[2][0];
+		int optimalSize = clusterSize1;
+		for (int i = 1; i <= clSizeRange; i++) if (testRuns[2][i] < lowest) { lowest = testRuns[2][i]; optimalSize = i + clusterSize1; }
+		if (verbose) {
+			System.out.println("Optimal cluster size: " + optimalSize);
+			XYDataset bestFitChartSet;
+			String[] testNames = {"","","","","octree build","closest node search","build + search"};
+			int[] testCases = {0, 1, 2};
+			bestFitChartSet = createStatisticSet(testRuns, testNames, testCases);
+			XYLineChart_AWT bestFitChart = new XYLineChart_AWT(
+					"Octree varying cluster size build and closest node search test", "exec. time", "msecs/op.", bestFitChartSet, 1024, 768);
+			bestFitChart.pack();          
+			RefineryUtilities.centerFrameOnScreen(bestFitChart);   
+			bestFitChart.setVisible( true ); 
+		}	
+		return optimalSize;
 	}
 	
 	
@@ -424,12 +535,101 @@ public class MatrixApp {
 		
 		// test element search heuristics of triple-method element finder testFindHVSpNode()
 		// this test will tell what element limits to set for each type of search approach: iterative/linear/binary search
-//		testFindHVSpNode(500, 200000);
+//		testFindHVSpNode(300, 150000, 10, true);
 //		if(1==1) return;
 
+//		double[] m3x3 = Matrix.invert3x3(d5);
+//		double[] w1D = {.55555555,.88888888,.55555555 }, w = new double[9*3];
+//		for (int j = 0; j < 3; j++)
+//			for (int i = 0; i < 3; i++) w[3*j+i] = w1D[i]*w1D[j];
 		
+		double[] iP = FEM1.integrationPoints(8, 8);
+		iP = FEM1.integrationPoints(8, 27);					// test integration point coordinates calculators
+		iP = FEM1.integrationWeights(8, 27);
+		double[] matProps = {.1, 1};
+		double[] tensor = FEM1.matStiffness_1D(matProps);
 		
-		boolean testAllSolvers = true;
+		// test what size of maximal node clustering per octant leaf gives fastest search of two closest nodes			
+//		int optimalCluster = testOctreeBuildClosestNodes("data/landscape.obj", 2, 1000, 20, true);
+//		if(1==1) return;
+		
+		BufferedReader br = null;
+		FEM1 fem = null;
+		
+		// test loading a single object mesh from OBJ file with smoothing groups and normals
+		try {
+			br = new BufferedReader(new FileReader("data/roundedplate.obj"));
+			fem = new FEM1(br, FEM1.MESH_PSC);
+			br.close();
+		} catch (FileNotFoundException e) {
+			e.printStackTrace();
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+		
+		FEM1Octree octree = new FEM1Octree(fem);
+		if (octree.nodes > 20) octree.buildOctree(fem, 60, 10);		// max 60 nodes per octant leaf found as optimal value
+		//fem.closestNodesToOBJ(octree);
+		
+//		FEM1Octree[] octantsClosest = new FEM1Octree[2];
+//		double[] distanceClosest = new double[1];
+//		for (int n = 0; n < fem.nodes; n++) {
+//			int nClosest = octree.closestNode(fem, n, distanceClosest, octantsClosest);
+//			System.out.println("Closest pair " + n + "|" + nClosest + ", d: " + distanceClosest[0]);
+//		}
+		
+		// test loading a single object from OBJ file with handmade tetrahedral data into element objects		
+		try {
+			br = new BufferedReader(new FileReader("data/tetrahedral1.obj"));
+			fem = new FEM1(br, FEM1.MESH_HANDMADE_OBJECTIFIED);
+			br.close();
+		} catch (IOException e) { e.printStackTrace(); }
+		
+		int enclosure = fem.getElement2(0).tetraVertexEnclosure(0.1791, -0.3527, 2.7746, true);
+		double[] isect = new double[12];
+		enclosure = fem.getElement2(0).tetraSegmentIntersection(0.571, -0.2194, 1.918, -0.181, -0.5808, 0.9791, true, isect);
+		System.out.println(FEM1Element.toBitsInteger(enclosure, "                  iiiiFFFFeFFFFe\n                  43214321e4321e\n"));
+		
+		int[] internalNodes = fem.internalNodes();
+//		int[] deletionRef = {0, 1, 2};
+//		fem.deleteElements(deletionRef);
+		
+		FEM1Element optElem = fem.optimalTetrahedron(0, 1, 2, fem.addNode(0, 0, 0));
+		
+		tStart = System.nanoTime();
+		int[] tWorst = fem.tetraWorstSort(10, .8, .2, false);
+		tEnd = System.nanoTime();
+		System.out.printf("FEM1.tetraWorstSort() averaged %.1f ns\n", (double)(tEnd - tStart));
+		
+		for (int e = 0; e < fem.elements2; e++) {
+			FEM1Element elem = fem.getElement2(e);
+			if (elem == null) continue;
+			System.out.println("Element " + e + ":");
+			System.out.println("Circumscribed: " + elem.tetraCircumRadius());
+			double[] cCenter = elem.tetraCircumcenter();
+			System.out.println("Circumcenter: " + cCenter[0] + ", " + cCenter[1] + ", " + cCenter[2]);
+			double[] cBary = elem.tetraBarycentric();
+			System.out.println("Barycentric: " + cBary[0] + ", " + cBary[1] + ", " + cBary[2] + ", " + cBary[3]);
+			elem.propagateInterfaces(fem, FEM1Element.PROPAGATE_EDGES, false);
+			System.out.println("Inscribed: " + elem.tetraInscribedRadius());
+			elem.propagateInterfaces(fem, FEM1Element.PROPAGATE_AREAS, false);
+			System.out.println("Quality: " + elem.tetraQuality());
+			double[] massC = elem.tetraMassCenter();
+			System.out.println("Mass centre: " + massC[0] + ", " + massC[1] + ", " + massC[2]);
+			elem.tetraVolumeGradient(true, false, true, false);
+			System.out.println("Volume gradient node0: " + elem.data[10] + ", " + elem.data[11] + ", " + elem.data[12]);
+			System.out.println("Volume gradient node1: " + elem.data[13] + ", " + elem.data[14] + ", " + elem.data[15]);
+			System.out.println("Volume gradient node2: " + elem.data[16] + ", " + elem.data[17] + ", " + elem.data[18]);
+			System.out.println("Volume gradient node3: " + elem.data[19] + ", " + elem.data[20] + ", " + elem.data[21]);
+		}
+		
+		NSPMatrix Mfem = fem.assembleNSPMatrix();			// test FEM1 tetrahedral stiffness matrix assembly into an NSPMatrix
+		new SizeOf(Mfem, true);								// test SizeOf() method, determining total memory usage of an arbitrary object
+		Matrix Mfem2 = fem.assembleMatrix();				// test FEM1 tetrahedral stiffness matrix assembly into a Matrix
+		new SizeOf(Mfem2, true);
+			
+		
+		boolean testAllSolvers = false;
 		Matrix[] LU2 = null;
 		if (testAllSolvers) {
 			Matrix A10x10 = new Matrix("Asubp", 10, 10, d22, null);
@@ -455,26 +655,27 @@ public class MatrixApp {
 			v10x1.backSubstituteLU(null, LU10x10f, false);
 			LU2 = A10x10.decomposeLU();
 		}
-		if(1==1) return;
 		
 		MatrixMarketIO mmIO = new MatrixMarketIO("data/d_dyn.mtx", 2, true);
 		//MatrixMarketIO mmIO = new MatrixMarketIO("data/mcca.mtx", 2, true);
 		NSPMatrix MM2 = mmIO.getNSPMatrix();
 		//MM2.toFile(0);
+		new SizeOf(MM2, true);
+		if(1==1) return;
 		
 		boolean doMaxMatchingPermutation = true;
 		if (doMaxMatchingPermutation) {
 			// test maximum matching finding with Hopcroft-Karp algorithm
 			BipartiteDM biDM = new BipartiteDM(MM2);
 			//biDM.toString();
-			biDM.maximumMatchingHopcroftKarp();
+			biDM.maximumMatchingHK();
 			biDM.findBTF();
 			// test permuting the paired rows-columns to the diagonal
 			MM2 = MM2.permuteMaximumMatching(biDM, NO_COPY, true);
 			//MM2.toFile(0);
 		}
 
-		// test construction of multifrontal unsymmetric DAG with transitive reduction
+		// test construction of multifrontal unsymmetric DAG with transitive reduction of symbolic factorisation graph
 		FrontalDAG dataDAG = null;
 		//MM2 = new NSPMatrix("MM2", 10, 10, d22, null);
 		tStart = System.nanoTime();
@@ -502,9 +703,7 @@ public class MatrixApp {
 		System.out.println(G8.toString());
 		
 		// test zero value purging of NSPMatrix by setting some values to zero and calling purgeZeroes()
-		G8.Hsp[1].array[0].v = 0;
-		G8.Hsp[2].array[0].v = 0;
-		G8.Hsp[3].array[0].v = 0;
+		G8.Hsp[1].array[0].v = 0; G8.Hsp[2].array[0].v = 0; G8.Hsp[3].array[0].v = 0;
 		System.out.println(G8.purgeZeroes());
 		System.out.println(G8.toString());
 		//if(1==1) return;
@@ -516,10 +715,7 @@ public class MatrixApp {
 			System.out.println("\n");
 		}
 		System.out.println("\n");
-		G8.valueTo(8, 0, -10000);
-		G8.valueTo(2, 0, 0);
-		G8.valueTo(6, 0, 0);
-		G8.valueTo(6, 0, 7);
+		G8.valueTo(8, 0, -10000); G8.valueTo(2, 0, 0); G8.valueTo(6, 0, 0); G8.valueTo(6, 0, 7);
 		G8.swapHVspArrays(8, 0, 1);
 		for (int i = 0; i < 9; i++) {
 			for (int j = 0; j < 9; j++) { double v = G8.valueOf(i, j); System.out.print((v != 0 ? v : " - ") + "  "); }

@@ -48,7 +48,7 @@ public class Matrix implements Cloneable {
 	protected boolean rowAspectSparsest = true;		// indicates whether row or column aspect is most sparse for determinant analysis
 	public int halfBandwidth = -1;					// tells how far a sparse matrix deviates from it's diagonal band, p = |i - j|
 	protected int detSign = 1;						// tells sign of the determinant, according to heuristics of analyseRowsColumns() 
-	protected int nNZ = 0;							// tells how many nonzeroes matrix contains
+	public int nNZ = 0;								// tells how many nonzeroes matrix contains
 	protected int[][] analysis = null;				// used by analyseRowsColumns() for determinant finding heuristics
 	protected int[][] mutator = null;				// used to index mutated rows & columns for certain algorithms
 	protected BinBitImage bitImage;
@@ -56,7 +56,7 @@ public class Matrix implements Cloneable {
 	// multithreading variables
 	static ExecutorService executor;				// thread pool for matrix ops
 	static List<Future<Double>> futureDoubleList;	// list of return doubles from Callable threads
-	//protected boolean threaded = false;				// indicates if matrix should/can be run in multithreaded mode	
+	//protected boolean threaded = false;			// indicates if matrix should/can be run in multithreaded mode	
 	//static int taskNum, procNum;
 	static Thread taskList[];
 	volatile double vdet = 0;						// threadsafe determinant accumulator for multithreaded methods
@@ -169,7 +169,7 @@ public class Matrix implements Cloneable {
 	public double valueOf(int r, int c) { return data[r * N + c]; }
 	
 	public double[] valueOfC(int r, int c) {
-		if (data == null || idata == null) throw new RuntimeException("Matrix.valueOf(): Unallocated datafields.");
+		if (data == null || idata == null) throw new RuntimeException("Matrix.valueOfC(): Unallocated datafields.");
 		double[] iv = new double[2];
 		int rNc = r * N + c;
 		iv[0] = data[rNc]; iv[1] = idata[rNc];
@@ -177,7 +177,7 @@ public class Matrix implements Cloneable {
 	}
 
 	public void valueTo(int r, int c, double v) {
-		if (data == null) throw new RuntimeException("Matrix.ivalueTo(): Unallocated datafield.");
+		if (data == null) throw new RuntimeException("Matrix.valueTo(): Unallocated datafield.");
 		data[r * N + c] = v;
 		if (!nearZero(v)) {
 			bitImage.setBit(r, c);					// set the corresponding bit in bitImage if value is nonzero
@@ -188,7 +188,7 @@ public class Matrix implements Cloneable {
 		}
 	}
 	public void valueToC(int r, int c, double[] iv) {
-		if (data == null || idata == null) throw new RuntimeException("Matrix.ivalueTo(): Unallocated datafields.");
+		if (data == null || idata == null) throw new RuntimeException("Matrix.valueToC(): Unallocated datafields.");
 		int rNc = r * N + c;
 		data[rNc] = iv[0]; idata[rNc] = iv[1];
 		if (!nearZero(iv[0]) || !nearZero(iv[1])) {
@@ -372,23 +372,25 @@ public class Matrix implements Cloneable {
 
 		int M = An.M, N = An.N;
 		Matrix Q = new Matrix("Q", M, N, Matrix.Type.Null, 1);
+		double[] dataAn = An.data, dataQ = Q.data;
 		r11 = 1.0 / r11;
 		for (int r = 0, rN = 0; r < M; r++, rN += N)
-			Q.data[rN] = An.data[rN] * r11;									// q1 := x1 / r11
+			dataQ[rN] = dataAn[rN] * r11;									// q1 := x1 / r11
 		
 		// main loop steps column by column
+		// note: should be optimised for cache efficiency to run along rows, not columns
 		for (int j = 1; j < N; j++) {
 			for (int i = 0; i < j; i++) {
 				// use vector j in An as q^, multiply by columns
 				double rij = multiplyVectors(An, Q, j, i, false);			// rij := (q^,qi)
 				for (int k = 0, kNi = i, kNj = j; k < M; k++, kNi += N, kNj += N)
-					An.data[kNj] -= rij * Q.data[kNi];						// q^ := q^ - rij*qi
+					dataAn[kNj] -= rij * dataQ[kNi];						// q^ := q^ - rij*qi
 			}
 			double rjj = An.absLength(j);									// rjj := ||q^||
 			if (nearZero(rjj)) return null;									// null vector found, abort
 			rjj = 1.0 / rjj;
 			for (int r = 0, rN = j; r < M; r++, rN += N)
-				Q.data[rN] = An.data[rN] * rjj;								// qj := q^ / rjj
+				dataQ[rN] = dataAn[rN] * rjj;								// qj := q^ / rjj
 		}
 
 		if (DEBUG_LEVEL > 1) {
@@ -400,7 +402,7 @@ public class Matrix implements Cloneable {
 	
 	
 	
-	// Cholesky factoriser conditions symmetric and positive definite matrices for fast O(4*p*n) linear ssytem solving
+	// Cholesky factoriser conditions symmetric and positive definite matrices for fast O(4*p*n) linear system solving
 	public Matrix factoriseCholesky() {
 		
 		if (M < 1 || N < 1 || M != N)
@@ -410,7 +412,7 @@ public class Matrix implements Cloneable {
 		double[] dataR = R.data;
 		
 		int p = 0;
-		if (halfBandwidth < 0) p = getHalfBandwidth();
+		//if (halfBandwidth < 0) p = getHalfBandwidth();
 		
 		for (int i = 0; i < M; i++) {
 			
@@ -425,7 +427,7 @@ public class Matrix implements Cloneable {
 			
 			int jEnd = i + p;
 			if (jEnd >= N) jEnd = N - 1;
-			if (dataR[iNi] < ROUNDOFF_ERROR) return null;		// divide by zero, zeroes on diagonal not allowed
+			if (nearZero(dataR[iNi])) return null;					// divide by zero, zeroes on diagonal not allowed
 			double riiD = 1.0 / dataR[iNi];
 			
 			for (int j = i + 1; j <= jEnd; j++) {
@@ -635,7 +637,7 @@ public class Matrix implements Cloneable {
 
 		Matrix T = this;
 		
-		// given a non-square matrix, reallocate new data field
+		// given a non-square matrix, reallocate new data field, as values cannot be just exchanged across diagonal
 		if (M != N) {
 			if (copy) T = new Matrix(name + "^T", N, M);
 			else name = name + "^T"; 
@@ -1007,6 +1009,7 @@ public class Matrix implements Cloneable {
 	static double[][] buffer2x2StrasWin;				// preallocated buffer for the 2x2 submatrix cases
 	
 	// multiplier uses the Strassen-Winograd algorithm for matrix multiplication, adapted for flat data arrays
+	// method accepts only power of 2 matrices, buffering of matrices with rescale(oldM, oldN, newM, newN, true) is recommended
 	// truncP = the size of submatrix at which recursion stops and the normal multiplicator takes over
 	// the algorithm uses the least amount of buffers possible, by consistently reusing them instead of allocating new ones
 	public static Matrix multiplyStrasWin(Matrix A, Matrix B, int truncP) {
@@ -1014,7 +1017,7 @@ public class Matrix implements Cloneable {
 		if (A.M < 1 || A.N < 1 || B.M < 1 || B.N < 1) throw new InvalidParameterException("Matrix.multiply(): Invalid matrix dimensions.");
 		if (A.N != B.M) throw new InvalidParameterException("Matrix.multiply(): Nonmatching matrix dimensions.");
 		mulSW_DEBUG = mulFlopsSW_DEBUG = mulAdopsSW_DEBUG = 0;
-				
+		
 		// squarify and expand matrices to nearest 2^n size
 		int majorM = A.M > A.N ? A.M : A.N, newM;
 		for (newM = 2; newM < majorM; newM <<= 1);		// do 2^(n+1) until we reach or excel major size of the matrices
@@ -1246,9 +1249,11 @@ public class Matrix implements Cloneable {
 			if (!BinBitImage.compare(dataA, dataB, bitImage.data[i])) return false;
 
 		// ordinary cell-by-cell comparison
-//		for (int i = 0; i < A.M; i++)
-//			for (int j = 0; j < A.N; j++)
-//				if (dataA[i * A.N + j] != dataB[i * A.N + j]) return false;
+		for (int i = 0; i < B.M; i++) {
+			int iN = i * N;
+			for (int j = iN, jEnd = j + N; j < jEnd; j++)
+				if (dataA[j] != dataB[j]) return false;
+		}
 
 		// binary subdivision comparison with aid from the BinBitImage bitflags
 		if (idataA != null) {
@@ -2243,7 +2248,7 @@ public class Matrix implements Cloneable {
 	}
 
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
-	//			IMPLEMENTATION OF LAPLACIAN DETERMINANT FINDER (only of academic interest)
+	//			IMPLEMENTATION OF LAPLACIAN DETERMINANT FINDER (of no particular usefulness!)
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	// multimode implementation of the Laplace Expansion Recursive algorithm for finding the determinant
@@ -2564,7 +2569,7 @@ public class Matrix implements Cloneable {
 		halfBandwidth = -1;
 	}
 
-	// method wipes out a specific row and column from CSR matrix
+	// method wipes out a specific row and column
 	public Matrix eliminateRowColumn(int r, int c, boolean makeBitImage) {
 		
 		if (r < 0 || r > M - 1 || c < 0 || c > N - 1)
@@ -2600,6 +2605,71 @@ public class Matrix implements Cloneable {
 		if (Matrix.DEBUG_LEVEL > 1) System.out.println(this.toString());
 		if (makeBitImage) A.bitImage = new BinBitImage(A);
 		return A;
+	}
+
+	
+	// method directly inverts 3x3 matrix with determinant returned at end of array
+	public static double[] invert3x3(double[] m3x3) {
+		double[] m3x3i = new double[10];
+		double v3 = m3x3[3], v4 = m3x3[4], v5 = m3x3[5], v6 = m3x3[6], v7 = m3x3[7], v8 = m3x3[8];
+		m3x3i[0] = v4 * v8 - v5 * v7;
+		m3x3i[3] = -(v3 * v8 - v5 * v6);
+		double det = m3x3i[6] = v3 * v7 - v4 * v6;
+		double v0 = m3x3[0], v1 = m3x3[1], v2 = m3x3[2];
+		det = v0 * m3x3i[0] + v1 * m3x3i[3] + v2 * det;	
+		if (Matrix.nearZero(det)) return null;										// signal singular matrix with null return
+		double detD  = 1.0 / det;
+		m3x3i[0] *= detD; m3x3i[3] *= detD; m3x3i[6] *= detD;
+		m3x3i[1] = -(v1 * v8 - v2 * v7) * detD;
+		m3x3i[2] = (v1 * v5 - v2 * v4) * detD;
+		m3x3i[4] = (v0 * v8 - v2 * v6) * detD;
+		m3x3i[5] = -(v0 * v5 - v2 * v3) * detD;
+		m3x3i[7] = -(v0 * v7 - v1 * v6) * detD;
+		m3x3i[8] = (v0 * v4 - v1 * v3) * detD;
+		m3x3i[9] = det;																// also stores down determinant at end of data
+		return m3x3i;
+	}
+	
+	// this method expects stepwise calling, from two methods processing same matrix, where one only needs determinant, the other a complete inverse
+	// preserving the initial data of determinant calculation saves on FLOPs, so the method assumes that either:
+	//			a) no calculations have been done (m3x3i = null), calculate determinant, return it, expecting second call for the rest
+	//			b) part of calculation pertaining to finding determinant was already done, the inverse needs finishing
+	public static double[] invert3x3dualCall(double[] m3x3, double[] m3x3i) {
+		double v0, v1, v2;
+		double v3 = m3x3[3], v4 = m3x3[4], v5 = m3x3[5], v6 = m3x3[6], v7 = m3x3[7], v8 = m3x3[8];
+		if (m3x3i == null) {
+			m3x3i = new double[11];
+			m3x3i[0] = v4 * v8 - v5 * v7;
+			m3x3i[3] = -(v3 * v8 - v5 * v6);
+			double det = m3x3i[6] = v3 * v7 - v4 * v6;
+			v0 = m3x3[0]; v1 = m3x3[1]; v2 = m3x3[2];
+			det = v0 * m3x3i[0] + v1 * m3x3i[3] + v2 * det;	
+			if (Matrix.nearZero(det)) return null;						// signal singular matrix with null return			
+			m3x3i[9] = det;												// also stores down determinant at end of data
+			return m3x3i;
+		} else {
+			v0 = m3x3[0]; v1 = m3x3[1]; v2 = m3x3[2];
+		}
+		double detD  = 1.0 / m3x3i[9];
+		m3x3i[0] *= detD; m3x3i[3] *= detD; m3x3i[6] *= detD;
+		m3x3i[1] = -(v1 * v8 - v2 * v7) * detD;
+		m3x3i[2] = (v1 * v5 - v2 * v4) * detD;
+		m3x3i[4] = (v0 * v8 - v2 * v6) * detD;
+		m3x3i[5] = -(v0 * v5 - v2 * v3) * detD;
+		m3x3i[7] = -(v0 * v7 - v1 * v6) * detD;
+		m3x3i[8] = (v0 * v4 - v1 * v3) * detD;
+		m3x3i[10] = 1;													// signal that matrix is fully inverted
+		return m3x3i;
+	}
+
+
+	// method returns determinant of 3x3 matrix
+	public static double determinant3x3(double[] m3x3) {
+		double v3 = m3x3[3], v4 = m3x3[4], v5 = m3x3[5], v6 = m3x3[6], v7 = m3x3[7], v8 = m3x3[8];
+		double m0 = v4 * v8 - v5 * v7;
+		double m3 = -(v3 * v8 - v5 * v6);
+		double det = v3 * v7 - v4 * v6;
+		return m3x3[0] * m0 + m3x3[1] * m3 + m3x3[2] * det;
 	}
 
 	

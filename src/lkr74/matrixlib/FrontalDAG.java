@@ -108,7 +108,7 @@ public class FrontalDAG implements Cloneable {
 				}
 			}
 			
-			// we end up here if either a new supernode assembly failed, or an ongoing assembly failed
+			// we end up here if either a new supernode assembly failed, or an ongoing assembly failed and needs to be finalised
 			// superCount>0 means that there is a superPivot assignment needed in all members
 			if (superCount > 0) {
 				dagL.vertex[v - superCount].fm = dagL.vertex[v].fm;
@@ -146,7 +146,7 @@ public class FrontalDAG implements Cloneable {
 			FrontalDAGVertex vtx = dagL.vertex[v];
 			int[] edge = null;
 			// superNodeDisjoint = false if ANY offspring to a supernode is found, if loop iterates through a superpivot
-			// without the flag ever setting to false, the superpivot block will 
+			// without the flag ever setting to false, the superpivot block will be resembling a block withinin a BTF matrix
 			
 			if (vtx.superPivot < 0) {									// if this vertex is not part of a supernode
 				vtx.edge = edge = new int[trimToAllocBlock(toPivotH)];	// allocate for it an alloc.block that fits at least it's L-edges
@@ -272,8 +272,8 @@ public class FrontalDAG implements Cloneable {
 			e = 0;
 			accumEdges = true;
 			if (superPivot >= 0) {									// if we're adding U-edges to a supernode
-				// for correct transitional reduction, make edges between members in supernode
-//				if (v != superPivot) {
+				
+//				if (v != superPivot) {								// for correct transitional reduction, make edges between members in supernode
 //					vtx.edge[0] = (v - 1) | FrontalDAGVertex.SUPERNODE;	
 //					vtx.edges++;
 //				}
@@ -358,8 +358,8 @@ public class FrontalDAG implements Cloneable {
 			}
 		}
 		
-		//taskDAG.toGraphViz(true, false, true);
-		// get the approximate block allocation size for extras index contributions
+		//taskDAG.toGraphViz(true, false, true);				// output to GraphViz graph visualiser, will also execute GrapViz utility
+		// get the approximate block allocation size for extras index contributions, calculated from the factor of nonzeroes in the matrix
 		taskDAG.allocBlockExtras = trimToPowerOfTwo((int)((long)(M.M * M.nNZ) / (M.M * M.N)));
 		return taskDAG;
 	}
@@ -595,7 +595,7 @@ public class FrontalDAG implements Cloneable {
 			// 1) there exists an L-path j~L~>i / U-path j~U~>i such that i < h and LU-parent(i) > h
 			// 2) none of i's U-parents are in Struct(L[*,j]) / L-parents are in Struct(U[j,*])
 			// 3) either there's a k in Struct(L[*,i]) / Struct(U[i,*]) where k > h or a path k~U~>i / k~L~>i and LU-parent(k) > h
-			// ((3) is not really tested for [A.Gupta], an edge is added anyway, a few extra edges will not add too much computation)
+			// ((3) is not really tested according to [A.Gupta], an edge is added anyway, a few extra edges will not add too much computation)
 			// (and the same heuristic done for the transposed case)
 			
 			if (pLU < Integer.MAX_VALUE) {												// if h is the LU-parent of j (current vertex) and...
@@ -720,7 +720,7 @@ public class FrontalDAG implements Cloneable {
 		FrontalDAGVertex vtxD = dataDAG.vertex[vtx.i];
 		// data structures for intermixing extras indexes from children for addition to root and for intermixing contribution indexes from children
 		// the first two arrays are: No.0 = the global row or column indexes, No.1 = the index pairings of No.0
-		// third array is a helparray holding data counts and some optional flags/counts/parameters needed/produced by joinIndexes() method
+		// third array is a help-array holding data counts and some optional flags/counts/parameters needed/produced by joinIndexes() method
 		int[][] extraJoinDataC = new int[3][], extraJoinDataR = new int[3][];
 		int[][] contribJoinDataC = new int[3][], contribJoinDataR = new int[3][];
 		int[][] extraJoinDataP = new int[3][], joinData = new int[3][];
@@ -1258,11 +1258,12 @@ public class FrontalDAG implements Cloneable {
 		}
 		
 		// add return L/U edge from v2 to v1, note: the L & U edges have been laid in order, first L-edges, then U-edges
+		// this creates extra hassle of pushing entries +1 to insert an L-edge, besides the case of a necessary reallocation
 		// parentsU[] counts have on edgeP initialisation been redefined as a L + U edge sum counts, while parentsL[] are counting L-edges
 		int[] edgeP2new = edgeP2 = vertex[v2].edgeP;
 		if (edgeP2 == null || edgeP2.length < parentsU[v2] + 1) {
 			edgeP2new = vertex[v2].edgeP = new int[trimToAllocBlock(parentsU[v2] + 1)];
-			// case of reinitialising the edgeP array of child vertex
+			// case of reinitialising the edgeP array of child vertex (reallocation was needed)
 			switch (flags) {
 			case FrontalDAGVertex.L_CHILD: {		// to insert L-edge, copy all L-edges, insert L-edge into the space, append all U-edges
 				int i2 = 0, i3 = 0; 			for (int i2End = parentsL[v2]; i2 < i2End; i2++, i3++) edgeP2new[i3] = edgeP2[i2];
@@ -1274,7 +1275,7 @@ public class FrontalDAG implements Cloneable {
 				parentsU[v2]++;
 			}
 		} else {
-			// case of reusing the edgeP array of child vertex:
+			// case of reusing the edgeP array of child vertex (insertion into same array):
 			switch (flags) {
 			case FrontalDAGVertex.L_CHILD:		// for L-edge, shift U-edges one step up, insert L-edge in the space
 				int i2End = parentsL[v2];
@@ -1322,7 +1323,7 @@ public class FrontalDAG implements Cloneable {
 			if (vtx2.parentLU == v1) vtx2.parentLU = Integer.MAX_VALUE;
 		}
 
-		if (vtx2.edgeP != null) {									// parent edges could be uninitialised, execute this block only if they are
+		if (vtx2.edgeP != null) {									// parent edges can be uninitialised, execute this block only if they're initialised
 			int[] edgeP = vtx2.edgeP;
 			int e2 = 0;
 			switch (vtx.edge[e1] & FrontalDAGVertex.FLAGS) {
@@ -1347,7 +1348,7 @@ public class FrontalDAG implements Cloneable {
 	
 	// method makes union of edges between this DAG and DAG2, method expects vertex sets to be identical
 	// the edges are added in a sorted fashion, but the sorting is NOT a proper sort, only a size-ordered additon
-	// two already sorted arrays WILL be properly ordered
+	// two properly sorted arrays WILL be joined in sorted fashion
 	public FrontalDAG uniteEdgeSetLU(FrontalDAG dag2) {
 		
 		boolean order = distantFirst;
@@ -1441,6 +1442,7 @@ public class FrontalDAG implements Cloneable {
 		
 	
 	// method walks down the DAG from vertex v1 looking for a path to vertex v2 along edges of pathType
+	// note: method uses a non-recursive stack-based depth-search strategy
 	public int[] pathTo(int v1, int v2, int pathType, int startEdge, int[] vStack, boolean clearVisits) {
 		
 		// allocate for maximal stacking length, potentially tracing through every vertex top-down
@@ -1489,7 +1491,7 @@ public class FrontalDAG implements Cloneable {
 	
 		
 	
-	// method traces paths through the DAG, putting edges on a stack
+	// method traces paths through the DAG, putting edges on a stack, thus using a non-recursive depth-first-search strategy
 	// if an earlier visited vertex is reached, the edge to that vertex can be cut
 	// if that is the last edge of that vertex, the vertex effectively becomes a leaf of a branch
 	// method can take a preallocated vertex stack (saves transient memory), or allocates a temporary one if vStack=null
@@ -1585,8 +1587,7 @@ public class FrontalDAG implements Cloneable {
 	private static int trimToAllocBlock(int v) { return (v & (0xFFFFFFFF - DAG_ALLOCBLOCK + 1)) + DAG_ALLOCBLOCK; }
 	private int trimToAllocExtras(int v) { return (v & (0xFFFFFFFF - allocBlockExtras + 1)) + allocBlockExtras; }
 	public static int trimToPowerOfTwo(int i) {
-		int f = 0;
-		if (i > 65536) { i <<= 16; f = 16; }
+		if (i > 65536) i <<= 16;
 		if (i < 65536) {
 			if (i < 256) {
 				if (i < 16) {
@@ -1641,7 +1642,7 @@ public class FrontalDAG implements Cloneable {
 			return;
 		}
 		int idxBase = base1 ? 1 : 0;
-				StringBuffer sb = new StringBuffer();
+				StringBuilder sb = new StringBuilder();
 		sb.append("digraph G {\n     size=\"75,100\"\n     mclimit=10\n     rankdir=BT\n");
 		
 		for (int v = 0; v < verts; v++) {

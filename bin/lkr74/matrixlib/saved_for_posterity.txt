@@ -1,3 +1,218 @@
+	// method find the closest node to the suppplied one by constructing coordinate-wise sortings and doing an expansive nearest-neighbour search
+	// always choosing the shortest coordinate-neighbour index to step out along, until three indexes from the reindexing arrays match up
+	// note: method was a naive approach that does not work!
+	public int closestNode(int n, boolean sort) {
+		
+		double[] sortX, sortY, sortZ; 
+		int[] idxX, idxY, idxZ, sortIX, sortIY, sortIZ;
+		if (nodeCoordSort == null || sort) {			// initialise coordinate sortings if it wasn't done, or if requested
+			nodeCoordSort = new double[3][];
+			nodeCoordSortI = new int[6][];
+			
+			sortX = nodeCoordSort[0] = new double[nodes]; idxX = nodeCoordSortI[0] = new int[nodes];
+			sortY = nodeCoordSort[1] = new double[nodes]; idxY = nodeCoordSortI[1] = new int[nodes];
+			sortZ = nodeCoordSort[2] = new double[nodes]; idxZ = nodeCoordSortI[2] = new int[nodes];
+			
+			int n1 = 0;
+			for (int n3 = 0; n1 < nodes; n1++) {
+				sortX[n1] = node[n3++]; idxX[n1] = n1;						// collect x-coordinates
+				sortY[n1] = node[n3++]; idxY[n1] = n1;						// collect y-coordinates
+				sortZ[n1] = node[n3++]; idxZ[n1] = n1;						// collect z-coordinates
+			}
+			if (nodeWork != null)
+				for (int n3 = 0, nEnd = n1 + nodes - node.length / 3; n1 < nEnd; n1++) {
+					sortX[n1] = nodeWork[n3++]; idxX[n1] = n1;
+					sortY[n1] = nodeWork[n3++]; idxX[n1] = n1;
+					sortZ[n1] = nodeWork[n3++]; idxX[n1] = n1;
+				}
+			sortIndexedDoubles(sortX, sortIX = nodeCoordSortI[3] = idxX.clone(), idxX);
+			sortIndexedDoubles(sortY, sortIY = nodeCoordSortI[4] = idxY.clone(), idxY);
+			sortIndexedDoubles(sortZ, sortIZ = nodeCoordSortI[5] = idxZ.clone(), idxZ);
+		} else {
+			sortX = nodeCoordSort[0]; sortY = nodeCoordSort[1]; sortZ = nodeCoordSort[2];
+			idxX = nodeCoordSortI[0]; idxY = nodeCoordSortI[1]; idxZ = nodeCoordSortI[2];
+			sortIX = nodeCoordSortI[3]; sortIY = nodeCoordSortI[4]; sortIZ = nodeCoordSortI[5];
+		}
+		
+		int nX = idxX[n], nY = idxY[n], nZ = idxZ[n];
+		int ngbXl = nX - 1, ngbXu = nX + 1, ngbYl = nY - 1, ngbYu = nY + 1, ngbZl = nZ - 1, ngbZu = nZ + 1, nC = -1, ngbChoice;
+		double dltXl, dltXu, dltXmin, dltYl, dltYu, dltYmin, dltZl, dltZu, dltZmin;
+		double vXl = ngbXl < 0 ? -1e100 : sortX[ngbXl], vXu = ngbXu >= nodes ? 1e100 : sortX[ngbXu];
+		double vYl = ngbYl < 0 ? -1e100 : sortY[ngbYl], vYu = ngbYu >= nodes ? 1e100 : sortY[ngbYu];
+		double vZl = ngbZl < 0 ? -1e100 : sortZ[ngbZl], vZu = ngbZu >= nodes ? 1e100 : sortZ[ngbZu];
+		int idxXl = ngbXl < 0 ? -1 : sortIX[ngbXl], idxXu = ngbXu >= nodes ? -2 : sortIX[ngbXu];
+		int idxYl = ngbYl < 0 ? -3 : sortIY[ngbYl], idxYu = ngbYu >= nodes ? -4 : sortIY[ngbYu];
+		int idxZl = ngbZl < 0 ? -5 : sortIZ[ngbZl], idxZu = ngbZu >= nodes ? -6 : sortIZ[ngbZu];
+		
+		while(true) {
+			if		((idxXl == idxYl || idxXl == idxYu) && (idxXl == idxZl || idxXl == idxZu)) {
+				nC = idxXl; break; }
+			else if	((idxXu == idxYl || idxXu == idxYu) && (idxXu == idxZl || idxXu == idxZu)) {
+				nC = idxXu; break; }
+			
+			dltXl = sortX[nX] - vXl; dltYl = sortY[nY] - vYl; dltZl = sortZ[nZ] - vZl;
+			dltXu = vXu - sortX[nX]; dltYu = vYu - sortY[nY]; dltZu = vZu - sortZ[nZ];
+			ngbChoice = 0;
+			if (dltXl < dltXu) { dltXmin = dltXl; ngbChoice |= 1;  } else { dltXmin = dltXu; ngbChoice |= 2; } 
+			if (dltYl < dltYu) { dltYmin = dltYl; ngbChoice |= 4;  } else { dltYmin = dltYu; ngbChoice |= 8; } 
+			if (dltZl < dltZu) { dltZmin = dltZl; ngbChoice |= 16; } else { dltZmin = dltZu; ngbChoice |= 32; } 
+			
+			if (dltXmin < dltYmin) {	if (dltZmin < dltXmin) ngbChoice &= 16+32; else ngbChoice &= 1+2;
+			} else {					if (dltZmin < dltYmin) ngbChoice &= 16+32; else ngbChoice &= 4+8;}
+			
+			switch (ngbChoice) {			// expand search along the coordinate neighbourhood which is closest to node
+				case 1:  if (--ngbXl < 0)		{	vXl = -1e100; idxXl = -1; } else { vXl = sortX[ngbXl]; idxXl = idxX[ngbXl]; } break;	
+				case 2:  if (++ngbXu >= nodes) {	vXu = 1e100; idxXu = -2; } 	else { vXu = sortX[ngbXu]; idxXu = idxX[ngbXu]; } break;	
+				case 4:  if (--ngbYl < 0)		{	vYl = -1e100; idxYl = -3; } else { vYl = sortY[ngbYl]; idxYl = idxY[ngbYl]; } break;	
+				case 8:  if (++ngbYu >= nodes) {	vYu = 1e100; idxYu = -4; } 	else { vYu = sortY[ngbYu]; idxYu = idxY[ngbYu]; } break;	
+				case 16: if (--ngbZl < 0)		{	vZl = -1e100; idxZl = -5; } else { vZl = sortZ[ngbZl]; idxZl = idxZ[ngbZl]; } break;	
+				case 32: if (++ngbZu >= nodes) {	vZu = 1e100; idxZu = -6; } 	else { vZu = sortZ[ngbZu]; idxZu = idxZ[ngbZu]; } break;	
+			}
+		}	
+		return nC;
+	}
+
+
+
+
+
+	// splits current octree node into 8 partitions (uses method of filling cache-sized blocks (32 bytes) at a time
+	// note: microbenchmark show this method as actually slower, perhaps because of more complex looping involved
+	public double split2(FEM1 fem, int maxNodes) {
+		double xC = (xP + xM) * .5, yC = (yP + yM) * .5, zC = (zP + zM) * .5;		// find splitting centroid of this octree node
+		double[] nodeCoord = fem.node;
+		// worst case allocation of octosplitted node arrays
+		int nMMM = 0, nPMM = 8, nMPM = 16, nPPM = 24, nMMP = 32, nPMP = 40, nMPP = 48, nPPP = 56;
+		int nMMM8=0, nPMM8=0, nMPM8=0, nPPM8=0, nMMP8=0, nPMP8=0, nMPP8=0, nPPP8=0;
+		int nodesRm8 = nodes & 7, octants = 0;
+		// align temporary node arrays to 8-slot divisions
+		int[] nodeOct = new int[(nodesRm8 == 0 ? nodes & 0xFFFFFFF8 : (nodes & 0xFFFFFFF8) + 8) * 8];
+		
+		for (int n = 0; n < nodes; n++) {											// distribute node references into the 8 octants
+			int n3 = node[n] * 3;
+			double xN = nodeCoord[n3++], yN = nodeCoord[n3++], zN = nodeCoord[n3];
+			if (xN <= xC) {
+				if (yN <= yC) {	if (zN <= zC)	{ nodeOct[nMMM++] = node[n]; if (++nMMM8 > 7) {nMMM+=56; nMMM8=0;}}
+								else			{ nodeOct[nMMP++] = node[n]; if (++nMMP8 > 7) {nMMP+=56; nMMP8=0;}}}
+				else {			if (zN <= zC)	{ nodeOct[nMPM++] = node[n]; if (++nMPM8 > 7) {nMPM+=56; nMPM8=0;}}
+								else			{ nodeOct[nMPP++] = node[n]; if (++nMPP8 > 7) {nMPP+=56; nMPP8=0;}}}
+			} else {
+				if (yN <= yC) {	if (zN <= zC)	{ nodeOct[nPMM++] = node[n]; if (++nPMM8 > 7) {nPMM+=56; nPMM8=0;}}
+								else			{ nodeOct[nPMP++] = node[n]; if (++nPMP8 > 7) {nPMP+=56; nPMP8=0;}}}
+				else {			if (zN <= zC)	{ nodeOct[nPPM++] = node[n]; if (++nPPM8 > 7) {nPPM+=56; nPPM8=0;}}
+								else			{ nodeOct[nPPP++] = node[n]; if (++nPPP8 > 7) {nPPP+=56; nPPP8=0;}}}
+			}
+		}
+		octant = new FEM1Octree[8];
+		FEM1Octree child = null;
+		int[] nodeChild = null;
+		
+		nMMM = (nMMM >> 6 << 3) + nMMM8; nPMM = (nPMM >> 6 << 3) + nPMM8; nMPM = (nMPM >> 6 << 3) + nMPM8; nPPM = (nPPM >> 6 << 3) + nPPM8;
+		nMMP = (nMMP >> 6 << 3) + nMMP8; nPMP = (nPMP >> 6 << 3) + nPMP8; nMPP = (nMPP >> 6 << 3) + nMPP8; nPPP = (nPPP >> 6 << 3) + nPPP8;
+		
+		if (nMMM > 0) {
+			nodeChild = new int[nMMM];
+			int n = 0, n8 = 0, nEnd64 = nMMM>>3;
+			for (int n64 = 0; n64<nEnd64; n64++) {
+				n8 = n64 << 6; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++];
+				nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++];
+			}
+			n8 = nEnd64 << 6; while (nMMM8-- > 0) nodeChild[n++] = nodeOct[n8++];
+			octant[OCT_MMM] = child = new FEM1Octree(this, OCT_MMM, nMMM, nodeChild);		// initialise octant MMM
+			child.xM = xM; child.yM = yM; child.zM = zM; child.xP = xC; child.yP = yC; child.zP = zC;
+			if (nMMM > maxNodes) { octantIterator = (octantIterator << 3) | OCT_MMM; octants++; }
+		}
+		if (nPMM > 0) {
+			nodeChild = new int[nPMM];
+			int n = 0, n8 = 0, nEnd64 = nPMM>>3;
+			for (int n64 = 0; n64<nEnd64; n64++) {
+				n8 = (n64 << 6) + 8; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++];
+				nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++];
+			}
+			n8 = (nEnd64 << 6) + 8; while (nPMM8-- > 0) nodeChild[n++] = nodeOct[n8++];
+			octant[OCT_PMM] = child = new FEM1Octree(this, OCT_PMM, nPMM, nodeChild);		// initialise octant PMM
+			child.xM = xC; child.yM = yM; child.zM = zM; child.xP = xP; child.yP = yC; child.zP = zC;
+			if (nPMM > maxNodes) { octantIterator = (octantIterator << 3) | OCT_PMM; octants++; }
+		}
+		if (nMPM > 0) {
+			nodeChild = new int[nMPM];
+			int n = 0, n8 = 0, nEnd64 = nMPM>>3;
+			for (int n64 = 0; n64<nEnd64; n64++) {
+				n8 = (n64 << 6) + 16; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++];
+				nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++];
+			}
+			n8 = (nEnd64 << 6) + 16; while (nMPM8-- > 0) nodeChild[n++] = nodeOct[n8++];
+			octant[OCT_MPM] = child = new FEM1Octree(this, OCT_MPM, nMPM, nodeChild);		// initialise octant MPM
+			child.xM = xM; child.yM = yC; child.zM = zM; child.xP = xC; child.yP = yP; child.zP = zC;
+			if (nMPM > maxNodes) { octantIterator = (octantIterator << 3) | OCT_MPM; octants++; }
+		}
+		if (nPPM > 0) {
+			nodeChild = new int[nPPM];
+			int n = 0, n8 = 0, nEnd64 = nPPM>>3;
+			for (int n64 = 0; n64<nEnd64; n64++) {
+				n8 = (n64 << 6) + 24; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++];
+				nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++];
+			}
+			n8 = (nEnd64 << 6) + 24; while (nPPM8-- > 0) nodeChild[n++] = nodeOct[n8++];
+			octant[OCT_PPM] = child = new FEM1Octree(this, OCT_PPM, nPPM, nodeChild);		// initialise octant MMM
+			child.xM = xC; child.yM = yC; child.zM = zM; child.xP = xP; child.yP = yP; child.zP = zC;
+			if (nPPM > maxNodes) { octantIterator = (octantIterator << 3) | OCT_PPM; octants++; }
+		}
+		if (nMMP > 0) {
+			nodeChild = new int[nMMP];
+			int n = 0, n8 = 0, nEnd64 = nMMP>>3;
+			for (int n64 = 0; n64<nEnd64; n64++) {
+				n8 = (n64 << 6) + 32; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++];
+				nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++];
+			}
+			n8 = (nEnd64 << 6) + 32; while (nMMP8-- > 0) nodeChild[n++] = nodeOct[n8++];
+			octant[OCT_MMP] = child = new FEM1Octree(this, OCT_MMP, nMMP, nodeChild);		// initialise octant MMP
+			child.xM = xM; child.yM = yM; child.zM = zC; child.xP = xC; child.yP = yC; child.zP = zP;
+			if (nMMP > maxNodes) { octantIterator = (octantIterator << 3) | OCT_MMP; octants++; }
+		}
+		if (nPMP > 0) {
+			nodeChild = new int[nPMP];
+			int n = 0, n8 = 0, nEnd64 = nPMP>>3;
+			for (int n64 = 0; n64<nEnd64; n64++) {
+				n8 = (n64 << 6) + 40; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++];
+				nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++];
+			}
+			n8 = (nEnd64 << 6) + 40; while (nPMP8-- > 0) nodeChild[n++] = nodeOct[n8++];
+			octant[OCT_PMP] = child = new FEM1Octree(this, OCT_PMP, nPMP, nodeChild);		// initialise octant PMP
+			child.xM = xC; child.yM = yM; child.zM = zC; child.xP = xP; child.yP = yC; child.zP = zP;
+			if (nPMP > maxNodes) { octantIterator = (octantIterator << 3) | OCT_PMP; octants++; }
+		}
+		if (nMPP > 0) {
+			nodeChild = new int[nMPP];
+			int n = 0, n8 = 0, nEnd64 = nMPP>>3;
+			for (int n64 = 0; n64<nEnd64; n64++) {
+				n8 = (n64 << 6) + 48; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++];
+				nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++];
+			}
+			n8 = (nEnd64 << 6) + 48; while (nMPP8-- > 0) nodeChild[n++] = nodeOct[n8++];
+			octant[OCT_MPP] = child = new FEM1Octree(this, OCT_MPP, nMPP, nodeChild);		// initialise octant MPP
+			child.xM = xM; child.yM = yC; child.zM = zC; child.xP = xC; child.yP = yP; child.zP = zP;
+			if (nMPP > maxNodes) { octantIterator = (octantIterator << 3) | OCT_MPP; octants++; }
+		}
+		if (nPPP > 0) {
+			nodeChild = new int[nPPP];
+			int n = 0, n8 = 0, nEnd64 = nPPP>>3;
+			for (int n64 = 0; n64<nEnd64; n64++) {
+				n8 = (n64 << 6) + 56; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++];
+				nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++]; nodeChild[n++] = nodeOct[n8++];
+			}
+			n8 = (nEnd64 << 6) + 56; while (nPPP8-- > 0) nodeChild[n++] = nodeOct[n8++];
+			octant[OCT_PPP] = child = new FEM1Octree(this, OCT_PPP, nPPP, nodeChild);		// initialise octant PPP
+			child.xM = xC; child.yM = yC; child.zM = zC; child.xP = xP; child.yP = yP; child.zP = zP;
+			if (nPPP > maxNodes) { octantIterator = (octantIterator << 3) | OCT_PPP; octants++; }
+		}
+		octantIterator |= (octants << 24);
+		node = null;					// a branch doesnt need node references
+		return octantNodeDisbalance(nodes, nMMM, nPMM, nMPM, nPPM, nMMP, nPMP, nMPP, nPPP);
+	}
+
+
+
 
 		// block from findBTF() with proper array scanning of transferred BTF indexes
 		// has been replaced by a boolean array checking whether an element has been "used up"

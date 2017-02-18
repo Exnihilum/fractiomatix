@@ -3,7 +3,7 @@ package lkr74.mathgenerics;
 import org.jfree.data.xy.XYDataset;
 import org.jfree.ui.RefineryUtilities;
 
-import kineticstorage.FES;
+import lkr74.kineticstorage.FES;
 import lkr74.mathgenerics.XYLineChart_AWT;
 
 
@@ -34,65 +34,11 @@ public class MiscMath {
 	}
 	
 	
-	
-	// RandFill class will get an (integer) range and will guarantee to return a random value within that range
-	// but never the same value as previously, thus populating the range evenly with random values,
-	// a useful class for iteratively test-filling arrays & matrices with values in a linearly asymptotic fashion
-	// "sectors" holds integer pairs, the first is start index of a sector, the second an end index
-	// there is always at least one occupied slot between each sector, every new occupied slot can create a new sector partition
-	public class RandFill {
-		private int sectorCnt = 1, slotCount;
-		private int[] sectors;
-		
-		public RandFill(int range) {
-			if (range < 1) throw new RuntimeException("RandFill(): Invalid range.");
-			this.slotCount = range;
-			sectors = new int[range + 1];		// holds definitions of sectors between occupied random value slots
-			sectors[1] = range - 1;				// define the first default sector as covering entire range
-		}
-		
-		public int remainingSlots() { return slotCount; }
-		
-		public int getRandom() {
-			
-			// zero sectors left means we've exhausted all random slots, return 0
-			if (sectorCnt == 0) return 0;
-			
-			int rndSec = (int)(Math.random() * sectorCnt) * 2;			// select a random sector
-			int secLen = sectors[rndSec + 1] - sectors[rndSec] + 1;		// get it's length
-			int rnd;
-			
-			// did we find a single-element sector?
-			if (secLen == 1) {
-				sectorCnt--;
-				slotCount--;
-				rnd = sectors[rndSec];
-				sectors[rndSec] = sectors[sectorCnt * 2];				// delete this 1-element sector by copying last-in-array sector over it
-				sectors[rndSec + 1] = sectors[sectorCnt * 2 + 1];
-				return rnd;												// return this random slot
-			}
-			// select a random slot within this sector
-			rnd = (int)(Math.random() * secLen) + sectors[rndSec];
-			if (rnd == sectors[rndSec])	sectors[rndSec]++;				// slot is at start of sector, increment sector start point
-			else if (rnd == sectors[rndSec + 1]) sectors[rndSec + 1]--;	// slot is at end of sector, decrement sector end point
-			else {														// slot is in middle of sector, partition into two sectors
-				sectors[sectorCnt * 2] = rnd + 1;						// create new sector at end of sector array
-				sectors[sectorCnt * 2 + 1] = sectors[rndSec + 1];		// let it start above the slot
-				sectors[rndSec + 1] = rnd - 1;							// decrement current sector below the slot
-				sectorCnt++;
-			}
-			slotCount--;
-			return rnd;
-		}
-	}
-
-	
-	
 	public static double convertRPM(double rpm) { return rpm * Math.PI * 2.0 / 60.0; }
 	
 	
 	public static double[] solveQuadraticPolynomial(double A, double B, double C) {
-		// max 4 values to return: result1, result1, complexpart(+/-)
+		// max 3 values to return: result1, result2, complexpart(+/-)
 		// if solution is noncomplex, complexpart will return zero
 		if (A == 0) throw new RuntimeException("solveCubicPolynomial(): divide by zero.");
 
@@ -221,10 +167,10 @@ public class MiscMath {
 	
 	static double getLaplacian2ndORderSystem(double s, double sigma, double omegad) {
 		
-		if (s == 0 || omegad == 0) throw new RuntimeException("solveCubicPolynomial(): divide by zero.");
+		if (s == 0 || omegad == 0) throw new RuntimeException("getLaplacian2ndORderSystem(): divide by zero.");
 		
 		double spsigma = s + sigma, ssigomeghyp = (spsigma * spsigma + omegad * omegad);
-		if (ssigomeghyp == 0) throw new RuntimeException("solveCubicPolynomial(): divide by zero.");
+		if (ssigomeghyp == 0) throw new RuntimeException("getLaplacian2ndORderSystem(): divide by zero.");
 		return (1 / s) - spsigma / ssigomeghyp - (sigma / omegad) * omegad / ssigomeghyp;
 	}
 	
@@ -248,6 +194,23 @@ public class MiscMath {
 		if (root)	return Math.sqrt(s * (s - a) * (s - b) * (s - c));
 		else		return s * (s - a) * (s - b) * (s - c);
 	}
+	
+	
+	// given a normal vector from origo, creates a rotation matrix from theta angle for arbitrary point
+	// the rotation happens around the normal vector, according to right-hand rule
+//	public double[] rotationMatrixFromNormal3D(double nx, double ny, double nz, double theta) {
+//		double[] R = new double[9];
+//		double cos_th = Math.cos(theta), m1cos_th = 1 - cos_th, sin_th = Math.sin(theta);
+//		R[0] = cos_th + m1cos_th * nx * nx;
+//		R[1] = cos_th + m1cos_th * nx * ny;
+//		R[2] = cos_th + m1cos_th * nx * nz;
+//		R[3] = cos_th + m1cos_th * ny * nx;
+//		R[4] = cos_th + m1cos_th * ny * ny;
+//		R[5] = cos_th + m1cos_th * ny * nz + sin_th * nz;
+//		R[6] = cos_th + m1cos_th * nz * nx;
+//		return R;
+//	}
+	
 	
 	
 
@@ -352,12 +315,12 @@ public class MiscMath {
 		flywheel.setRim(0, 0.3, 0.4, "carbon T400HB");
 		flywheel.setRim(1, 0.4, 0.6, "carbon T400HB");
 		System.out.println(flywheel.toString());
-		if (1==1) return;
+		//if (1==1) return;
 		
 		double[][] tv = {{-1,0,0}, {-1,1,0}, {0,0,0}};
 		double[][] tv2 = {{0,0,1}, {0,1,1}, {0,0,0}};
 		
-		RandFill rfill = new MiscMath().new RandFill(100);
+		RandFill rfill = new RandFill(100);
 		for (int i = 0; i < 110; i++)
 			System.out.println(rfill.getRandom());
 		
@@ -369,8 +332,8 @@ public class MiscMath {
 		System.out.println();
 		double[] s1 = solveQuadraticPolynomial(1, 3f/2f, 10f/2f);
 		if (s1[2] == 0)
-				System.out.println("cubic solution: x1: " + s1[0] + ", x2: " + s1[1] + "\n");
-		else	System.out.println("cubic complex solution: x1: " + s1[0] + ", x2: " + s1[1] + ", c: " + s1[2] + " * sqrt(-1)\n");
+				System.out.println("quadratic solution: x1: " + s1[0] + ", x2: " + s1[1] + "\n");
+		else	System.out.println("quadratic complex solution: x1: " + s1[0] + ", x2: " + s1[1] + ", c: " + s1[2] + " * sqrt(-1)\n");
 		
 		ElevatorMovement elevator1m = new ElevatorMovement(100, 80, 1, 1);
 

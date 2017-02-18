@@ -71,7 +71,7 @@ public class BipartiteVertex {
 
 	@Override
 	public String toString() {
-		StringBuffer sb = new StringBuffer();
+		StringBuilder sb = new StringBuilder();
 				
 		String dst = distance == Integer.MAX_VALUE ? dst = "inf" : Integer.toString(distance);
 		String idx = ((this.idx & SUPERSINK) != 0 ? "ssink" : Integer.toString(this.idx & (0xFFFFFFFF - FLAGS)) + "(" + i + ")");

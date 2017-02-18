@@ -7,7 +7,7 @@ public class NspArray {
 	public int nodes, size;
 	public NspNode[] array;
 	
-	NspArray(int nodes, int size, NspNode[] array) { this.nodes = nodes; this.size = size; this.array = array; }
+	public NspArray(int nodes, int size, NspNode[] array) { this.nodes = nodes; this.size = size; this.array = array; }
 
 	@Override
 	protected NspArray clone() { return new NspArray(nodes, size, array != null ? array.clone() : null); }
@@ -24,7 +24,7 @@ public class NspArray {
 
 	@Override
 	public String toString() {
-		StringBuffer sb = new StringBuffer();
+		StringBuilder sb = new StringBuilder();
 		sb.append("Nodes: " + nodes + ", size: " + size + ", data:\n[");
 		if (array != null && array[0] != null) {
 			for (int i = 0; i < nodes; i++) sb.append(Matrix.to5chars(array[i].v, false) + (i == nodes-1 ? "]\n[" : " "));

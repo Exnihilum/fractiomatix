@@ -1,0 +1,1031 @@
+package lkr74.fem1;
+
+import lkr74.matrixlib.Matrix;
+
+public class FEM1Element {
+	// the flags parameter is set to one of these defintions
+	public static final int TETRAHEDRON = 0, HEXAHEDRON = 1, ISOTETRAHEDRON = 2, ISOHEXAHEDRON = 3;
+
+	int nodes=0, flags=0;					// how many integration nodes, flags for this element
+	int neighboursF = 0, neighbours = 0;	// no. of facet-neighbours facet-facet & total neighbours for this element
+	int patch=0;							// index of the smoothing patch that this element belongs to
+	int[] nodeRef;							// indexing into global coordinate list of what nodes that belong to this element
+	double[] node=null, nodeWork=null;		// localised nodes, or global nodes, depending on hasNodes() flag
+	double[] data = null;					// edge lengths [6], areas [4], volume gradients [3x4], crossproduct normals [3x4] go here
+	double[] matProperty = null;			// material properties of this element contained here
+	double[][] computed = null;				// this is a link to possibly precomputed data for this type of element
+	//double[] dsde = null;					// the precomputed stress/strain derivative for this element type
+	double volume=0, iRadius=0, cRadius=0;	// volume, inscribed radius & circumscribed radius of element
+	int[] neighbour;						// holds neighbour elements
+	
+	static byte[] iSortSlot = new byte[513];
+	{ iSortSlot[2]=1; iSortSlot[4]=2; iSortSlot[8]=3; iSortSlot[16]=4; iSortSlot[32]=5; iSortSlot[64]=6; iSortSlot[128]=7; iSortSlot[256]=8; iSortSlot[512]=9; }
+	static byte[] iAreaSlot = new byte[9]; { iAreaSlot[1]=6; iAreaSlot[2]=7; iAreaSlot[4]=8; iAreaSlot[8]=9; }
+	static byte[] iAreaSlot2 = new byte[9]; { iAreaSlot2[1]=0; iAreaSlot2[2]=1; iAreaSlot2[4]=2; iAreaSlot2[8]=3; }
+	static byte[] iEdgeSlot = new byte[513];
+	{ iEdgeSlot[16]=0; iEdgeSlot[32]=1; iEdgeSlot[64]=2; iEdgeSlot[128]=3; iEdgeSlot[256]=4; iEdgeSlot[512]=5; }
+	
+	// instantiates a FEM1 finite element, bringing global nodes locally
+	public FEM1Element(int type, int nodes, int[] nodeRef, double[] nodeG, boolean localise, double[] matProperty) {
+		this.nodes = nodes;
+		flags = type;
+		this.nodeRef = nodeRef.clone();
+		if (localise) {										// copy in global nodes locally only if requested to
+			node = new double[nodes * FEM1.NCOORD];
+			for (int n = 0, c1 = 0; n < nodes; n++) {
+				int cIdx = nodeRef[n] * FEM1.NCOORD;
+				node[c1++] = nodeG[cIdx++]; node[c1++] = nodeG[cIdx++]; node[c1++] = nodeG[cIdx++];
+			}
+			flagHasNodes();
+		} else
+			node = nodeG;
+		this.matProperty = matProperty == null ? null : matProperty.clone();
+	}
+
+	// instantiates a tetrahedron
+	public FEM1Element(double[] nodeG, int cRef1, int cRef2, int cRef3, int cRef4, boolean localise, double[] matProperty) {
+		this.nodes = 4;
+		flags = TETRAHEDRON;
+		this.nodeRef = new int[4];
+		nodeRef[0] = cRef1; nodeRef[1] = cRef2; nodeRef[2] = cRef3; nodeRef[3] = cRef4;
+		if (localise) {										// copy in global nodes locally only if requested to
+			node = new double[nodes * FEM1.NCOORD];
+			cRef1 *= FEM1.NCOORD; node[0] = nodeG[cRef1++]; node[1] = nodeG[cRef1++]; node[2] = nodeG[cRef1++];
+			cRef2 *= FEM1.NCOORD; node[0] = nodeG[cRef2++]; node[1] = nodeG[cRef2++]; node[2] = nodeG[cRef2++];
+			cRef3 *= FEM1.NCOORD; node[0] = nodeG[cRef3++]; node[1] = nodeG[cRef3++]; node[2] = nodeG[cRef3++];
+			cRef4 *= FEM1.NCOORD; node[0] = nodeG[cRef4++]; node[1] = nodeG[cRef4++]; node[2] = nodeG[cRef4++];
+			flagHasNodes();
+		} else
+			node = nodeG;
+		this.matProperty = matProperty == null ? null : matProperty.clone();
+	}
+
+	public int elementType() { return flags & 15; }
+	public void flagHasNodes() { flags |= 16; }
+	public void clearHasNodes() { flags &= 0xFFFFFFFF - 16; }
+	public boolean hasNodes() { return (flags & 16) != 0; }
+	public void flagHasAreas() { flags |= 32; }
+	public void clearHasAreas() { flags &= 0xFFFFFFFF - 32; }
+	public boolean hasAreas() { return (flags & 32) != 0; }
+	public void flagHasEdges() { flags |= 64; }
+	public void clearHasEdges() { flags &= 0xFFFFFFFF - 64; }
+	public boolean hasEdges() { return (flags & 64) != 0; }
+	public void flagHasVGradients() { flags |= 128; }
+	public void clearHasVGradients() { flags &= 0xFFFFFFFF - 128; }
+	public boolean hasVGradients() { return (flags & 128) != 0; }
+	public void flagHasInterfaces() { flags |= 256; }
+	public void clearHasInterfaces() { flags &= 0xFFFFFFFF - 256; }
+	public boolean hasInterfaces() { return (flags & 256) != 0; }
+	public void flagHasXNormals() { flags |= 512; }
+	public void clearHasXNormals() { flags &= 0xFFFFFFFF - 512; }
+	public boolean hasXNormals() { return (flags & 512) != 0; }
+	public void flagHasNormals() { flags |= 1024; }
+	public void clearHasNormals() { flags &= 0xFFFFFFFF - 1024; }
+	public boolean hasNormals() { return (flags & 1024) != 0; }
+	
+	
+	// method exchanges pointer to global node array for localised node array
+	void localiseNodes() {
+		if (hasNodes()) return;											// make sure the nodes aren't already localised
+		double[] nodeG = node;
+		node = new double[nodes * FEM1.NCOORD];
+		for (int n = 0, c1 = 0; n < nodes; n++) {
+			int cIdx = nodeRef[n] * FEM1.NCOORD;
+			node[c1++] = nodeG[cIdx++]; node[c1++] = nodeG[cIdx++]; node[c1++] = nodeG[cIdx++];
+		}
+		flagHasNodes();
+	}
+	
+	
+	// method adds fields to the precalculated data array, depending on what field is requested
+	final static int EDGE_FIELD = 1, AREA_FIELD = 2, VOLGRADIENT_FIELD = 4, NORMAL_FIELD = 8;
+	void setupData(int field) {
+		if ((field & NORMAL_FIELD) != 0) {								// case of request for a normals datafield
+			if (data == null) { data = new double[6 + 4 + 3*4 + 3*4]; return; }
+			if (data.length <= 6+4+3*4) {								// is data[] short of a normals datafield?
+				double[] dataNew = new double[6 + 4 + 3*4 + 3*4];		// copy over the eventual edge, area & gradients data
+				for (int d = 0; d < 6+4+3*4; d++) dataNew[d]=data[d];
+				data = dataNew; return;
+			}
+			return;
+		}
+
+		if ((field & VOLGRADIENT_FIELD) != 0) {							// case of request for volume gradient datafield
+			if (data == null) { data = new double[6 + 4 + 3*4]; return; }
+			if (data.length <= 6 + 4) {									// is data[] short of a volume gradient datafield?
+				double[] dataNew = new double[6 + 4 + 3*4];				// copy over the eventual edge & area data
+				dataNew[0]=data[0]; dataNew[1]=data[1]; dataNew[2]=data[2]; dataNew[3]=data[3]; dataNew[4]=data[4]; dataNew[5]=data[5];
+				dataNew[6]=data[6]; dataNew[7]=data[7]; dataNew[8]=data[8]; dataNew[9]=data[9];
+				data = dataNew; return;
+			}
+			return;
+		}
+		
+		if ((field & (EDGE_FIELD + AREA_FIELD)) != 0) {					// case of request for edge or area datafields
+			if (data == null) { data = new double[6 + 4]; return; }
+			if (data.length > 6 + 4) {									// do we have volume gradient data?
+				double[] dataNew = new double[6 + 4 + 3*4];				// copy over the eventual volume gradient data
+				dataNew[10]=data[10]; dataNew[11]=data[11]; dataNew[12]=data[12]; dataNew[13]=data[13]; dataNew[14]=data[14]; dataNew[15]=data[15];
+				dataNew[16]=data[16]; dataNew[17]=data[17]; dataNew[18]=data[18]; dataNew[19]=data[19]; dataNew[20]=data[20]; dataNew[21]=data[21];
+				data = dataNew; return;
+			}
+		}
+	}
+	
+	
+	// method copies over calculated boundary-shared datafields to neighbours of element
+	public final static int PROPAGATE_AREAS = 1, PROPAGATE_EDGES = 2;
+	public void propagateInterfaces(FEM1 fem, int propType) {
+		if (data == null) return;																// sanity check: do we have calculated data at all?
+		switch (flags & 15) {
+		case TETRAHEDRON:
+			if (!hasInterfaces()) return;														// sanity check: does this element have interfaces?
+			if ((propType & PROPAGATE_AREAS) != 0) {
+				
+				for (int i = 0, neighboursF2 = neighboursF * 2; i < neighboursF2; i += 2) {				
+					FEM1Element elem2 = fem.getElement2(neighbour[i]);
+					if (elem2.hasAreas()) continue;												// element's areas are up to date
+					int intf_flag = neighbour[i + 1];
+					
+					double area1 = data[iAreaSlot[intf_flag & 15]];
+					if (area1 >= 0) {															// do we have a calculated area to share?
+						if (elem2.data == null) elem2.setupData(AREA_FIELD);
+						elem2.data[iAreaSlot[(intf_flag >> 16) & 15]] = area1;
+					}
+					double[] data2 = elem2.data;
+					if (data2[6] > 0 && data2[7] > 0 && data2[8] > 0 && data2[9] > 0) elem2.flagHasAreas();
+				}
+			}
+			if ((propType & PROPAGATE_EDGES) != 0) {
+				
+				int neighboursF2 = neighboursF * 2;
+				for (int i = 0, neighbours2 = neighbours * 2; i < neighbours2; i += 2) {				
+					int intf_flag = neighbour[i + 1];
+					FEM1Element elem2 = fem.getElement2(neighbour[i]);
+					if (elem2.hasEdges()) continue;													// element's edges are up to date
+					if (elem2.data == null) elem2.setupData(EDGE_FIELD);							// allocate for edges & facet areas
+					
+					// process facet-facet first (a facet-facet interface is equivalent to three edge-edge interfaces)
+					if (i < neighboursF2) {
+						
+						int o1 = iAreaSlot2[intf_flag & 15], e2f = iAreaSlot2[(intf_flag>>16) & 15], o2 = e2f * 3;		// get indexes of faces from status bits
+						final int[] e1ni = { 0, 0, 0, 1 }, e2ni = { 0,1,2, 0,2,3, 0,3,1, 1,3,2 };	// initialise indirect face->edge addressing arrays
+						final int[] edges1 = { 0,3,1,0,3, 1,5,2,1,5, 2,4,0,2,4, 4,5,3,4,5 };
+						final int[] edges2 = { 1,3,0,1,3, 2,5,1,2,5, 0,4,2,0,4, 3,5,4,3,5 };
+
+						int[] r2 = elem2.nodeRef;
+						if (nodeRef[e1ni[o1]] == r2[e2ni[o2]]) 	o2 = e2f * 5; else
+						if (nodeRef[e1ni[o1]] == r2[e2ni[++o2]]) o2 = e2f * 5 + 2; else
+						/*if (nodeRef[e1ni[o1]] == r2[e2ni[++o2]])*/ o2 = e2f * 5 + 1;
+						o1 *= 5;
+						double[] edgeLength2 = elem2.data;
+						double eL1 = 0;
+						// for every edge of found facet, check if it's calculated before propagation
+								if ((eL1 = data[edges1[o1++]]) != 0)	edgeLength2[edges2[o2]] = eL1;
+						o2++;	if ((eL1 = data[edges1[o1++]]) != 0)	edgeLength2[edges2[o2]] = eL1;
+						o2++;	if ((eL1 = data[edges1[o1]]) != 0)		edgeLength2[edges2[o2]] = eL1;
+					} else {
+						double edgeL = data[iEdgeSlot[(intf_flag & 1008)]];
+						if (edgeL > 0)																// do we have a calculated edge length to share?
+							elem2.data[iEdgeSlot[((intf_flag >> 16) & 1008)]] = edgeL;
+						}
+					double[] data2 = elem2.data;
+					if (data2[0] > 0 && data2[1] > 0 && data2[2] > 0 && data2[3] > 0 && data2[4] > 0 && data2[5] > 0) elem2.flagHasEdges();
+
+				}
+			}
+			break;
+		case ISOTETRAHEDRON:
+		case HEXAHEDRON:
+		case ISOHEXAHEDRON:
+		}
+	}	
+
+	
+	
+	// method sorts element's edge-edge interfaces grouping them according to the edge index
+	void sortInterfaces() {
+		//if (!hasInterfaces()) return;									// DEBUG: caller method assumed to test if element has interfaces
+		switch (flags & 15) {
+		case TETRAHEDRON:
+			int[][] sorter = new int[10][neighbours * 2];
+			int[] eSCount = {0,0,0,0,0,0,0,0,0,0};
+
+			for (int ngb = 0, neighbours2 = neighbours * 2; ngb < neighbours2;) {
+				// spread out incoming neighbour interfaces into 10 indexed temporary arrays, for later sorted recollection
+				int slot = iSortSlot[neighbour[ngb + 1] & 65535];
+				sorter[slot][eSCount[slot]++] = neighbour[ngb++];
+				sorter[slot][eSCount[slot]++] = neighbour[ngb++];
+			}
+			for (int i = 0, e = 0; e < 10; e++)							// regather neighbours in sorted order
+				for (int eS = 0, eSC = eSCount[e]; eS < eSC;) {
+					neighbour[i++] = sorter[e][eS++];
+					neighbour[i++] = sorter[e][eS++];
+				}
+			break;
+		case ISOTETRAHEDRON:
+		case HEXAHEDRON:
+		case ISOHEXAHEDRON:
+		}
+	}
+
+	
+	
+	
+	// method either inserts a neighbour/interface pair in sorted order or, if element lacks interfaces, inserting just the neighbour
+	// in the second case, flags = 0 means a facet neighbour inserted, flags = 1 means an edge neighbour
+	public void insertNeighbour(int e2, int flags) {
+		boolean hasInterfaces = hasInterfaces();
+		int[] neighbourNew;
+		// only way this case is enacted is for a free-floating neighbourless tetrahedron
+		if (neighbour == null) neighbour = neighbourNew = new int[hasInterfaces ? 8 * 2 : 8];
+		else if (neighbours + (hasInterfaces ? 2 : 1) > neighbour.length)			// existing array can't fit another neighbour?
+			neighbourNew = new int[neighbour.length + (hasInterfaces ? 8 * 2 : 8)];	// optimisation: allocate for 8 additional neighbours
+		else neighbourNew = new int[neighbour.length];								// we CAN fit interface into current array length
+
+		if (hasInterfaces) {														// this block will insert a neighbour & interface pair
+			if (neighbour == null) neighbour = neighbourNew = new int[8 * 2];
+			else if (neighbours + 2 > neighbour.length)								// existing array can't fit another neighbour?
+				neighbourNew = new int[neighbour.length + 8 * 2];					// optimisation: allocate for 8 additional neighbours
+			else neighbourNew = new int[neighbour.length];							// we CAN fit interface into current array length
+
+			int flags1 = flags & 65535;
+			for (int ngb = 0, ngb2 = 0, neighbours2 = neighbours * 2; ngb < neighbours2;) {
+				int flags2 = (neighbour[ngb + 1] & 65535);
+				// TODO: an element can currently only have one interface towards another element, on linear element assumption
+				if (/*flags1 == flags2 && */neighbour[ngb] == e2) return;			// if that neighbour & interface already exist, do nothing more
+				else if (flags1 > flags2) {											// if reached slot that has a lower flag value than inserted flag
+					neighbourNew[ngb2++] = e2; neighbourNew[ngb2++] = flags;		// do the insertion here
+				}
+				neighbourNew[ngb2++] = neighbour[ngb++];							// regular pair copying
+				neighbourNew[ngb2++] = neighbour[ngb++];
+			}
+			if ((flags & 15) != 0) neighboursF++;									// if it was a facet interface, increase facet count
+			
+		} else {																	// this block only inserts neighbour indexes
+			if (neighbour == null) neighbour = neighbourNew = new int[8];
+			else if (neighbours + 1 > neighbour.length)								// existing array can't fit another neighbour?
+				neighbourNew = new int[neighbour.length + 8];						// optimisation: allocate for 8 additional neighbours
+			else neighbourNew = new int[neighbour.length];							// we CAN fit interface into current array length
+
+			for (int ngb = 0, ngb2 = 0; ngb < neighbours; ngb++) {
+				if (neighbour[ngb] == e2) return;									// if neighbour already exists, do nothing more
+				if (flags == 0 && ngb2 == neighboursF)								// if we're inserting a facet neighbour & we're past last facet neighbour
+					neighbourNew[ngb2++] = e2;										// insert
+				neighbourNew[ngb2++] = neighbour[ngb];								// regular copying
+			}
+			if (flags == 0) neighboursF++;											// if it was a facet neighbour, increase facet count
+		}
+		neighbours++;
+		neighbour = neighbourNew;
+	}
+	
+	
+	
+	public void deleteNeighbour(int e2) {
+		boolean foundNeighbour = false;
+		if (hasInterfaces()) {														// this block will delete a neighbour & interface pair
+			int ngb = 0, neighbours2 = neighbours * 2;
+			for (;ngb < neighbours2; ngb += 2)
+				if (neighbour[ngb] == e2) { foundNeighbour = true; break; }			// found neighbour? Break out to next loop
+			
+			if (!foundNeighbour) return;
+			if ((ngb>>1) < neighboursF) neighboursF--;								// if it was a facet naighbour, decrease facet count
+			int ngb2 = ngb + 2;
+			while (ngb2 < neighbours2) {
+				neighbour[ngb++] = neighbour[ngb2++];								// shift neighbours one step down
+				neighbour[ngb++] = neighbour[ngb2++];
+			}					
+		} else {																	// this block only inserts neighbour indexes
+			int ngb = 0;
+			for (; ngb < neighbours; ngb++)
+				if (neighbour[ngb] == e2) { foundNeighbour = true; break; }			// found neighbour? Break out to next loop
+
+			if (!foundNeighbour) return;
+			if ((ngb>>1) < neighboursF) neighboursF--;								// if it was a facet naighbour, decrease facet count
+			int ngb2 = ngb + 1;
+			while (ngb2 < neighbours) neighbour[ngb++] = neighbour[ngb2++];			// shift neighbours one step down
+		}
+		neighbours--;
+	}
+
+	
+	
+	// method, provided with two node indexes and a neighbour tetrahedron's node reference array, returns edge-edge bitshifted interface bitflags
+	// note: calling method has already found that elements are edge-neighbours, so a zero shouldn't be returnable
+	final static int NFF012=1, NFF023=2, NFF031=4, NFF132=8, NEE01=16, NEE02=32, NEE03=64, NEE12=128, NEE13=256, NEE23=512;
+	public int tetraEdgeInterface(int rA, int rB, int[] nodeRef2) {
+		int nA = nodeRef[rA], nB = nodeRef[rB], fl1 = 0;
+		switch (rA) {
+		case 0: switch(rB) {case 1: fl1 = NEE01; break; case 2: fl1 = NEE02; break; case 3: fl1 = NEE03;} break;
+		case 1: switch(rB) {case 0: fl1 = NEE01; break; case 2: fl1 = NEE12; break; case 3: fl1 = NEE13;} break;
+		case 2: switch(rB) {case 0: fl1 = NEE02; break; case 1: fl1 = NEE12; break; case 3: fl1 = NEE23;} break;
+		case 3: switch(rB) {case 0: fl1 = NEE03; break; case 1: fl1 = NEE13; break; case 2: fl1 = NEE23;} break;
+		}
+		if (nA == nodeRef[0]) {
+			if (nB==nodeRef[1]) return fl1|(NEE01<<16); else if (nB==nodeRef[2]) return fl1|(NEE02<<16); else /*if (nB==nodeRef[3])*/ return fl1|(NEE03<<16); //*else return -1;
+		} else if (nA == nodeRef[1]) {
+			if (nB==nodeRef[0]) return fl1|(NEE01<<16); else if (nB==nodeRef[2]) return fl1|(NEE12<<16); else /*if (nB==nodeRef[3])*/ return fl1|(NEE13<<16); //*else return -1;
+		} else if (nA == nodeRef[2]) {
+			if (nB==nodeRef[0]) return fl1|(NEE02<<16); else if (nB==nodeRef[1]) return fl1|(NEE12<<16); else /*if (nB==nodeRef[3])*/ return fl1|(NEE23<<16); //else return -1;
+		} else if (nA == nodeRef[3]) {
+			if (nB==nodeRef[0]) return fl1|(NEE03<<16); else if (nB==nodeRef[1]) return fl1|(NEE13<<16); else /*if (nB==nodeRef[2])*/ return fl1|(NEE23<<16); //else return -1;
+		}
+		return 0;
+	}
+
+	
+	// method locates the edge-edge or facet-facet interface of this tetrahedron with node references of a known neighbour
+	// result returned as bitshifted bitflags, this tetrahedron's in lower 16 bits, the neighbour's in upper 16 bits
+	int tetraNeighbourInterface(int[] nodeRef2) {
+		int va0 = nodeRef[0], va1 = nodeRef[1], va2 = nodeRef[2], va3 = nodeRef[3];
+		int vb0 = nodeRef2[0], vb1 = nodeRef2[1], vb2 = nodeRef2[2], vb3 = nodeRef2[3], fl1 = 0, fl2 = 0;
+		
+		// the neighbourhood interfacing rules check for face-face interfaces, with fallback to edge-edge if two references match
+		for (int i = 2; i > 0; i--) {
+			if (va0==vb0) {
+				if (va1==vb1) {if (va2==vb3) {fl1|=NFF012;fl2|=NFF031;} else if (va3==vb2) {fl1|=NFF031;fl2|=NFF012;} else {fl1|=NEE01;fl2|=NEE01;}} else
+				if (va1==vb2) {if (va2==vb1) {fl1|=NFF012;fl2|=NFF012;} else if (va3==vb3) {fl1|=NFF031;fl2|=NFF023;} else {fl1|=NEE01;fl2|=NEE02;}} else
+				if (va1==vb3) {if (va2==vb2) {fl1|=NFF012;fl2|=NFF023;} else if (va3==vb1) {fl1|=NFF031;fl2|=NFF031;} else {fl1|=NEE01;fl2|=NEE03;}} else
+				if (va2==vb2) {if (va1==vb3) {fl1|=NFF012;fl2|=NFF023;} else if (va3==vb1) {fl1|=NFF023;fl2|=NFF012;} else {fl1|=NEE02;fl2|=NEE02;}} else
+				if (va2==vb3) {if (va1==vb1) {fl1|=NFF012;fl2|=NFF031;} else if (va3==vb2) {fl1|=NFF023;fl2|=NFF023;} else {fl1|=NEE02;fl2|=NEE03;}} else
+				if (va3==vb3) {if (va2==vb1) {fl1|=NFF023;fl2|=NFF031;} else if (va1==vb2) {fl1|=NFF031;fl2|=NFF023;} else {fl1|=NEE03;fl2|=NEE03;}}
+			} else if (va0==vb1) {
+				if (va1==vb0) {if (va2==vb2) {fl1|=NFF012;fl2|=NFF012;} else if (va3==vb3) {fl1|=NFF031;fl2|=NFF031;} else {fl1|=NEE01;fl2|=NEE01;}} else
+				if (va1==vb2) {if (va2==vb3) {fl1|=NFF012;fl2|=NFF132;} else if (va3==vb0) {fl1|=NFF031;fl2|=NFF012;} else {fl1|=NEE01;fl2|=NEE12;}} else
+				if (va1==vb3) {if (va2==vb0) {fl1|=NFF012;fl2|=NFF031;} else if (va3==vb2) {fl1|=NFF031;fl2|=NFF132;} else {fl1|=NEE01;fl2|=NEE13;}} else
+				if (va2==vb2) {if (va1==vb0) {fl1|=NFF012;fl2|=NFF012;} else if (va3==vb3) {fl1|=NFF023;fl2|=NFF132;} else {fl1|=NEE02;fl2|=NEE12;}} else
+				if (va2==vb3) {if (va1==vb2) {fl1|=NFF012;fl2|=NFF132;} else if (va3==vb0) {fl1|=NFF023;fl2|=NFF031;} else {fl1|=NEE02;fl2|=NEE13;}} else
+				if (va3==vb2) {if (va2==vb0) {fl1|=NFF023;fl2|=NFF012;} else if (va1==vb3) {fl1|=NFF031;fl2|=NFF132;} else {fl1|=NEE03;fl2|=NEE12;}} else
+				if (va3==vb3) {if (va2==vb2) {fl1|=NFF023;fl2|=NFF132;} else if (va1==vb0) {fl1|=NFF031;fl2|=NFF031;} else {fl1|=NEE03;fl2|=NEE13;}}
+			} else if (va0==vb2) {
+				if (va1==vb0) {if (va2==vb3) {fl1|=NFF012;fl2|=NFF023;} else if (va3==vb1) {fl1|=NFF031;fl2|=NFF012;} else {fl1|=NEE01;fl2|=NEE02;}} else
+				if (va1==vb1) {if (va2==vb0) {fl1|=NFF012;fl2|=NFF012;} else if (va3==vb3) {fl1|=NFF031;fl2|=NFF132;} else {fl1|=NEE01;fl2|=NEE12;}} else
+				if (va1==vb3) {if (va2==vb1) {fl1|=NFF012;fl2|=NFF132;} else if (va3==vb0) {fl1|=NFF031;fl2|=NFF023;} else {fl1|=NEE01;fl2|=NEE23;}} else
+				if (va2==vb0) {if (va1==vb1) {fl1|=NFF012;fl2|=NFF012;} else if (va3==vb3) {fl1|=NFF023;fl2|=NFF023;} else {fl1|=NEE02;fl2|=NEE02;}} else
+				if (va2==vb1) {if (va1==vb3) {fl1|=NFF012;fl2|=NFF132;} else if (va3==vb0) {fl1|=NFF023;fl2|=NFF012;} else {fl1|=NEE02;fl2|=NEE12;}} else
+				if (va2==vb3) {if (va1==vb0) {fl1|=NFF012;fl2|=NFF023;} else if (va3==vb1) {fl1|=NFF023;fl2|=NFF132;} else {fl1|=NEE02;fl2|=NEE23;}} else
+				if (va3==vb1) {if (va2==vb3) {fl1|=NFF023;fl2|=NFF132;} else if (va1==vb0) {fl1|=NFF031;fl2|=NFF012;} else {fl1|=NEE03;fl2|=NEE12;}} else
+				if (va3==vb3) {if (va2==vb0) {fl1|=NFF023;fl2|=NFF023;} else if (va1==vb1) {fl1|=NFF031;fl2|=NFF132;} else {fl1|=NEE03;fl2|=NEE23;}}
+			} else if (va0==vb3) {
+				if (va1==vb0) {if (va2==vb1) {fl1|=NFF012;fl2|=NFF031;} else if (va3==vb2) {fl1|=NFF031;fl2|=NFF023;} else {fl1|=NEE01;fl2|=NEE03;}} else
+				if (va1==vb1) {if (va2==vb2) {fl1|=NFF012;fl2|=NFF132;} else if (va3==vb0) {fl1|=NFF031;fl2|=NFF031;} else {fl1|=NEE01;fl2|=NEE13;}} else
+				if (va1==vb2) {if (va2==vb0) {fl1|=NFF012;fl2|=NFF023;} else if (va3==vb1) {fl1|=NFF031;fl2|=NFF132;} else {fl1|=NEE01;fl2|=NEE23;}} else
+				if (va2==vb0) {if (va1==vb2) {fl1|=NFF012;fl2|=NFF023;} else if (va3==vb1) {fl1|=NFF023;fl2|=NFF031;} else {fl1|=NEE02;fl2|=NEE03;}} else
+				if (va2==vb1) {if (va1==vb0) {fl1|=NFF012;fl2|=NFF031;} else if (va3==vb2) {fl1|=NFF023;fl2|=NFF132;} else {fl1|=NEE02;fl2|=NEE13;}} else
+				if (va2==vb2) {if (va1==vb1) {fl1|=NFF012;fl2|=NFF132;} else if (va3==vb0) {fl1|=NFF023;fl2|=NFF023;} else {fl1|=NEE02;fl2|=NEE23;}} else
+				if (va3==vb0) {if (va2==vb2) {fl1|=NFF023;fl2|=NFF023;} else if (va1==vb1) {fl1|=NFF031;fl2|=NFF031;} else {fl1|=NEE03;fl2|=NEE03;}} else
+				if (va3==vb1) {if (va2==vb0) {fl1|=NFF023;fl2|=NFF031;} else if (va1==vb2) {fl1|=NFF031;fl2|=NFF132;} else {fl1|=NEE03;fl2|=NEE13;}} else
+				if (va3==vb2) {if (va2==vb1) {fl1|=NFF023;fl2|=NFF132;} else if (va1==vb0) {fl1|=NFF031;fl2|=NFF023;} else {fl1|=NEE03;fl2|=NEE23;}}
+			} else if (va1==vb1) {
+				if (va2==vb2) {if (va3==vb0) {fl1|=NFF132;fl2|=NFF012;} else if (va0==vb3) {fl1|=NFF012;fl2|=NFF132;} else {fl1|=NEE12;fl2|=NEE12;}} else
+				if (va2==vb3) {if (va3==vb2) {fl1|=NFF132;fl2|=NFF132;} else if (va0==vb0) {fl1|=NFF012;fl2|=NFF031;} else {fl1|=NEE12;fl2|=NEE13;}} else
+				if (va3==vb3) {if (va2==vb0) {fl1|=NFF132;fl2|=NFF031;} else if (va0==vb2) {fl1|=NFF031;fl2|=NFF132;} else {fl1|=NEE13;fl2|=NEE13;}}
+			} else if (va1==vb2) {
+				if (va2==vb1) {if (va0==vb0) {fl1|=NFF012;fl2|=NFF012;} else if (va3==vb3) {fl1|=NFF132;fl2|=NFF132;} else {fl1|=NEE12;fl2|=NEE12;}} else
+				if (va2==vb3) {if (va0==vb1) {fl1|=NFF012;fl2|=NFF132;} else if (va3==vb0) {fl1|=NFF132;fl2|=NFF023;} else {fl1|=NEE12;fl2|=NEE23;}} else
+				if (va3==vb3) {if (va2==vb1) {fl1|=NFF132;fl2|=NFF132;} else if (va0==vb0) {fl1|=NFF031;fl2|=NFF023;} else {fl1|=NEE13;fl2|=NEE23;}}			
+			} else if (va1==vb3) {
+				if (va2==vb1) {if (va3==vb0) {fl1|=NFF132;fl2|=NFF031;} else if (va0==vb2) {fl1|=NFF012;fl2|=NFF132;} else {fl1|=NEE12;fl2|=NEE13;}} else
+				if (va2==vb2) {if (va3==vb1) {fl1|=NFF132;fl2|=NFF132;} else if (va0==vb0) {fl1|=NFF012;fl2|=NFF023;} else {fl1|=NEE12;fl2|=NEE23;}} else
+				if (va3==vb1) {if (va2==vb2) {fl1|=NFF132;fl2|=NFF132;} else if (va0==vb0) {fl1|=NFF031;fl2|=NFF031;} else {fl1|=NEE13;fl2|=NEE13;}} else
+				if (va3==vb2) {if (va2==vb0) {fl1|=NFF132;fl2|=NFF023;} else if (va0==vb1) {fl1|=NFF031;fl2|=NFF132;} else {fl1|=NEE13;fl2|=NEE23;}}
+			} else if (va2==vb2) {
+				if (va3==vb3) {if (va0==vb1) {fl1|=NFF023;fl2|=NFF132;} else if (va1==vb0) {fl1|=NFF132;fl2|=NFF023;} else {fl1|=NEE23;fl2|=NEE23;}}
+			} else if (va2==vb3) {
+				if (va3==vb2) {if (va0==vb0) {fl1|=NFF023;fl2|=NFF023;} else if (va1==vb1) {fl1|=NFF132;fl2|=NFF132;} else {fl1|=NEE23;fl2|=NEE23;}}
+			}
+
+			// the rules need to be checked again in reverse aspect (because they are compactified for one-way comparison)
+			if (i == 2) {
+				if (fl1 != 0) break;									// no need to do reverse check if neighbour found
+				int tmp = va0; va0 = vb0; vb0 = tmp;
+				tmp = va1; va1 = vb1; vb1 = tmp;
+				tmp = va2; va2 = vb2; vb2 = tmp;
+				tmp = va3; va3 = vb3; vb3 = tmp;
+			}
+			int tmp = fl1; fl1 = fl2; fl2 = tmp;
+		}
+		return fl1 | (fl2 << 16);
+	}
+
+	
+	// method produces edge lengths of tetrahedron
+	// calculation optimised for tetrahedral meshes where neighbour tetrahedrons can share their edge & tri.area calculations
+	// zero edge length signifies an uncalculated tetrahedral edge (which means, set to zero to enforce recalculation)
+	public void evaluateEdges(boolean localise) {
+		//if (elementType() != TETRAHEDRON) throw new InvalidParameterException("FEM1Element.tetraCircumscribedRadius(): Not a tetrahedron.");
+		if (data == null) data = new double[6 + 4];
+		if (localise) localiseNodes();
+		else if (hasNodes()) {
+			if (data[0] == 0) { double dx = -node[0]+node[3], dy = -node[1]+node[4], dz = -node[2]+node[5]; data[0] = Math.sqrt(dx*dx + dy*dy + dz*dz); }
+			if (data[1] == 0) { double dx = -node[0]+node[6], dy = -node[1]+node[7], dz = -node[2]+node[8]; data[1] = Math.sqrt(dx*dx + dy*dy + dz*dz); }
+			if (data[2] == 0) { double dx = -node[0]+node[9], dy = -node[1]+node[10], dz = -node[2]+node[11]; data[2] = Math.sqrt(dx*dx + dy*dy + dz*dz); }
+			if (data[3] == 0) { double dx = -node[3]+node[6], dy = -node[4]+node[7], dz = -node[5]+node[8]; data[3] = Math.sqrt(dx*dx + dy*dy + dz*dz); }
+			if (data[4] == 0) { double dx = -node[3]+node[9], dy = -node[4]+node[10], dz = -node[5]+node[11]; data[4] = Math.sqrt(dx*dx + dy*dy + dz*dz); }
+			if (data[5] == 0) { double dx = -node[6]+node[9], dy = -node[7]+node[10], dz = -node[8]+node[11]; data[5] = Math.sqrt(dx*dx + dy*dy + dz*dz); }
+		} else {
+			int n0 = nodeRef[0] *  FEM1.NCOORD, n1 = nodeRef[1]  * FEM1.NCOORD; 
+			if (data[0] == 0) { double dx = -node[n0++]+node[n1++], dy = -node[n0++]+node[n1++], dz = -node[n0]+node[n1];
+								data[0] = Math.sqrt(dx*dx + dy*dy + dz*dz); n0 -= 2; n1 -= 2; }
+			int n2 = nodeRef[2] * FEM1.NCOORD;
+			if (data[1] == 0) { double dx = -node[n0++]+node[n2++], dy = -node[n0++]+node[n2++], dz = -node[n0]+node[n2];
+								data[1] = Math.sqrt(dx*dx + dy*dy + dz*dz); n0 -= 2; n2 -= 2; }
+			int n3 = nodeRef[3] * FEM1.NCOORD;
+			if (data[2] == 0) { double dx = -node[n0++]+node[n3++], dy = -node[n0++]+node[n3++], dz = -node[n0]+node[n3];
+								data[2] = Math.sqrt(dx*dx + dy*dy + dz*dz); n0 -= 2; n3 -= 2; }
+			if (data[3] == 0) { double dx = -node[n1++]+node[n2++], dy = -node[n1++]+node[n2++], dz = -node[n1]+node[n2];
+								data[3] = Math.sqrt(dx*dx + dy*dy + dz*dz); n1 -= 2; n2 -= 2; }
+			if (data[4] == 0) { double dx = -node[n1++]+node[n3++], dy = -node[n1++]+node[n3++], dz = -node[n1]+node[n3];
+								data[4] = Math.sqrt(dx*dx + dy*dy + dz*dz); n1 -= 2; n3 -= 2; }
+			if (data[5] == 0) { double dx = -node[n2++]+node[n3++], dy = -node[n2++]+node[n3++], dz = -node[n2]+node[n3];
+								data[5] = Math.sqrt(dx*dx + dy*dy + dz*dz); }
+		}
+		flagHasEdges();
+	}
+
+	
+	// calculate the radius of a sphere that inscribes/fits into a tetrahedron element
+	static final double DIV6 = 1./6.;
+	public void evaluateAreas(boolean findInscribedRadius, boolean localise) {
+		//if (elementType() != TETRAHEDRON) throw new InvalidParameterException("FEM1Element.tetraInscribedRadius(): Not a tetrahedron.");
+		if (data == null) data = new double[6 + 4];
+		if (localise) localiseNodes();
+		if (!findInscribedRadius && hasAreas()) return;						// do nothing more if all areas been calculated & that was the only request
+		double x0, y0, z0, dx01, dy01, dz01, dx02, dy02, dz02, dx03, dy03, dz03, Vt6 = 0;
+		if (hasNodes()) {
+			x0 = node[0]; y0 = node[1]; z0 = node[2];
+			dx01 = node[3] - x0; dy01 = node[4] - y0; dz01 = node[5] - z0;
+			dx02 = node[6] - x0; dy02 = node[7] - y0; dz02 = node[8] - z0;
+			dx03 = node[9] - x0; dy03 = node[10] - y0; dz03 = node[11] - z0;
+		} else {
+			int n0 = nodeRef[0] * FEM1.NCOORD, n1 = nodeRef[1] * FEM1.NCOORD, n2 = nodeRef[2] * FEM1.NCOORD, n3 = nodeRef[3] * FEM1.NCOORD; 
+			x0 = node[n0++]; y0 = node[n0++]; z0 = node[n0];
+			dx01 = node[n1++] - x0; dy01 = node[n1++] - y0; dz01 = node[n1] - z0;
+			dx02 = node[n2++] - x0; dy02 = node[n2++] - y0; dz02 = node[n2] - z0;
+			dx03 = node[n3++] - x0; dy03 = node[n3++] - y0; dz03 = node[n3] - z0;
+		}
+		// find tetrahedron's facet areas
+		double sq1 = dy01 * dz02 - dz01 * dy02, sq2 = dz01 * dx02 - dx01 * dz02, sq3 = dx01 * dy02 - dy01 * dx02;
+		if (data[6] == 0)
+			data[6] = 0.5 * Math.sqrt(sq1*sq1 + sq2*sq2 + sq3*sq3);			// facet 012
+		
+		if (findInscribedRadius) {
+			// Vt6 is tetrahedron volume * 6
+			Vt6 = (sq1 * dx03 + sq2 * dy03 + sq3 * dz03);
+			if (Vt6 < 0) Vt6 = -Vt6;
+			if (volume == 0) volume = Vt6 * DIV6;							// store the volume (if it's not calculated)
+		}
+		
+		if (data[7] == 0) {
+			sq1 = dy01 * dz03 - dz01 * dy03; sq2 = dz01 * dx03 - dx01 * dz03; sq3 = dx01 * dy03 - dy01 * dx03;
+			data[7] = 0.5 * Math.sqrt(sq1*sq1 + sq2*sq2 + sq3*sq3);			// facet 031
+		}
+		if (data[8] == 0) {
+			sq1 = dy02 * dz03 - dz02 * dy03; sq2 = dz02 * dx03 - dx02 * dz03; sq3 = dx02 * dy03 - dy02 * dx03;
+			data[8] = 0.5 * Math.sqrt(sq1*sq1 + sq2*sq2 + sq3*sq3);			// facet 023
+		}
+		if (data[9] == 0) {
+			double dx12 = node[3] - node[6], dy12 = node[4] - node[7], dz12 = node[5] - node[8];
+			double dx23 = node[6] - node[9], dy23 = node[7] - node[10], dz23 = node[8] - node[11];
+			sq1 = dy12 * dz23 - dz12 * dy23; sq2 = dz12 * dx23 - dx12 * dz23; sq3 = dx12 * dy23 - dy12 * dx23;
+			data[9] = 0.5 * Math.sqrt(sq1*sq1 + sq2*sq2 + sq3*sq3);			// facet 132
+		}
+		flagHasAreas();
+		// evaluate the inscribed sphere radius
+		if (findInscribedRadius)
+			iRadius = 0.5 * Vt6 / (data[6] + data[7] + data[8] + data[9]);
+	}
+	
+	
+	public void evaluateNormals(boolean localise, boolean normalise) {
+		if (hasNormals()) return;
+		if (!hasXNormals()) {
+			setupData(NORMAL_FIELD);							// we want to save calculated crossproduct normals
+			double[] node0, node1, node2, node3;
+			int n0, n1, n2, n3;
+			
+			if (localise) localiseNodes();
+			if (hasNodes()) {
+				node0 = node1 = node2 = node3 = node; n0 = 0; n1 = FEM1.NCOORD; n2 = FEM1.NCOORD * 2; n3 = FEM1.NCOORD * 3;
+			} else {
+				n0 = nodeRef[0] * FEM1.NCOORD; n1 = nodeRef[1] * FEM1.NCOORD; n2 = nodeRef[2] * FEM1.NCOORD; n3 = nodeRef[3] * FEM1.NCOORD;
+				if (n0 >= node.length) { node0 = nodeWork; n0 -= node.length; } else node0 = node;
+				if (n1 >= node.length) { node1 = nodeWork; n1 -= node.length; } else node1 = node;
+				if (n2 >= node.length) { node2 = nodeWork; n2 -= node.length; } else node2 = node;
+				if (n3 >= node.length) { node3 = nodeWork; n3 -= node.length; } else node3 = node;
+			}
+			double x0 = node0[n0++], y0 = node0[n0++], z0 = node0[n0], x1 = node1[n1++], y1 = node1[n1++], z1 = node1[n1];	
+			double x10 = x1 - x0, y10 = y1 - y0, z10 = z1 - z0;
+			double x2 = node2[n2++], y2 = node2[n2++], z2 = node2[n2];
+			double x20 = x2 - x0, y20 = y2 - y0, z20 = z2 - z0, x21 = x2 - x1, y21 = y2 - y1, z21 = z2 - z1;
+			if (data[22]==0 && data[23]==0 && data[24]==0) {		// if facet 012 normal uninitialised
+				data[22] = y10 * z20 - z10 * y20; data[23] = z10 * x20 - x10 * z20; data[24] = x10 * y20 - y10 * x20;
+			}
+			double x3 = node3[n3++], y3 = node3[n3++], z3 = node3[n3];
+			double x30 = x3 - x0, y30 = y3 - y0, z30 = z3 - z0;
+			if (data[25]==0 && data[26]==0 && data[27]==0) {		// if facet 023 normal uninitialised
+				data[25] = y20 * z30 - z20 * y30; data[26] = z20 * x30 - x20 * z30; data[27] = x20 * y30 - y20 * x30;
+			}
+			if (data[28]==0 && data[29]==0 && data[30]==0) {		// if facet 031 normal uninitialised
+				data[28] = y30 * z10 - z30 * y10; data[29] = x30 * z10 - z30 * x10; data[30] = x30 * y10 - y30 * x10;
+			}
+			if (data[31]==0 && data[32]==0 && data[33]==0) {		// if facet 132 normal uninitialised
+				double x31 = x3 - x1, y31 = y3 - y1, z31 = z3 - z1;
+				data[31] = y31 * z21 - z31 * y21; data[32] = z31 * x21 - x31 * z21; data[33] = x31 * y21 - y31 * x21;
+			}
+			flagHasXNormals();
+		}
+		if (normalise) {
+			double l012D = 1. / Math.sqrt(data[22]*data[22]+data[23]*data[23]+data[24]*data[24]); data[22]*=l012D; data[23]*=l012D; data[24]*=l012D;
+			double l023D = 1. / Math.sqrt(data[25]*data[25]+data[26]*data[26]+data[27]*data[27]); data[25]*=l023D; data[26]*=l023D; data[27]*=l023D;
+			double l031D = 1. / Math.sqrt(data[28]*data[28]+data[29]*data[29]+data[30]*data[30]); data[28]*=l031D; data[29]*=l031D; data[30]*=l031D;
+			double l132D = 1. / Math.sqrt(data[31]*data[31]+data[32]*data[32]+data[33]*data[33]); data[31]*=l132D; data[32]*=l132D; data[33]*=l132D;
+			clearHasXNormals();
+			flagHasNormals();
+		}
+	}
+	
+	
+	// method evaluares the radius of a sphere that is enclosed by tetrahedron
+	public double tetraInscribedRadius(boolean localise) {
+		if (iRadius > 0) return iRadius;						// a zero inscribed radius indicates it's not calculated/bound for recalculation
+		evaluateAreas(true, localise);
+		return iRadius;
+	}
+	
+	
+	// method calculates the radius of a sphere that circumscribes/envelopes a tetrahedron element
+	public double tetraCircumRadius(boolean localise) {
+		//if (elementType() != TETRAHEDRON) throw new InvalidParameterException("FEM1Element.tetraCircumscribedRadius(): Not a tetrahedron.");
+		if (cRadius > 0) return cRadius;						// a zero circumradius indicates it's not calculated/bound for recalculation
+		if (!hasEdges()) evaluateEdges(localise);
+		double e01e23 = data[0] * data[5], e02e13 = data[1] * data[4], e03e12 = data[2] * data[3];
+		double M5 = (e01e23 + e02e13 + e03e12) * (-e01e23 + e02e13 + e03e12) * (e01e23 - e02e13 + e03e12) * (e01e23 + e02e13 - e03e12) * 0.0625;
+		double volume6;
+		if (volume <= 0) volume = (volume6 = tetraVolume(true, localise)) / 6;
+		else volume6 = volume * 6;
+		return cRadius = Math.sqrt(M5 < 0 ? -M5 : M5) / volume6;
+	}
+	
+	
+	// method determines the barycentric or circumcenter coordinates of tetrahedron by setting up an Ax = b type 3x3-matrix solution,
+	// getting det(A) and det(Ai) according to Cramer's rule, thus solving the three coordinates, plus resolving the circumcenter
+	// coordinates if requested, returns null if det(A) is near zero
+	public double[] tetraBaryCircum(boolean localise, boolean circumcenter) {
+		double x0, y0, z0, x10, y10, z10, x20, y20, z20, x30, y30, z30;
+		if (localise) localiseNodes();
+		if (hasNodes()) {
+			x0 = node[0]; y0 = node[1]; z0 = node[2];
+			x10=node[3]-x0; y10=node[4]-y0; z10=node[5]-z0;
+			x20=node[6]-x0; y20=node[7]-y0; z20=node[8]-z0;
+			x30=node[9]-x0; y30=node[10]-y0; z30=node[11]-z0;
+		} else {
+			int n0 = nodeRef[0] * FEM1.NCOORD, n1 = nodeRef[1] * FEM1.NCOORD, n2 = nodeRef[2] * FEM1.NCOORD, n3 = nodeRef[3] * FEM1.NCOORD; 
+			x0 = node[n0++]; y0 = node[n0++]; z0 = node[n0];
+			x10 = node[n1++]-x0; y10 = node[n1++]-y0; z10 = node[n1]-z0;
+			x20 = node[n2++]-x0; y20 = node[n2++]-y0; z20 = node[n2]-z0;
+			x30 = node[n3++]-x0; y30 = node[n3++]-y0; z30 = node[n3]-z0;
+		}
+		double[] m3x3 = new double[9];
+		m3x3[0] = x10*x10 + y10*y10 + z10*z10;	m3x3[1] = x10*x20 + y10*y20 + z10*z20;	m3x3[2] = x10*x30 + y10*y30 + z10*z30;
+		m3x3[3] = m3x3[1];						m3x3[4] = x20*x20 + y20*y20 + z20*z20;	m3x3[5] = x20*x30 + y20*y30 + z20*z30;
+		m3x3[6] = m3x3[2];						m3x3[7] = m3x3[5];						m3x3[8] = x30*x30 + y30*y30 + z30*z30;
+		double det_m3x3I = Matrix.determinant3x3(m3x3);
+		if (Matrix.nearZero(det_m3x3I)) return null; else det_m3x3I = 1. / det_m3x3I;
+		double bX = .5 * m3x3[0], bY = .5 * m3x3[4], bZ = .5 * m3x3[8];
+		double[] m3x3X = m3x3.clone(), m3x3Y = m3x3.clone(), m3x3Z = m3x3.clone();
+		m3x3X[0] = bX; m3x3X[3] = bY; m3x3X[6] = bZ; m3x3Y[1] = bX; m3x3Y[4] = bY; m3x3Y[7] = bZ; m3x3Z[2] = bX; m3x3Z[5] = bY; m3x3Z[8] = bZ;
+		
+		if (circumcenter) {
+			double[] cCenter = new double[3];
+			double b0 = Matrix.determinant3x3(m3x3X)*det_m3x3I, b1 = Matrix.determinant3x3(m3x3Y)*det_m3x3I, b2 = Matrix.determinant3x3(m3x3Z)*det_m3x3I;
+			cCenter[0] = x0 + b0 * x10 + b1 * x20 + b2 * x30;
+			cCenter[1] = y0 + b0 * y10 + b1 * y20 + b2 * y30;
+			cCenter[2] = z0 + b0 * z10 + b1 * z20 + b2 * z30;
+			return cCenter;
+		}
+		
+		double[] cBarycentric = new double[4];
+		cBarycentric[0] = Matrix.determinant3x3(m3x3X) * det_m3x3I;
+		cBarycentric[1] = Matrix.determinant3x3(m3x3Y) * det_m3x3I;
+		cBarycentric[2] = Matrix.determinant3x3(m3x3Z) * det_m3x3I;
+		cBarycentric[3] = 1.0 - cBarycentric[0] - cBarycentric[1] - cBarycentric[2];
+		return cBarycentric;
+	}
+	
+	public double[] tetraCircumcenter(boolean localise) { return tetraBaryCircum(localise, true); }
+	public double[] tetraBarycentric(boolean localise) { return tetraBaryCircum(localise, false); }
+
+	
+	public double tetraVolume(boolean times6, boolean localise) {
+		//if (elementType() != TETRAHEDRON) throw new InvalidParameterException("FEM1Element.tetraInscribedRadius(): Not a tetrahedron.");
+		if (volume > 0) return volume;							// a zero volume indicates indicates it's not calculated/bound for recalculation
+		// find tetrahedron's triangular areas
+		if (localise) localiseNodes();
+		double x0, y0, z0, dx01, dy01, dz01, dx02, dy02, dz02, dx03, dy03, dz03;
+		if (hasNodes()) {
+			x0 = node[0]; y0 = node[1]; z0 = node[2];
+			dx01 = node[3] - x0; dy01 = node[4] - y0; dz01 = node[5] - z0;
+			dx02 = node[6] - x0; dy02 = node[7] - y0; dz02 = node[8] - z0;
+			dx03 = node[9] - x0; dy03 = node[10] - y0; dz03 = node[11] - z0;
+		} else {
+			int n0 = nodeRef[0] * FEM1.NCOORD, n1 = nodeRef[1] * FEM1.NCOORD, n2 = nodeRef[2] * FEM1.NCOORD, n3 = nodeRef[3] * FEM1.NCOORD; 
+			x0 = node[n0++]; y0 = node[n0++]; z0 = node[n0];
+			dx01 = node[n1++] - x0; dy01 = node[n1++] - y0; dz01 = node[n1] - z0;
+			dx02 = node[n2++] - x0; dy02 = node[n2++] - y0; dz02 = node[n2] - z0;
+			dx03 = node[n3++] - x0; dy03 = node[n3++] - y0; dz03 = node[n3] - z0;
+		}
+		double sq1 = dy01 * dz02 - dz01 * dy02, sq2 = dz01 * dx02 - dx01 * dz02, sq3 = dx01 * dy02 - dy01 * dx02;
+		double Vt6 = (sq1 * dx03 + sq2 * dy03 + sq3 * dz03);	// Vt6 is tetrahedron volume * 6
+		
+		if (times6) return (Vt6 < 0 ? -Vt6 : Vt6);				// caller wants V*6 returned, do not store
+		return volume = (Vt6 < 0 ? -Vt6 : Vt6) * DIV6;			// store the volume
+	}
+	
+	
+	static final double DIV4 = 1./4.;
+	public double[] tetraMassCentre(boolean localise) {
+		if (localise) localiseNodes();
+		if (hasNodes()) {
+			double[] massC = {(node[0]+node[3]+node[6]+node[9])*DIV4, (node[1]+node[4]+node[7]+node[10])*DIV4, (node[2]+node[5]+node[8]+node[11])*DIV4};
+			return massC;
+		} else {
+			double[] massC = {0, 0, 0};
+			int n0 = nodeRef[0] * FEM1.NCOORD, n1 = nodeRef[1] * FEM1.NCOORD, n2 = nodeRef[2] * FEM1.NCOORD, n3 = nodeRef[3] * FEM1.NCOORD;
+			massC[0] = (node[n0++] + node[n1++] + node[n2++] + node[n3++]) * DIV4;
+			massC[1] = (node[n0++] + node[n1++] + node[n2++] + node[n3++]) * DIV4;
+			massC[2] = (node[n0]   + node[n1]   + node[n2]   + node[n3])   * DIV4;
+			return massC;
+		}
+	}
+	
+	// returns quality of this element if it's a tetrahedron: the circumradius to longest edge ratio
+	// the constant is a correction factor alpha = 2 * sqrt(6)
+	public double tetraQuality(boolean localise) {
+		//if (elementType() != TETRAHEDRON) throw new InvalidParameterException("FEM1Element.tetraQuality(): Not a tetrahedron.");
+		if (!hasEdges()) evaluateEdges(localise);
+		double elMaxA = data[0] > data[1] ? data[0] : data[1];		// compare forth longest edge out of 6
+		double elMaxB = data[2] > data[3] ? data[2] : data[3];
+		double elMaxC = data[4] > data[5] ? data[4] : data[5];
+		double elMaxAB = elMaxA > elMaxB ? elMaxA : elMaxB, elMaxABC = elMaxAB > elMaxC ? elMaxAB : elMaxC;
+		return 4.898979485566356 * tetraInscribedRadius(localise) / elMaxABC;
+	}
+	
+	
+	// returns quality based on circumscribed radius to shortest edge ratio
+	public double tetraQuality2(boolean localise) {
+		if (!hasEdges()) evaluateEdges(localise);
+		double elMinA = data[0] < data[1] ? data[0] : data[1];		// compare forth shortest edge out of 6
+		double elMinB = data[2] < data[3] ? data[2] : data[3];
+		double elMinC = data[4] < data[5] ? data[4] : data[5];
+		double elMinAB = elMinA < elMinB ? elMinA : elMinB, elMinABC = elMinAB < elMinC ? elMinAB : elMinC;
+		return tetraCircumRadius(localise) / elMinABC;
+	}
+	
+	
+	
+	// returns the gradient of tetrahedral volume with respect to each vertex or one or more chosen vertices
+	public double[] tetraVolumeGradient(boolean localise, boolean g0, boolean g1, boolean g2, boolean g3) {
+
+		double[] gradient = null;
+		int g = 0;
+		if (localise) {												// localise decides whether gradient is stored locally
+			if (data == null) data = new double[6 + 4 + 3*4];
+			else if (data.length < 6 + 4 + 3*4) {					// if data[] needs extension to hold volume gradients
+				double[] dataNew = new double[6 + 4 + 3*4];
+				dataNew[0]=data[0]; dataNew[1]=data[1]; dataNew[2]=data[2]; dataNew[3]=data[3]; dataNew[4]=data[4]; dataNew[5]=data[5];
+				dataNew[6]=data[6]; dataNew[7]=data[7]; dataNew[8]=data[8]; dataNew[9]=data[9]; data = dataNew;
+			}
+			 gradient = data;
+			 g = 10;
+			 flagHasVGradients();
+		} else { gradient = new double[3 * 4]; }
+		
+		if (hasNodes()) {
+			if (g0 && g1 && g2 && g3) {
+				double dbx = node[9] - node[3], dby = node[10] - node[4], dbz = node[11] - node[5];
+				double cbx = node[6] - node[3], cby = node[7] - node[4], cbz = node[8] - node[5];
+				gradient[g++] = dby*cbz - dbz*cby; gradient[g++] = dbx*cbz - dbz*cbx; gradient[g++] = dbx*cby - dby*cbx;
+				double cax = node[6] - node[0], cay = node[7] - node[1], caz = node[8] - node[2];
+				double dax = node[9] - node[0], day = node[10] - node[1], daz = node[11] - node[2];
+				gradient[g++] = cay*daz - caz*day; gradient[g++] = cax*daz - caz*dax; gradient[g++] = cax*day - cay*dax;
+				double bax = node[3] - node[0], bay = node[4] - node[1], baz = node[5] - node[2];
+				gradient[g++] = day*baz - daz*bay; gradient[g++] = dax*baz - daz*bax; gradient[g++] = dax*bay - day*bax;
+				gradient[g++] = bay*caz - baz*cay; gradient[g++] = bax*caz - baz*cax; gradient[g++] = bax*cay - bay*cax;
+				return gradient;
+			}
+			if (g0) {
+				double dbx = node[9] - node[3], dby = node[10] - node[4], dbz = node[11] - node[5];
+				double cbx = node[6] - node[3], cby = node[7] - node[4], cbz = node[8] - node[5];
+				gradient[g++] = dby*cbz - dbz*cby; gradient[g++] = dbx*cbz - dbz*cbx; gradient[g++] = dbx*cby - dby*cbx; }
+			if (g1) {
+				g = localise ? 13 : 3;
+				double cax = node[6] - node[0], cay = node[7] - node[1], caz = node[8] - node[2];
+				double dax = node[9] - node[0], day = node[10] - node[1], daz = node[11] - node[2];
+				gradient[g++] = cay*daz - caz*day; gradient[g++] = cax*daz - caz*dax; gradient[g++] = cax*day - cay*dax; }
+			if (g2) {
+				g = localise ? 16 : 6;
+				double bax = node[3] - node[0], bay = node[4] - node[1], baz = node[5] - node[2];
+				double dax = node[9] - node[0], day = node[10] - node[1], daz = node[11] - node[2];
+				gradient[g++] = day*baz - daz*bay; gradient[g++] = dax*baz - daz*bax; gradient[g++] = dax*bay - day*bax; }
+			if (g2) {
+				g = localise ? 19 : 9;
+				double bax = node[3] - node[0], bay = node[4] - node[1], baz = node[5] - node[2];
+				double cax = node[6] - node[0], cay = node[7] - node[1], caz = node[8] - node[2];
+				gradient[g++] = bay*caz - baz*cay; gradient[g++] = bax*caz - baz*cax; gradient[g++] = bax*cay - bay*cax; }
+		} else {
+			int n0 = nodeRef[0] * FEM1.NCOORD, n1 = nodeRef[1] * FEM1.NCOORD, n2 = nodeRef[2] * FEM1.NCOORD, n3 = nodeRef[3] * FEM1.NCOORD;
+			double[] node0, node1, node2, node3;
+			if (n0 >= node.length) { node0 = nodeWork; n0 -= node.length; } else node0 = node;
+			if (n1 >= node.length) { node1 = nodeWork; n1 -= node.length; } else node1 = node;
+			if (n2 >= node.length) { node2 = nodeWork; n2 -= node.length; } else node2 = node;
+			if (n3 >= node.length) { node3 = nodeWork; n3 -= node.length; } else node3 = node;
+
+			if (g0 && g1 && g2 && g3) {
+				double bx = node1[n1++], by = node1[n1++], bz = node1[n1];
+				double dbx = node3[n3++] - bx, dby = node3[n3++] - by, dbz = node3[n3] - bz; n3 -= 2;
+				double cx = node2[n2++], cy = node2[n2++], cz = node2[n2];
+				double cbx = cx - bx, cby = cy - by, cbz = cz - bz;
+				gradient[g++] = dby*cbz - dbz*cby; gradient[g++] = dbx*cbz - dbz*cbx; gradient[g++] = dbx*cby - dby*cbx;
+				double ax = node0[n0++], ay = node0[n0++], az = node0[n0];
+				double cax = cx - ax, cay = cy - ay, caz = cz - az;
+				double dax = node3[n3++] - ax, day = node3[n3++] - ay, daz = node3[n3] - az;
+				gradient[g++] = cay*daz - caz*day; gradient[g++] = cax*daz - caz*dax; gradient[g++] = cax*day - cay*dax;
+				double bax = bx - ax, bay = by - ay, baz = bz - az;
+				gradient[g++] = day*baz - daz*bay; gradient[g++] = dax*baz - daz*bax; gradient[g++] = dax*bay - day*bax;
+				gradient[g++] = bay*caz - baz*cay; gradient[g++] = bax*caz - baz*cax; gradient[g++] = bax*cay - bay*cax;
+				return gradient;
+			}
+			if (g0) {
+				double bx = node1[n1++], by = node1[n1++], bz = node1[n1];
+				double dbx = node3[n3++] - bx, dby = node3[n3++] - by, dbz = node3[n3] - bz; n3 -= 2;
+				double cx = node2[n2++], cy = node2[n2++], cz = node2[n2];
+				double cbx = cx - bx, cby = cy - by, cbz = cz - bz;
+				gradient[g++] = dby*cbz - dbz*cby; gradient[g++] = dbx*cbz - dbz*cbx; gradient[g++] = dbx*cby - dby*cbx; }
+			if (g1) {
+				g = localise ? 13 : 3;
+				double ax = node0[n0++], ay = node0[n0++], az = node0[n0];
+				double cax = node2[n2++] - ax, cay = node2[n2++] - ay, caz = node2[n2] - az;
+				double dax = node3[n3++] - ax, day = node3[n3++] - ay, daz = node3[n3] - az;
+				gradient[g++] = cay*daz - caz*day; gradient[g++] = cax*daz - caz*dax; gradient[g++] = cax*day - cay*dax; }
+			if (g2) {
+				g = localise ? 16 : 6;
+				double ax = node0[n0++], ay = node0[n0++], az = node0[n0];
+				double bax = node1[n1++] - ax, bay = node1[n1++] - ay, baz = node1[n1] - az;
+				double dax = node3[n3++] - ax, day = node3[n3++] - ay, daz = node3[n3] - az;
+				gradient[g++] = day*baz - daz*bay; gradient[g++] = dax*baz - daz*bax; gradient[g++] = dax*bay - day*bax; }
+			if (g3) {
+				g = localise ? 19 : 9;
+				double ax = node0[n0++], ay = node0[n0++], az = node0[n0];
+				double bax = node1[n1++] - ax, bay = node1[n1++] - ay, baz = node1[n1] - az;
+				double cax = node2[n2++] - ax, cay = node2[n2++] - ay, caz = node2[n2] - az;
+				gradient[g++] = bay*caz - baz*cay; gradient[g++] = bax*caz - baz*cax; gradient[g++] = bax*cay - bay*cax;
+			}
+		}
+		return gradient;
+	}
+	
+	
+	// method returns 0 if supplied vertex is inside tetrahedron, and >0 if outside
+	// if rigorousTest=true, method returns 1 in bit 0 if supplied vertex is inside tetrahedron, and bits NFF012<<1 or NFF023<<1 or NFF031<<1 or NFF132<<1
+	// or a mix of those if vertex is outside the plane/planes defined by facets NFF012 or NFF023 or NFF031 or NFF132
+	public int tetraVertexEnclosure(boolean localise, double x, double y, double z, boolean rigorousTest) {
+
+		double[] node0, node1, node2, node3;
+		int n0, n1, n2, n3, enclosure = 0;
+		double n012x, n012y, n012z, n023x, n023y, n023z, n031x, n031y, n031z, n132x, n132y, n132z;
+		
+		if (localise) localiseNodes();
+		if (hasNodes()) {
+			node0 = node1 = node2 = node3 = node; n0 = 0; n1 = FEM1.NCOORD; n2 = FEM1.NCOORD * 2; n3 = FEM1.NCOORD * 3;
+		} else {
+			n0 = nodeRef[0] * FEM1.NCOORD; n1 = nodeRef[1] * FEM1.NCOORD; n2 = nodeRef[2] * FEM1.NCOORD; n3 = nodeRef[3] * FEM1.NCOORD;
+			if (n0 >= node.length) { node0 = nodeWork; n0 -= node.length; } else node0 = node;
+			if (n1 >= node.length) { node1 = nodeWork; n1 -= node.length; } else node1 = node;
+			if (n2 >= node.length) { node2 = nodeWork; n2 -= node.length; } else node2 = node;
+			if (n3 >= node.length) { node3 = nodeWork; n3 -= node.length; } else node3 = node;
+		}
+		double x0 = node0[n0++], y0 = node0[n0++], z0 = node0[n0], x1 = node1[n1++], y1 = node1[n1++], z1 = node1[n1];
+		
+		if (hasXNormals() || hasNormals()) {				// if we already have calculated normals or crossproduct normals
+			double nx = x - x0, ny = y - y0, nz = z - z0;	// do immediate dot product comparisons from node0 and node1 aspects
+			if (data[22] * nx + data[23] * ny + data[24] * nz > 0) {		enclosure = (NFF012<<1)+1; if (!rigorousTest) return enclosure; }
+			if (data[25] * nx + data[26] * ny + data[27] * nz > 0) {		enclosure |=(NFF023<<1)+1; if (!rigorousTest) return enclosure; }
+			if (data[28] * nx + data[29] * ny + data[30] * nz > 0) {		enclosure |=(NFF031<<1)+1; if (!rigorousTest) return enclosure; }
+			if (data[31]*(x-x1) + data[32]*(y-y1) + data[33]*(z-z1) > 0) {	enclosure |=(NFF132<<1)+1; if (!rigorousTest) return enclosure; }
+			return enclosure;
+		}
+
+		setupData(NORMAL_FIELD);							// we want to save calculated crossproduct normals
+		double x10 = x1 - x0, y10 = y1 - y0, z10 = z1 - z0;
+		double x2 = node2[n2++], y2 = node2[n2++], z2 = node2[n2];
+		double x20 = x2 - x0, y20 = y2 - y0, z20 = z2 - z0, x21 = x2 - x1, y21 = y2 - y1, z21 = z2 - z1;
+		n012x = data[22] = y10 * z20 - z10 * y20; n012y = data[23] = z10 * x20 - x10 * z20; n012z = data[24] = x10 * y20 - y10 * x20;
+		double nx = x - x0, ny = y - y0, nz = z - z0;
+		if (n012x * nx + n012y * ny + n012z * nz > 0) {						enclosure = (NFF012<<1)+1; if (!rigorousTest) return enclosure; }
+		
+		double x3 = node3[n3++], y3 = node3[n3++], z3 = node3[n3];
+		double x30 = x3 - x0, y30 = y3 - y0, z30 = z3 - z0;
+		n023x = data[25] = y20 * z30 - z20 * y30; n023y = data[26] = z20 * x30 - x20 * z30; n023z = data[27] = x20 * y30 - y20 * x30;
+		if (n023x * nx + n023y * ny + n023z * nz > 0) {						enclosure |=(NFF023<<1)+1; if (!rigorousTest) return enclosure; }
+		
+		n031x = data[28] = y30 * z10 - z30 * y10; n031y = data[29] = x30 * z10 - z30 * x10; n031z = data[30] = x30 * y10 - y30 * x10;
+		if (n031x * nx + n031y * ny + n031z * nz > 0) {						enclosure |=(NFF031<<1)+1; if (!rigorousTest) return enclosure; }
+		
+		double x31 = x3 - x1, y31 = y3 - y1, z31 = z3 - z1;
+		n132x = data[31] = y31 * z21 - z31 * y21; n132y = data[32] = z31 * x21 - x31 * z21; n132z = data[33] = x31 * y21 - y31 * x21;
+		if (n132x * (x - x1) + n132y * (y - y1) + n132z * (z - z1) > 0) {	enclosure |=(NFF132<<1)+1; if (!rigorousTest) return enclosure; }
+		
+		return enclosure;
+	}
+	
+	
+	// method checks if a line segment intersects the tetrahedron, if is assumed that the end coordinates already have
+	// been checked with tetraVertexEnclosure(), checkEnds=false will skip testing whether segment ends are inside the tetrahedron
+	// if isect[] supplied, the intersection coordinates will be returned inside, a triple for every (affected) facet
+	public int tetraSegmentIntersection(boolean localise, double xa, double ya, double za, double xb, double yb, double zb, boolean checkEnds, double[] isect) {
+		
+		int intersector = 0;
+		if (checkEnds) {
+			intersector =  tetraVertexEnclosure(false, xb, yb, zb, true)<<5; //if (intersector > 0) return a_enclosure;	// DEBUG: do complete test
+			intersector |= tetraVertexEnclosure(false, xa, ya, za, true); //if (intersector > 0) return b_enclosure;	// DEBUG: do complete test
+		}
+		
+		if (localise) localiseNodes();
+		double[] node0, node1, node2, node3;
+		int n0, n1, n2, n3;
+		if (hasNodes()) {
+			node0 = node1 = node2 = node3 = node; n0 = 0; n1 = FEM1.NCOORD; n2 = FEM1.NCOORD * 2; n3 = FEM1.NCOORD * 3;
+		} else {
+			n0 = nodeRef[0] * FEM1.NCOORD; n1 = nodeRef[1] * FEM1.NCOORD; n2 = nodeRef[2] * FEM1.NCOORD; n3 = nodeRef[3] * FEM1.NCOORD;
+			if (n0 >= node.length) { node0 = nodeWork; n0 -= node.length; } else node0 = node;
+			if (n1 >= node.length) { node1 = nodeWork; n1 -= node.length; } else node1 = node;
+			if (n2 >= node.length) { node2 = nodeWork; n2 -= node.length; } else node2 = node;
+			if (n3 >= node.length) { node3 = nodeWork; n3 -= node.length; } else node3 = node; }
+		
+		double x0 = node0[n0++], y0 = node0[n0++], z0 = node0[n0], rI012;
+		if (!hasNormals()) evaluateNormals(localise, true);
+		
+		rI012 = (data[22]*(x0-xa)+data[23]*(y0-ya)+data[24]*(z0-za)) / (data[22]*(xb-xa) + data[23]*(yb-ya) + data[24]*(zb-za));
+		if (0 <= rI012 && rI012 <= 1) {				// if line segment intersects plane of facet 012
+			double xv012 = xa + rI012*(xb-xa) - x0, yv012 = ya + rI012*(yb-ya) - y0, zv012 = za + rI012*(zb-za) - z0;	// plane isect point - node0 vector
+			double x10 = node1[n1++]-x0, y10 = node1[n1++]-y0, z10 = node1[n1]-z0, x20 = node2[n2++]-x0, y20 = node2[n2++]-y0, z20 = node2[n2]-z0;
+			double v10v20 =	x10*x20 + y10*y20 + z10*z20;
+			double v012v20 = xv012*x20 + yv012*y20 + zv012*z20, v20v20 = x20*x20 + y20*y20 + z20*z20, v012v10 = xv012*x10 + yv012*y10 + zv012*z10;
+			double v10v10 = x10*x10 + y10*y10 + z10*z10, st012D = 1. / (v10v20*v10v20 - v10v10*v20v20);
+			double sI012 = (v10v20 * v012v20 - v20v20 * v012v10) * st012D, tI012 = (v10v20 * v012v10 - v10v10 * v012v20) * st012D;
+			if (sI012 >= 0 && tI012 >= 0 && sI012 + tI012 <= 1) {	// if intersection point is inside parameterised triangle
+				if (isect != null) { isect[0] = x0+sI012*x10+tI012*x20; isect[1] = y0+sI012*y10+tI012*y20; isect[2] = z0+sI012*z10+tI012*z20; }
+				intersector |= 1024;								// bit 10 flags intersection of facet012
+			}
+		}
+
+	}
+	
+	
+	
+	// method calculates circumcenter of one of 4 chosen facets of a tetrahedron: 012, 023, 031, 132
+	// TODO: debug routine
+	public double[] tetraFacetCircumCenter(boolean localise, int facet) {
+		double xa=0, ya=0, za=0, xb=0, yb=0, zb=0, xc=0, yc=0, zc=0;
+		if (localise) localiseNodes();
+		if (hasNodes()) {
+			switch (facet) {
+			case NFF012: xa=node[0]; ya=node[1]; za=node[2]; xb=node[3]; yb=node[4]; zb=node[5]; xc=node[6]; yc=node[7]; zc=node[8]; break;
+			case NFF023: xa=node[0]; ya=node[1]; za=node[2]; xb=node[6]; yb=node[7]; zb=node[8]; xc=node[9]; yc=node[10]; zc=node[11]; break;
+			case NFF031: xa=node[0]; ya=node[1]; za=node[2]; xb=node[9]; yb=node[10]; zb=node[11]; xc=node[3]; yc=node[4]; zc=node[5]; break;
+			case NFF132: xa=node[3]; ya=node[4]; za=node[5]; xb=node[9]; yb=node[10]; zb=node[11]; xc=node[6]; yc=node[7]; zc=node[8]; break;
+			}
+		} else {
+			int n0 = nodeRef[0] * FEM1.NCOORD, n1 = nodeRef[1] * FEM1.NCOORD, n2 = nodeRef[2] * FEM1.NCOORD, n3 = nodeRef[3] * FEM1.NCOORD;
+			double[] node0, node1, node2, node3;
+			if (n0 >= node.length) { node0 = nodeWork; n0 -= node.length; } else node0 = node;
+			if (n1 >= node.length) { node1 = nodeWork; n1 -= node.length; } else node1 = node;
+			if (n2 >= node.length) { node2 = nodeWork; n2 -= node.length; } else node2 = node;
+			if (n3 >= node.length) { node3 = nodeWork; n3 -= node.length; } else node3 = node;
+			switch (facet) {
+			case NFF012: xa=node0[n0++]; ya=node0[n0++]; za=node0[n0]; xb=node1[n1++]; yb=node1[n1++]; zb=node1[n1]; xc=node2[n2++]; yc=node2[n2++]; zc=node2[n2]; break;
+			case NFF023: xa=node0[n0++]; ya=node0[n0++]; za=node0[n0]; xb=node2[n2++]; yb=node2[n2++]; zb=node2[n2]; xc=node3[n3++]; yc=node3[n3++]; zc=node3[n3]; break;
+			case NFF031: xa=node0[n0++]; ya=node0[n0++]; za=node0[n0]; xb=node3[n3++]; yb=node3[n3++]; zb=node3[n3]; xc=node1[n1++]; yc=node1[n1++]; zc=node1[n1]; break;
+			case NFF132: xa=node1[n1++]; ya=node1[n1++]; za=node1[n1]; xb=node3[n3++]; yb=node3[n3++]; zb=node3[n3]; xc=node2[n2++]; yc=node2[n2++]; zc=node2[n2]; break;
+			}
+		}
+		double xba = xb - xa, yba = yb - ya, zba = zb - za, xca = xc - xa, yca = yc - ya, zca = zc - za;
+		double xCr1 = yba * zca - zba * yca, yCr1 = xba * zca - zba * xca, zCr1 = xba * yca - yba * xca;
+		double baXcaL2D = 1 / (Math.sqrt(xCr1*xCr1 + yCr1*yCr1 + zCr1*zCr1) * 2);
+		double xCr3 = yca * zCr1 - zca * yCr1, yCr3 = xca * zCr1 - zca * xCr1, zCr3 = xca * yCr1 - yca * xCr1;
+		double xCr2 = yCr1 * zba - zCr1 * yba, yCr2 = xCr1 * zba - zCr1 * xba, zCr2 = xCr1 * yba - yCr1 * xba;
+		double caL = Math.sqrt(xca*xca + yca*yca + zca*zca), baL = Math.sqrt(xba*xba + yba*yba + zba*zba);
+		double xSumD = caL * xCr2 + baL * xCr3, ySumD = caL * yCr2 + baL * yCr3, zSumD = caL * zCr2 + baL * zCr3;
+		double[] cCenter = new double[3];
+		cCenter[0] = xa + xSumD * baXcaL2D; cCenter[1] = ya + ySumD * baXcaL2D; cCenter[2] = za + zSumD * baXcaL2D;		
+		return cCenter;
+	}
+		
+	
+	///////////////////////////////////////////////////////////////////////////////////////////////////////////
+	//			OUTPUT METHODS
+	///////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	@Override
+	public String toString() {
+		StringBuffer sb = new StringBuffer();
+		sb.append("Element: ");
+		switch (flags & 15) {
+			case TETRAHEDRON: sb.append("tetrahedron\n"); break;
+			case HEXAHEDRON: sb.append("hexahedron\n"); break;
+			case ISOTETRAHEDRON: sb.append("isotetrahedron\n"); break;
+			case ISOHEXAHEDRON: sb.append("isohexahedron\n"); break;
+		}
+		if (volume > 0) sb.append(String.format("Volume: %.5f m^3\n", volume));
+		switch (flags & 15) {
+			case TETRAHEDRON:
+				for (int n = 0; n < 4; n++) {
+					sb.append("Node ref " + n + ": " + "n" + nodeRef[n]);
+					if (hasNodes()) sb.append(", local: [" + node[n*3] + "," + node[n*3+1] + "," + node[n*3+2] + "]\n");
+					else			sb.append(", global: [" + node[nodeRef[n]*3] + "," + node[nodeRef[n]*3+1] + "," + node[nodeRef[n]*3+2] + "]\n");
+				}
+				if (data != null) {
+					if (data[6] > 0) sb.append("AREA 012: " + String.format("%.5f", data[6]) + " m^2\n");
+					if (data[7] > 0) sb.append("AREA 023: " + String.format("%.5f", data[7]) + " m^2\n");
+					if (data[8] > 0) sb.append("AREA 031: " + String.format("%.5f", data[8]) + " m^2\n");
+					if (data[9] > 0) sb.append("AREA 132: " + String.format("%.5f", data[9]) + " m^2\n");
+					if (data[0] > 0) sb.append("edge 01: " + String.format("%.5f", data[0]) + " m\n");
+					if (data[1] > 0) sb.append("edge 02: " + String.format("%.5f", data[1]) + " m\n");
+					if (data[2] > 0) sb.append("edge 03: " + String.format("%.5f", data[2]) + " m\n");
+					if (data[3] > 0) sb.append("edge 12: " + String.format("%.5f", data[3]) + " m\n");
+					if (data[4] > 0) sb.append("edge 13: " + String.format("%.5f", data[4]) + " m\n");
+					if (data[5] > 0) sb.append("edge 23: " + String.format("%.5f", data[5]) + " m\n");
+					if (data.length > 10) {
+						if (data[10] != 0) sb.append(String.format("Vol.gradient n0: %.5f, %.5f, &%.5f\n", data[10], data[11], data[12]));
+						if (data[13] != 0) sb.append(String.format("Vol.gradient n1: %.5f, %.5f, &%.5f\n", data[13], data[14], data[15]));
+						if (data[16] != 0) sb.append(String.format("Vol.gradient n2: %.5f, %.5f, &%.5f\n", data[16], data[17], data[18]));
+						if (data[19] != 0) sb.append(String.format("Vol.gradient n3: %.5f, %.5f, &%.5f\n", data[19], data[20], data[21]));
+					}
+				}
+				if (hasInterfaces())
+					for (int nI = 0, neighbours2 = neighbours * 2; nI < neighbours2; nI += 2) {
+						int intf_flag = neighbour[nI + 1];
+						if ((intf_flag & 15) != 0) {
+							sb.append("SHARES FACE ");
+							switch (intf_flag & 15) {
+							case 1: sb.append("012 [n" + nodeRef[0] + ",n" + nodeRef[1] + ",n" + nodeRef[2] + "]"); break;
+							case 2:	sb.append("023 [n" + nodeRef[0] + ",n" + nodeRef[2] + ",n" + nodeRef[3] + "]"); break;
+							case 4: sb.append("031 [n" + nodeRef[0] + ",n" + nodeRef[3] + ",n" + nodeRef[1] + "]"); break;
+							case 8: sb.append("132 [n" + nodeRef[1] + ",n" + nodeRef[3] + ",n" + nodeRef[2] + "]"); break;
+							}
+							sb.append(" WITH FACE ");
+							switch ((intf_flag >> 16) & 15) {
+							case 1: sb.append("012"); break;
+							case 2:	sb.append("023"); break;
+							case 4: sb.append("031"); break;
+							case 8: sb.append("132"); break;
+							}
+							sb.append(" OF ELEMENT " + neighbour[nI] + "\n");
+						} else {
+							sb.append("Shares edge ");
+							switch (intf_flag & 1008) {
+							case 16: 	sb.append("01 [n" + nodeRef[0] + ",n" + nodeRef[1] + "]"); break;
+							case 32:	sb.append("02 [n" + nodeRef[0] + ",n" + nodeRef[2] + "]"); break;
+							case 64: 	sb.append("03 [n" + nodeRef[0] + ",n" + nodeRef[3] + "]"); break;
+							case 128: 	sb.append("12 [n" + nodeRef[1] + ",n" + nodeRef[2] + "]"); break;
+							case 256: 	sb.append("13 [n" + nodeRef[1] + ",n" + nodeRef[3] + "]"); break;
+							case 512: 	sb.append("23 [n" + nodeRef[2] + ",n" + nodeRef[3] + "]"); break;
+							}
+							sb.append(" with edge ");
+							switch ((intf_flag >> 16) & 1008) {
+							case 16: 	sb.append("01"); break;
+							case 32:	sb.append("02"); break;
+							case 64: 	sb.append("03"); break;
+							case 128: 	sb.append("12"); break;
+							case 256: 	sb.append("13"); break;
+							case 512: 	sb.append("23"); break;
+							}
+							sb.append(" of element " + neighbour[nI] + "\n");
+						}
+					}
+				break;
+			case HEXAHEDRON:
+			case ISOTETRAHEDRON:
+			case ISOHEXAHEDRON:
+		}
+		
+		sb.append("Neighbours: [");
+		if (neighbours == 0 || neighbour == null) sb.append("n/a]\n");
+		else {
+			if (neighboursF > 0) sb.append("F: ");
+			for (int n = 0, nF = neighboursF; n < neighbours; n++, nF--) {
+				if (hasInterfaces()) {
+					if (nF == 0 && neighboursF < neighbours) sb.append("e: ");
+					sb.append("T" + neighbour[n * 2] + (n == neighbours - 1 ? "]\n" : ", "));
+				} else {
+					if (nF == 0 && neighboursF < neighbours) sb.append("e: ");
+					sb.append("T" + neighbour[n] + (n == neighbours - 1 ? "]\n" : ", "));
+				}
+			}
+		}
+		sb.append("\n");
+		return sb.toString();
+	}
+}

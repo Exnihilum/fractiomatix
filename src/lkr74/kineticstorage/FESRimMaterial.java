@@ -1,4 +1,4 @@
-package kineticstorage;
+package lkr74.kineticstorage;
 
 
 // Singleton initialisation of a rim material database
