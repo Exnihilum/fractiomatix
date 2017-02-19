@@ -41,6 +41,7 @@ public class FEM1 {
 	int[] polygonOffset = null;						// polygon node offsets work both as specifiers of poly node count and give position of polygon in array
 	int[] polygonEdgeIndex = null;					// indexes matching each shared edge to particular polygons
 	double[] polygonEdge = null;					// array specifying edge length of every polygonal edge
+	int[] polygonEdgeN = null;						// convenient back-reference from edge index to the underlying nodes
 	int polygonEdges;								// total nonredundant count of polygon edges
 	//int[] polygonPatch = null;					// every polygon's patch membership is indexed here
 
@@ -69,8 +70,9 @@ public class FEM1 {
 
 	// parameters pertaining to tetraherdonisation lie here
 	double maxTsize = 1;							// maximal bound on size of any constructed tetrahedron
+	public int octreeMaxItems = 60;					// the max. number of items per octant leaf we allow
+	public int nodeworkFactor = 4;					// let nodeWork[] array be maxium 1/4th of node[] array
 	
-	private static final int NODEWORK_FACTOR = 4;	// let nodeWork[] array be maxium 1/4th of node[] array
 	// the datatype requested from the object instancer
 	public static final int MESH_HANDMADE = 0, MESH_HANDMADE_OBJECTIFIED = 1, MESH_PSC = 2;
 	// the states for constructing tetra-elements during file reading
@@ -114,6 +116,8 @@ public class FEM1 {
 		taskNum = 0;
 	}
 
+	// skeleton FEM solution instantiator
+	public FEM1(String name) { this.name = name; }
 	
 	// method instantiates a single FEM1 object from a Lightwave OBJ file, from current buffer position
 	// note: this is code accepting a ready-made object subdivided into tetrahedra purely for small handmade test meshes
@@ -398,26 +402,43 @@ public class FEM1 {
 	}
 	
 	
-	// mwthod adds new node, returns it's index
-	public int addNode(double x, double y, double z) {
+	// method adds new node, returns it's index
+	public int addNode(double x, double y, double z, byte flag) {
 		int n;
+		// the case of starting a new node collection
+		if (node == null) {
+			node = new double[(nodes = 64) * NCOORD]; nodeWork  = new double[(n = nodes / nodeworkFactor) * NCOORD];
+			node[0] = x; node[1] = y; node[2] = z;
+			deletedNode = new int[nodes + n]; deletedNodes = 63;
+			for (int nD = 1; nD < nodes; nD++) deletedNode[nD - 1] = nodes - nD;
+			return 0;
+		}
+		// the case of having freed nodes
 		if (deletedNodes > 0) {
-			int n3 = deletedNode[--deletedNodes] * 3;
-			if (n3 >= node.length) { n3 -= node.length; n = n3 / 3; nodeWork[n3++] = x; nodeWork[n3++] = y; nodeWork[n3++] = z; }
-			else { n = n3 / 3; node[n3++] = x; node[n3++] = y; node[n3++] = z; }
+			int n3 = deletedNode[--deletedNodes] * NCOORD;
+			if (n3 >= node.length) {
+				n3 -= node.length; n = n3 / 3; nodeWork[n3++] = x; nodeWork[n3++] = y; nodeWork[n3] = z; nodesWork++;
+				if (nodeFlag != null) nodeWorkFlag[n] = flag;
+			} else {
+				n = n3 / NCOORD; node[n3++] = x; node[n3++] = y; node[n3] = z;
+				if (nodeFlag != null) nodeFlag[n] = flag; }
 			return n;
 		}
 		// the case of adding to nodeWork[] or increasing it (nodesWork counter can be less than nodeWork[] size)
-		int n3 = nodesWork++ * 3;
-		if (nodeWork != null && n3 < nodeWork.length) { nodeWork[n3++] = x; n = n3 / 3; nodeWork[n3++] = y; nodeWork[n3++] = z; }
-		else {															// if we filled nodeWork[] array
+		n = nodes;
+		int n3 = nodesWork * NCOORD;
+		if (nodeWork != null && n3 < nodeWork.length) {
+			nodeWork[n3++] = x; nodeWork[n3++] = y; nodeWork[n3] = z; nodes++; nodesWork++;
+			if (nodeFlag != null) nodeWorkFlag[nodesWork] = flag;
+		} else {														// if we filled nodeWork[] array
 			mergeNodeWork();											// merge it into node[] array
-			int nodesWork2 = nodes / NODEWORK_FACTOR;
+			int nodesWork2 = nodes / nodeworkFactor;
 			if (nodesWork2 < 8) nodesWork2 = 8;
-			nodeWork = new double[nodesWork2 * FEM1.NCOORD];			// create new nodeWork[] array
+			nodeWork = new double[nodesWork2 * NCOORD];					// create new nodeWork[] array
 			nodeWork[0] = x; nodeWork[1] = y; nodeWork[2] = z;
-			n = nodes;
+			if (nodeFlag != null) nodeWorkFlag[0] = flag;
 			nodesWork = 1;
+			deletedNode = new int[nodes++ + nodesWork2];				// assign new array for deleted nodes
 		}
 		return n;
 	}
@@ -425,9 +446,14 @@ public class FEM1 {
 	// since elements refer to nodes by index and reindexing elements is an extra expense, this class will maintain a node's index
 	// up until it's complete deletion (only allowed to happen if no element refers to it anymore) and put new nodes in place of deleted ones
 	public void deleteNode(int n) {
-		int n3 = n * 3;
-		if (n3 < node.length) {	node[n3++] = Double.MAX_VALUE; node[n3++] = Double.MAX_VALUE; node[n3++] = Double.MAX_VALUE;
-		} else					n3 -= node.length;
+		if (node == null) return;
+		int n3 = n * NCOORD;
+		if (n3 < node.length) {
+					if (node[n3] == Double.MAX_VALUE) return;						// if node already deleted, do nothing more
+					node[n3++] = Double.MAX_VALUE; node[n3++] = Double.MAX_VALUE; node[n3] = Double.MAX_VALUE;
+		} else {	n3 -= node.length;
+					if (nodeWork[n3] == Double.MAX_VALUE) return;					// if node already deleted, do nothing more
+					nodeWork[n3++] = Double.MAX_VALUE; nodeWork[n3++] = Double.MAX_VALUE; nodeWork[n3] = Double.MAX_VALUE; }
 		if (deletedNodes < deletedNode.length) deletedNode[deletedNodes++] = n;
 	}
 	
@@ -435,17 +461,17 @@ public class FEM1 {
 		if (nodeWork == null) return;
 		int nodesTot3 = nodes * 3;
 		double[] nodeNew = new double[nodesTot3];
-		byte[] nodeFlagNew = new byte[nodes];
-		int n = 0, nEnd = node.length, nEndEven = nEnd & 0xFFFFFFFE;
-		while (n < nEndEven) { nodeNew[n] = node[n++]; nodeNew[n] = node[n++]; }						// simple loop unrolling optimisation
-		if (nEnd > nEndEven) nodeNew[n] = node[n];														// copy final node (if it exists)
-		n = 0; while (n < nEndEven) { nodeFlagNew[n] = nodeFlag[n++]; nodeFlagNew[n] = nodeFlag[n++]; }	// simple loop unrolling optimisation
-		if (nEnd > nEndEven) nodeFlagNew[n] = nodeFlag[n++];											// copy final node (if it exists)
-		nEnd += nodesTot3 - nEnd; nEndEven = nEnd & 0xFFFFFFFE;
-		while (n < nEndEven) { nodeNew[n] = nodeWork[n++]; nodeNew[n] = nodeWork[n++]; }
-		if (nEnd > nEndEven) nodeNew[n] = nodeWork[n];
-		n = 0; while (n < nEndEven) { nodeFlagNew[n] = nodeWorkFlag[n++]; nodeFlagNew[n] = nodeWorkFlag[n++]; }
-		if (nEnd > nEndEven) nodeFlagNew[n] = nodeWorkFlag[n];
+		byte[] nodeFlagNew = nodeFlag != null ? new byte[nodes] : null;
+		int n = 0, nW = 0, n3 = 0, n3W = 0, nEnd = nodes - nodesWork;
+		if (nodeFlag != null)
+		while (n < nEnd) {		nodeNew[n3] = node[n3++]; nodeNew[n3] = node[n3++]; nodeNew[n3] = node[n3++];
+								nodeFlagNew[n] = nodeFlag[n++]; }
+		else while (n < nEnd) {	nodeNew[n3] = node[n3++]; nodeNew[n3] = node[n3++]; nodeNew[n3] = node[n3++]; n++; }
+		nEnd += nodesWork;
+		if (nodeFlag != null)
+			while (n < nEnd) {	nodeNew[n3++] = nodeWork[n3W++]; nodeNew[n3++] = nodeWork[n3W++]; nodeNew[n3++] = nodeWork[n3W++];
+								nodeFlagNew[n++] = nodeWorkFlag[nW++]; }
+		else while (n < nEnd) {	nodeNew[n3++] = nodeWork[n3W++]; nodeNew[n3++] = nodeWork[n3W++]; nodeNew[n3++] = nodeWork[n3W++]; n++; }
 		node = nodeNew; nodeWork = null; nodesWork = 0;
 		nodeFlag = nodeFlagNew; nodeWorkFlag = null;
 	}
@@ -877,28 +903,29 @@ public class FEM1 {
 	
 	
 	// method generates nonredundant mapping of every facet edge to it's length, where facet edges can share a length
-	// the mapping is from a circular definition of an edge as point(n) to point(n+1), index-mirrors the polygon nodes array polygon[] exactly,
+	// the mapping is from a circular definition of an edge as point(n) to point(n+1), it index-mirrors the polygon nodes array polygon[] exactly,
 	// and points to an array of edge lengths polygonEdge[] and an array of node index duplets polygonEdgeN[] (for back-reference to underlying edge data)
 	void facetEdgeLengths() {
 		int polyNodes = polygonOffset[polygons];
 		polygonEdgeIndex = new int[polyNodes];									// polygonEdgeIndex[] is the mapper to the edge lengths
 		for (int i = 0; i < polyNodes; i++) polygonEdgeIndex[i] = -1;			// set all entries to unmapped, -1
 		double[] polygonEdgeT = new double[polyNodes];							// worst-case allocation
-		int eC = 0;																// the node counter & the edge counter
+		int[] polygonEdgeNT = new int[polyNodes * 2];							// worst-case allocation
+		int eC = 0, eNP = 0;													// the edge counter & the node pair counter
 		
 		// every consecutive facet is checked if it's edges are already remapped by a previously checked neighbour
 		// a new edge length is generated case an edge hasn't been mapped yet
 		for (int f = 0; f < polygons; f++) {
 			int n = polygonOffset[f];
 			if (polygonEdgeIndex[n] == -1) {									// check if current facet edge n0-n1 hasn't been mapped yet
-				polygonEdgeT[eC] = distance(polygon[n++], polygon[n--], true);
-				polygonEdgeIndex[n] = eC++; } n++;								// map to unique position in polygonEdgeT[]		
+				polygonEdgeT[eC] = distance(polygonEdgeNT[eNP++] = polygon[n++], polygon[polygonEdgeNT[eNP++] = n--], true);
+				polygonEdgeIndex[n] = eC++; } n++;								// map to unique position in polygonEdge[]		
 			if (polygonEdgeIndex[n] == -1) {									// check if current facet edge n1-n2 hasn't been mapped yet
-				polygonEdgeT[eC] = distance(polygon[n++], polygon[n--], true);
-				polygonEdgeIndex[n] = eC++; } n++;								// map to unique position in polygonEdgeT[]				
+				polygonEdgeT[eC] = distance(polygonEdgeNT[eNP++] = polygon[n++], polygonEdgeNT[eNP++] = polygon[n--], true);
+				polygonEdgeIndex[n] = eC++; } n++;								// map to unique position in polygonEdge[]				
 			if (polygonEdgeIndex[n] == -1) {									// check if current facet edge n2-n0 hasn't been mapped yet
-				polygonEdgeT[eC] = distance(polygon[n], polygon[n - 2], true);
-				polygonEdgeIndex[n] = eC++; }									// map to unique position in polygonEdgeT[]	
+				polygonEdgeT[eC] = distance(polygonEdgeNT[eNP++] = polygon[n], polygonEdgeNT[eNP++] = polygon[n - 2], true);
+				polygonEdgeIndex[n] = eC++; }									// map to unique position in polygonEdge[]	
 
 			// check neighbours and remap them to the same indexes as current facet in polygonEdgeT[]
 			int[] facetNgb = polygonNeighbours[f];
@@ -926,9 +953,13 @@ public class FEM1 {
 			}
 		}
 		
-		// time to rescale polygonEdgeT[] to it's final size
+		// time to rescale polygonEdgeT[] & polygonEdgeNT[] to their final size
 		polygonEdge = new double[polygonEdges = eC];
-		for (int e = 0; e < eC; e++) polygonEdge[e] = polygonEdgeT[e];
+		polygonEdgeN = new int[polygonEdges * 2];
+		for (int e = 0, e2 = 0; e < eC; e++) {
+			polygonEdge[e] = polygonEdgeT[e];
+			polygonEdgeN[e2] = polygonEdgeNT[e2++]; polygonEdgeN[e2] = polygonEdgeNT[e2++];
+		}
 	}
 	
 	
@@ -1009,7 +1040,7 @@ public class FEM1 {
 	// findInterfaces = true means the array will consist of element index & interface bitcode pairs, method finds the edge or facet interfaces
 	// towards the neighbours and employs a flagging array for found neighbour interfaces with following bits (0,1,2,3 being tetrahedral vertexes):
 	//		facet-facet: 012, 023, 031, 132
-	//		edge-edge: 01, 02, 03, 12, 13, 23			(all in all 10 bits for a tetrahedron)
+	//		edge-edge: 01, 02, 03, 12, 13, 23			(all in all 10 bits for a tetrahedron, 10 + 10(neighbour) bits packed in an integer)
 	void tetraNeighbours(int[] elemList, boolean findInterfaces) {
 
 		if (elementSupports == null) elementsNodeSupport();				// we need array of elements supported by each node (unless previously calculated)
@@ -1252,7 +1283,7 @@ public class FEM1 {
 	
 	
 	// given three existing nodes, spawns a tetrahedron with optimal 4th node position, nodes could be from spawning tetrahedron or boundary facet
-	// method demands properly ordered input nodes, anticlockwise from point of view of the new tetrahedron
+	// method demands locally-proper-ordered input nodes: anticlockwise from point of view of the new tetrahedron
 	// the 4th node (n3) must be allocated and supplied, and it's coordinates will be replaced
 	private static double SQRT6D3 = 0.8164965809277259;
 	public FEM1Element optimalTetrahedron(int n0, int n1, int n2, int n3) {
@@ -1545,7 +1576,7 @@ public class FEM1 {
 			}
 			// the case of the median crossing over to a corner octant to the two neighbour octants:
 			// find the topmost container and do an extraneous node insertion
-			else	octant = octree.addNode(xm, ym, zm, nM3 / 3, true);	
+			else	octant = octree.addNode(this, xm, ym, zm, nM3 / 3, octreeMaxItems, true);	
 			
 			if (medianOctants != null) medianOctants[nP] = octant;
 		}

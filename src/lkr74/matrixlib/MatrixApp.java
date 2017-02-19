@@ -553,12 +553,23 @@ public class MatrixApp {
 //		int optimalCluster = testOctreeBuildClosestNodes("data/landscape.obj", 2, 1000, 20, true);
 //		if(1==1) return;
 		
-		BufferedReader br = null;
+		// test different nodeWork allocation factors, comparing speed of execution
+		for (int nwf = 1; nwf < 256; nwf++) {
+			FEM1 fem2 = new FEM1("test");
+			fem2.nodeworkFactor = nwf;
+			tStart = System.nanoTime();
+			for (int n = 0; n < 8000; n++) fem2.addNode((Math.random()-0.5)*100, (Math.random()-0.5)*100, (Math.random()-0.5)*100, (byte)0);
+			for (int n = 0; n < 8000; n++) fem2.deleteNode((int)(Math.random() * fem2.nodes));
+			tEnd = System.nanoTime();
+			System.out.printf("FEM1.addNode() & deleteNode() with alloc.factor " + fem2.nodeworkFactor + " execution: %.1f ns\n", (double)(tEnd - tStart));
+		}
+
 		FEM1 fem = null;
-		
+		BufferedReader br = null;		
 		// test loading a single object mesh from OBJ file with smoothing groups and normals
 		try {
-			br = new BufferedReader(new FileReader("data/roundedplate.obj"));
+			br = new BufferedReader(new FileReader("data/landscape.obj"));
+			//br = new BufferedReader(new FileReader("data/roundedplate.obj"));
 			fem = new FEM1(br, FEM1.MESH_PSC);
 			br.close();
 		} catch (FileNotFoundException e) {
@@ -568,7 +579,7 @@ public class MatrixApp {
 		}
 		
 		FEM1Octree octree = new FEM1Octree(fem);
-		if (octree.nodes > 20) octree.buildOctree(fem, 60, 10);		// max 60 nodes per octant leaf found as optimal value
+		if (octree.nodes > fem.octreeMaxItems) octree.buildOctree(fem, fem.octreeMaxItems, 0);		// max 60 nodes per octant leaf found as optimal value
 		//fem.closestNodesToOBJ(octree);
 		
 //		FEM1Octree[] octantsClosest = new FEM1Octree[2];
@@ -594,7 +605,7 @@ public class MatrixApp {
 //		int[] deletionRef = {0, 1, 2};
 //		fem.deleteElements(deletionRef);
 		
-		FEM1Element optElem = fem.optimalTetrahedron(0, 1, 2, fem.addNode(0, 0, 0));
+		FEM1Element optElem = fem.optimalTetrahedron(0, 1, 2, fem.addNode(0, 0, 0, (byte)0));
 		
 		tStart = System.nanoTime();
 		int[] tWorst = fem.tetraWorstSort(10, .8, .2, false);
