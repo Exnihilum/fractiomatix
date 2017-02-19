@@ -602,7 +602,7 @@ public class FEM1 {
 	
 	
 	// method finds the nodes fully encapsulated into the volume (those that can be moved with full degree of freedom inside the domain)
-	// method is only useful for a parsed input volume with already generated trihedrons whose internal nodes must be found
+	// method is only useful for a parsed input volume with already generated tetrahedrons whose internal nodes must be found
 	public int[] internalNodes() {
 		
 		if (element2 == null) return null;							// object-oriented elements must be initialised
@@ -876,11 +876,13 @@ public class FEM1 {
 	}
 	
 	
-	// method generates nonredundant mapping of evefy facet edge to it's length, where facet edges can share a length
+	// method generates nonredundant mapping of every facet edge to it's length, where facet edges can share a length
+	// the mapping is from a circular definition of an edge as point(n) to point(n+1), index-mirrors the polygon nodes array polygon[] exactly,
+	// and points to an array of edge lengths polygonEdge[] and an array of node index duplets polygonEdgeN[] (for back-reference to underlying edge data)
 	void facetEdgeLengths() {
 		int polyNodes = polygonOffset[polygons];
 		polygonEdgeIndex = new int[polyNodes];									// polygonEdgeIndex[] is the mapper to the edge lengths
-		for (int i = 0; i < polyNodes; i++) polygonEdgeIndex[i] = -1;
+		for (int i = 0; i < polyNodes; i++) polygonEdgeIndex[i] = -1;			// set all entries to unmapped, -1
 		double[] polygonEdgeT = new double[polyNodes];							// worst-case allocation
 		int eC = 0;																// the node counter & the edge counter
 		
