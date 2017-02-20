@@ -415,6 +415,41 @@ public class MatrixApp {
 	}
 	
 	
+	public static int testAllocFactor(int nwfNo, int size) {
+		// test different nodeWork allocation factors, comparing speed of execution
+		double[][] testRuns = new double[3][nwfNo];
+		boolean warmup = true;
+		for (int nwf = 1; nwf < nwfNo; nwf++) {
+			FEM1 fem2 = new FEM1("test");
+			fem2.nodeworkFactor = nwf;
+			long tStart = System.nanoTime();
+			for (int n = 0; n < size; n++) fem2.addNode(0, 0, 0, (byte)0);
+			for (int n = 0; n < size; n++) fem2.deleteNode((int)(Math.random() * fem2.nodes));
+			long tEnd = System.nanoTime();
+			if (warmup) { nwf--; warmup = false; continue; }
+			testRuns[0][nwf - 1] = (double)(tEnd - tStart) / 1000000.0;
+			testRuns[1][nwf - 1] = 0.1 * (double)(tEnd - tStart) / (double)(fem2.node.length + fem2.nodeWork.length);
+			tStart = System.nanoTime();
+			for (int n = 0; n < size; n++)
+				if (Math.random() > 0.2)	fem2.addNode(0, 0, 0, (byte)0);
+				else						fem2.deleteNode((int)(Math.random() * fem2.nodes));
+			tEnd = System.nanoTime();
+			testRuns[2][nwf - 1] = (double)(tEnd - tStart) / 1000000.0;
+			System.out.printf("factor " + fem2.nodeworkFactor + "add*N+delete*N: %.1f ms, random add/delete: %.1f ms\n", testRuns[0][nwf - 1], testRuns[2][nwf - 1]);
+		}
+
+		XYDataset bestFitChartSet;
+		String[] testNames = {"","","","","add*N+delete*N","add*N+delete*N / mem.usage","random add/delete"};
+		int[] testCases = {0, 1, 2};
+		bestFitChartSet = createStatisticSet(testRuns, testNames, testCases);
+		XYLineChart_AWT bestFitChart = new XYLineChart_AWT(
+				"nodeWork allocation factor", "exec. time", "nsecs/test", bestFitChartSet, 1024, 768);
+		bestFitChart.pack();          
+		RefineryUtilities.centerFrameOnScreen(bestFitChart);   
+		bestFitChart.setVisible( true ); 
+		return 0;
+	}
+	
 	
 	// test client
 	public static void main(String[] args) {
@@ -553,16 +588,8 @@ public class MatrixApp {
 //		int optimalCluster = testOctreeBuildClosestNodes("data/landscape.obj", 2, 1000, 20, true);
 //		if(1==1) return;
 		
-		// test different nodeWork allocation factors, comparing speed of execution
-		for (int nwf = 1; nwf < 256; nwf++) {
-			FEM1 fem2 = new FEM1("test");
-			fem2.nodeworkFactor = nwf;
-			tStart = System.nanoTime();
-			for (int n = 0; n < 8000; n++) fem2.addNode((Math.random()-0.5)*100, (Math.random()-0.5)*100, (Math.random()-0.5)*100, (byte)0);
-			for (int n = 0; n < 8000; n++) fem2.deleteNode((int)(Math.random() * fem2.nodes));
-			tEnd = System.nanoTime();
-			System.out.printf("FEM1.addNode() & deleteNode() with alloc.factor " + fem2.nodeworkFactor + " execution: %.1f ns\n", (double)(tEnd - tStart));
-		}
+		// test different nodeWork allocation factors, comparing speed of execution (larger work-array allocations operate faster)
+		//testAllocFactor(256, 80000);
 
 		FEM1 fem = null;
 		BufferedReader br = null;		
@@ -580,7 +607,10 @@ public class MatrixApp {
 		
 		FEM1Octree octree = new FEM1Octree(fem);
 		if (octree.nodes > fem.octreeMaxItems) octree.buildOctree(fem, fem.octreeMaxItems, 0);		// max 60 nodes per octant leaf found as optimal value
+		octree.addEdge(fem, 0, -43.8261, 3.9602, 0, -66.2773, 26.6212, 0, fem.octreeMaxItems, 0);
+		octree.toOBJ(fem, true);
 		//fem.closestNodesToOBJ(octree);
+		//octree.addEdge(fem, xa, ya, za, xb, yb, zb, edgeIndex, maxItems, disbalance)
 		
 //		FEM1Octree[] octantsClosest = new FEM1Octree[2];
 //		double[] distanceClosest = new double[1];

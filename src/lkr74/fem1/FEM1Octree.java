@@ -1,5 +1,10 @@
 package lkr74.fem1;
 
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
+
 public class FEM1Octree {
 	
 	// the class helps localising incoming FEM nodes and do a neighbourhood search on closest node 
@@ -19,6 +24,7 @@ public class FEM1Octree {
 	int octantIteratorMN = 0;				// bitwise "array" holding the created octant indexes that exceed maxNodes criterion (speeds up iteration)
 	
 	static float disbalanceCap = 0.85f;		// the max. level of disbalance allowed before stopping further branching
+	static int vOBJcnt = 0, pOBJidx = 1;	// running vertex count & poly.index during OBJ export of octree visualisation
 	// codes for the 8 subdivisions of an octree node (M = minus, P = plus, ex: OCT_PMP = (x+,y-,z+))
 	final static byte OCT_MMM=0, OCT_PMM=1, OCT_MPM=2, OCT_PPM=3, OCT_MMP=4, OCT_PMP=5, OCT_MPP=6, OCT_PPP=7;
 	public final static short MAX_LEVEL = 128; //Short.MAX_VALUE;
@@ -57,40 +63,35 @@ public class FEM1Octree {
 	
 	// method instantiates a skeleton child
 	public FEM1Octree(FEM1Octree parent, short status, int nodes, int[] node) {
-		this.parent = parent;
-		this.status = status;
+		this.parent = parent; this.status = status;
 		this.level = (short)(parent.level + 1);
-		this.nodes = nodes;
-		this.node = node;
+		this.nodes = nodes; this.node = node;
 		switch (status) {
 			case OCT_MMM: xM=parent.xM; yM=parent.yM; zM=parent.zM; xP=parent.xC; yP=parent.yC; zP=parent.zC; break;
 			case OCT_PMM: xM=parent.xC; yM=parent.yM; zM=parent.zM; xP=parent.xP; yP=parent.yC; zP=parent.zC; break;
 			case OCT_MPM: xM=parent.xM; yM=parent.yC; zM=parent.zM; xP=parent.xC; yP=parent.yP; zP=parent.zC; break;
 			case OCT_PPM: xM=parent.xC; yM=parent.yC; zM=parent.zM; xP=parent.xP; yP=parent.yP; zP=parent.zC; break;
-			case OCT_MMP: xM=parent.xM; yM=parent.yM; zM=parent.zC; xP=parent.xC; yP=parent.yC; zP=parent.zM; break;
-			case OCT_PMP: xM=parent.xC; yM=parent.yM; zM=parent.zC; xP=parent.xP; yP=parent.yC; zP=parent.zM; break;
-			case OCT_MPP: xM=parent.xM; yM=parent.yC; zM=parent.zC; xP=parent.xC; yP=parent.yP; zP=parent.zM; break;
-			case OCT_PPP: xM=parent.xC; yM=parent.yC; zM=parent.zC; xP=parent.xP; yP=parent.yP; zP=parent.zM; break; }
+			case OCT_MMP: xM=parent.xM; yM=parent.yM; zM=parent.zC; xP=parent.xC; yP=parent.yC; zP=parent.zP; break;
+			case OCT_PMP: xM=parent.xC; yM=parent.yM; zM=parent.zC; xP=parent.xP; yP=parent.yC; zP=parent.zP; break;
+			case OCT_MPP: xM=parent.xM; yM=parent.yC; zM=parent.zC; xP=parent.xC; yP=parent.yP; zP=parent.zP; break;
+			case OCT_PPP: xM=parent.xC; yM=parent.yC; zM=parent.zC; xP=parent.xP; yP=parent.yP; zP=parent.zP; break; }
 		xC = (xP + xM) * .5; yC = (yP + yM) * .5; zC = (zP + zM) * .5;
 	}
 
 	public FEM1Octree(FEM1Octree parent, short status, int nodes, int[] node, int edges, int[] edge) {
-		this.parent = parent;
-		this.status = status;
+		this.parent = parent; this.status = status;
 		this.level = (short)(parent.level + 1);
-		this.nodes = nodes;
-		this.node = node;
-		this.edges = edges;
-		this.node = node;
+		this.nodes = nodes; this.node = node;
+		this.edges = edges; this.edge = edge;
 		switch (status) {
 			case OCT_MMM: xM=parent.xM; yM=parent.yM; zM=parent.zM; xP=parent.xC; yP=parent.yC; zP=parent.zC; break;
 			case OCT_PMM: xM=parent.xC; yM=parent.yM; zM=parent.zM; xP=parent.xP; yP=parent.yC; zP=parent.zC; break;
 			case OCT_MPM: xM=parent.xM; yM=parent.yC; zM=parent.zM; xP=parent.xC; yP=parent.yP; zP=parent.zC; break;
 			case OCT_PPM: xM=parent.xC; yM=parent.yC; zM=parent.zM; xP=parent.xP; yP=parent.yP; zP=parent.zC; break;
-			case OCT_MMP: xM=parent.xM; yM=parent.yM; zM=parent.zC; xP=parent.xC; yP=parent.yC; zP=parent.zM; break;
-			case OCT_PMP: xM=parent.xC; yM=parent.yM; zM=parent.zC; xP=parent.xP; yP=parent.yC; zP=parent.zM; break;
-			case OCT_MPP: xM=parent.xM; yM=parent.yC; zM=parent.zC; xP=parent.xC; yP=parent.yP; zP=parent.zM; break;
-			case OCT_PPP: xM=parent.xC; yM=parent.yC; zM=parent.zC; xP=parent.xP; yP=parent.yP; zP=parent.zM; break; }
+			case OCT_MMP: xM=parent.xM; yM=parent.yM; zM=parent.zC; xP=parent.xC; yP=parent.yC; zP=parent.zP; break;
+			case OCT_PMP: xM=parent.xC; yM=parent.yM; zM=parent.zC; xP=parent.xP; yP=parent.yC; zP=parent.zP; break;
+			case OCT_MPP: xM=parent.xM; yM=parent.yC; zM=parent.zC; xP=parent.xC; yP=parent.yP; zP=parent.zP; break;
+			case OCT_PPP: xM=parent.xC; yM=parent.yC; zM=parent.zC; xP=parent.xP; yP=parent.yP; zP=parent.zP; break; }
 		xC = (xP + xM) * .5; yC = (yP + yM) * .5; zC = (zP + zM) * .5;
 	}
 
@@ -120,7 +121,7 @@ public class FEM1Octree {
 		}
 		for (int e = 0; e < edges; e++) {											// distribute edge references into the 8 octants
 			int eN = edge[e] * 2;
-			int[] pEdgeN = fem.polygonEdgeN;
+			int[] pEdgeN = fem.edgeNode;
 			int bits = edgeMembership(pEdgeN[eN++], pEdgeN[eN++], pEdgeN[eN++], pEdgeN[eN++], pEdgeN[eN++], pEdgeN[eN++], 0, 0xFF);
 			if ((bits & 1) != 0) nodeOct[eMMM++] = edge[e]; bits >>= 1; if ((bits & 1) != 0) nodeOct[ePMM++] = edge[e]; bits >>= 1;
 			if ((bits & 1) != 0) nodeOct[eMPM++] = edge[e]; bits >>= 1; if ((bits & 1) != 0) nodeOct[ePPM++] = edge[e]; bits >>= 1;
@@ -650,5 +651,57 @@ public class FEM1Octree {
 		}
 		return sb2;
 	}
+	
+	public void toOBJ(FEM1 fem, boolean leafsOnly) {
+		File file = new File(fem.name + "_octree.obj");
+		if (!file.exists()) { try {	file.createNewFile(); } catch (IOException e) { e.printStackTrace(); }}
+		BufferedWriter bw = null;
+		try {		bw = new BufferedWriter(new FileWriter(file));
+		} catch (IOException e) { e.printStackTrace(); }
+		StringBuilder sb = new StringBuilder();
+		String precFormat = "%." + fem.precision_OBJ + "f";
+		vOBJcnt = 0; pOBJidx = 1;
+		
+		sb.append("# Visualisation of octree\n#\n");
+		sb.append(appendVerticesToOBJ(fem, precFormat, leafsOnly));
+		sb.append("# " + vOBJcnt + " vertices\n\ng " + fem.name + "_octree\n");
+		sb.append(appendPolygonsToOBJ(fem, leafsOnly));
+		sb.append("# " + (pOBJidx - 1) / 6 + " faces\n\ng\n");
+		
+		try {	bw.write(sb.toString());									// write out & close file
+				bw.flush(); bw.close();
+		} catch (IOException e) { e.printStackTrace(); }
+
+	}
+	
+	StringBuilder appendVerticesToOBJ(FEM1 fem, String precFormat, boolean leafsOnly) {
+		StringBuilder sb2 = new StringBuilder();
+		if (!leafsOnly || (leafsOnly && octant == null)) {
+			double[] pCoord = {xM,yM,zM, xP,yM,zM, xM,yP,zM, xP,yP,zM, xM,yM,zP, xP,yM,zP, xM,yP,zP, xP,yP,zP};
+			for (int p = 0, c = 0; p < 8; p++)
+				sb2.append("v  "+String.format(precFormat,pCoord[c++])+" "+String.format(precFormat,pCoord[c++])+" "+String.format(precFormat,pCoord[c++])+"\n");
+			vOBJcnt += 8;
+		}
+		if (octant != null) {
+			for (int o = 0; o < 8; o++) if (octant[o] != null) sb2.append(octant[o].appendVerticesToOBJ(fem, precFormat, leafsOnly)); }
+		return sb2;
+	}
+
+	StringBuilder appendPolygonsToOBJ(FEM1 fem, boolean leafsOnly) {
+		StringBuilder sb2 = new StringBuilder();
+		if (!leafsOnly || (leafsOnly && octant == null)) {
+			sb2.append("f " + pOBJidx + " " + (pOBJidx+1) + " " + (pOBJidx+5) + " " + (pOBJidx+4) + "\n");
+			sb2.append("f " + (pOBJidx+1) + " " + (pOBJidx+3) + " " + (pOBJidx+7) + " " + (pOBJidx+5) + "\n");
+			sb2.append("f " + (pOBJidx+3) + " " + (pOBJidx+2) + " " + (pOBJidx+6) + " " + (pOBJidx+7) + "\n");
+			sb2.append("f " + pOBJidx + " " + (pOBJidx+2) + " " + (pOBJidx+6) + " " + (pOBJidx+4) + "\n");
+			sb2.append("f " + pOBJidx + " " + (pOBJidx+1) + " " + (pOBJidx+3) + " " + (pOBJidx+2) + "\n");
+			sb2.append("f " + (pOBJidx+4) + " " + (pOBJidx+5) + " " + (pOBJidx+7) + " " + (pOBJidx+6) + "\n");
+			pOBJidx += 8;
+		}
+		if (octant != null) {
+			for (int o = 0; o < 8; o++) if (octant[o] != null) sb2.append(octant[o].appendPolygonsToOBJ(fem, leafsOnly)); }
+		return sb2;
+	}
+
 
 }

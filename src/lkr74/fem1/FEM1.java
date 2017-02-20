@@ -39,10 +39,10 @@ public class FEM1 {
 
 	int[] polygon = null;							// polygons come in N-tuplets, N = no. of nodes (ex. faces come in a,b,c triplets)
 	int[] polygonOffset = null;						// polygon node offsets work both as specifiers of poly node count and give position of polygon in array
-	int[] polygonEdgeIndex = null;					// indexes matching each shared edge to particular polygons
-	double[] polygonEdge = null;					// array specifying edge length of every polygonal edge
-	int[] polygonEdgeN = null;						// convenient back-reference from edge index to the underlying nodes
-	int polygonEdges;								// total nonredundant count of polygon edges
+	int[] edgeIndex = null;							// indexes matching each shared edge to particular polygons
+	double[] edge = null;							// array specifying edge length of every polygonal edge
+	int[] edgeNode = null;							// convenient back-reference from edge index to the underlying nodes
+	int edges;										// total nonredundant count of polygon edges
 	//int[] polygonPatch = null;					// every polygon's patch membership is indexed here
 
 	int[] patch = null;								// the patch/smoothing group array holds offsets into face array for the start of every patch's faces
@@ -71,7 +71,7 @@ public class FEM1 {
 	// parameters pertaining to tetraherdonisation lie here
 	double maxTsize = 1;							// maximal bound on size of any constructed tetrahedron
 	public int octreeMaxItems = 60;					// the max. number of items per octant leaf we allow
-	public int nodeworkFactor = 4;					// let nodeWork[] array be maxium 1/4th of node[] array
+	public int nodeworkFactor = 8;					// let nodeWork[] array be maxium 1/8th of node[] array
 	
 	// the datatype requested from the object instancer
 	public static final int MESH_HANDMADE = 0, MESH_HANDMADE_OBJECTIFIED = 1, MESH_PSC = 2;
@@ -417,7 +417,7 @@ public class FEM1 {
 		if (deletedNodes > 0) {
 			int n3 = deletedNode[--deletedNodes] * NCOORD;
 			if (n3 >= node.length) {
-				n3 -= node.length; n = n3 / 3; nodeWork[n3++] = x; nodeWork[n3++] = y; nodeWork[n3] = z; nodesWork++;
+				n3 -= node.length; n = n3 / 3; nodeWork[n3++] = x; nodeWork[n3++] = y; nodeWork[n3] = z;
 				if (nodeFlag != null) nodeWorkFlag[n] = flag;
 			} else {
 				n = n3 / NCOORD; node[n3++] = x; node[n3++] = y; node[n3] = z;
@@ -907,25 +907,25 @@ public class FEM1 {
 	// and points to an array of edge lengths polygonEdge[] and an array of node index duplets polygonEdgeN[] (for back-reference to underlying edge data)
 	void facetEdgeLengths() {
 		int polyNodes = polygonOffset[polygons];
-		polygonEdgeIndex = new int[polyNodes];									// polygonEdgeIndex[] is the mapper to the edge lengths
-		for (int i = 0; i < polyNodes; i++) polygonEdgeIndex[i] = -1;			// set all entries to unmapped, -1
-		double[] polygonEdgeT = new double[polyNodes];							// worst-case allocation
-		int[] polygonEdgeNT = new int[polyNodes * 2];							// worst-case allocation
+		edgeIndex = new int[polyNodes];									// polygonEdgeIndex[] is the mapper to the edge lengths
+		for (int i = 0; i < polyNodes; i++) edgeIndex[i] = -1;			// set all entries to unmapped, -1
+		double[] edgeT = new double[polyNodes];							// worst-case allocation
+		int[] edgeNT = new int[polyNodes * 2];							// worst-case allocation
 		int eC = 0, eNP = 0;													// the edge counter & the node pair counter
 		
 		// every consecutive facet is checked if it's edges are already remapped by a previously checked neighbour
 		// a new edge length is generated case an edge hasn't been mapped yet
 		for (int f = 0; f < polygons; f++) {
 			int n = polygonOffset[f];
-			if (polygonEdgeIndex[n] == -1) {									// check if current facet edge n0-n1 hasn't been mapped yet
-				polygonEdgeT[eC] = distance(polygonEdgeNT[eNP++] = polygon[n++], polygon[polygonEdgeNT[eNP++] = n--], true);
-				polygonEdgeIndex[n] = eC++; } n++;								// map to unique position in polygonEdge[]		
-			if (polygonEdgeIndex[n] == -1) {									// check if current facet edge n1-n2 hasn't been mapped yet
-				polygonEdgeT[eC] = distance(polygonEdgeNT[eNP++] = polygon[n++], polygonEdgeNT[eNP++] = polygon[n--], true);
-				polygonEdgeIndex[n] = eC++; } n++;								// map to unique position in polygonEdge[]				
-			if (polygonEdgeIndex[n] == -1) {									// check if current facet edge n2-n0 hasn't been mapped yet
-				polygonEdgeT[eC] = distance(polygonEdgeNT[eNP++] = polygon[n], polygonEdgeNT[eNP++] = polygon[n - 2], true);
-				polygonEdgeIndex[n] = eC++; }									// map to unique position in polygonEdge[]	
+			if (edgeIndex[n] == -1) {									// check if current facet edge n0-n1 hasn't been mapped yet
+				edgeT[eC] = distance(edgeNT[eNP++] = polygon[n++], polygon[edgeNT[eNP++] = n--], true);
+				edgeIndex[n] = eC++; } n++;								// map to unique position in polygonEdge[]		
+			if (edgeIndex[n] == -1) {									// check if current facet edge n1-n2 hasn't been mapped yet
+				edgeT[eC] = distance(edgeNT[eNP++] = polygon[n++], edgeNT[eNP++] = polygon[n--], true);
+				edgeIndex[n] = eC++; } n++;								// map to unique position in polygonEdge[]				
+			if (edgeIndex[n] == -1) {									// check if current facet edge n2-n0 hasn't been mapped yet
+				edgeT[eC] = distance(edgeNT[eNP++] = polygon[n], edgeNT[eNP++] = polygon[n - 2], true);
+				edgeIndex[n] = eC++; }									// map to unique position in polygonEdge[]	
 
 			// check neighbours and remap them to the same indexes as current facet in polygonEdgeT[]
 			int[] facetNgb = polygonNeighbours[f];
@@ -935,30 +935,30 @@ public class FEM1 {
 			
 			if (fN01 > f) {		// neighbours of lower index than current facet have already been fully mapped
 				int[] ngb01 = polygonNeighbours[fN01];
-				if		(ngb01[5] == f || ngb01[8] == f)	polygonEdgeIndex[polygonOffset[fN01]] = polygonEdgeIndex[n];
-				else if (ngb01[6] == f || ngb01[9] == f)	polygonEdgeIndex[polygonOffset[fN01] + 1] = polygonEdgeIndex[n];
-				else if (ngb01[7] == f || ngb01[10] == f)	polygonEdgeIndex[polygonOffset[fN01] + 2] = polygonEdgeIndex[n];
+				if		(ngb01[5] == f || ngb01[8] == f)	edgeIndex[polygonOffset[fN01]] = edgeIndex[n];
+				else if (ngb01[6] == f || ngb01[9] == f)	edgeIndex[polygonOffset[fN01] + 1] = edgeIndex[n];
+				else if (ngb01[7] == f || ngb01[10] == f)	edgeIndex[polygonOffset[fN01] + 2] = edgeIndex[n];
 			}	n++;
 			if (fN12 > f) {
 				int[] ngb12 = polygonNeighbours[fN12];
-				if		(ngb12[5] == f || ngb12[8] == f)	polygonEdgeIndex[polygonOffset[fN12]] = polygonEdgeIndex[n];
-				else if (ngb12[6] == f || ngb12[9] == f)	polygonEdgeIndex[polygonOffset[fN12] + 1] = polygonEdgeIndex[n];
-				else if (ngb12[7] == f || ngb12[10] == f)	polygonEdgeIndex[polygonOffset[fN12] + 2] = polygonEdgeIndex[n];
+				if		(ngb12[5] == f || ngb12[8] == f)	edgeIndex[polygonOffset[fN12]] = edgeIndex[n];
+				else if (ngb12[6] == f || ngb12[9] == f)	edgeIndex[polygonOffset[fN12] + 1] = edgeIndex[n];
+				else if (ngb12[7] == f || ngb12[10] == f)	edgeIndex[polygonOffset[fN12] + 2] = edgeIndex[n];
 			}	n++;
 			if (fN20 > f) {
 				int[] ngb20 = polygonNeighbours[fN20];
-				if		(ngb20[5] == f || ngb20[8] == f)	polygonEdgeIndex[polygonOffset[fN20]] = polygonEdgeIndex[n];
-				else if (ngb20[6] == f || ngb20[9] == f)	polygonEdgeIndex[polygonOffset[fN20] + 1] = polygonEdgeIndex[n];
-				else if (ngb20[7] == f || ngb20[10] == f)	polygonEdgeIndex[polygonOffset[fN20] + 2] = polygonEdgeIndex[n];
+				if		(ngb20[5] == f || ngb20[8] == f)	edgeIndex[polygonOffset[fN20]] = edgeIndex[n];
+				else if (ngb20[6] == f || ngb20[9] == f)	edgeIndex[polygonOffset[fN20] + 1] = edgeIndex[n];
+				else if (ngb20[7] == f || ngb20[10] == f)	edgeIndex[polygonOffset[fN20] + 2] = edgeIndex[n];
 			}
 		}
 		
 		// time to rescale polygonEdgeT[] & polygonEdgeNT[] to their final size
-		polygonEdge = new double[polygonEdges = eC];
-		polygonEdgeN = new int[polygonEdges * 2];
+		edge = new double[edges = eC];
+		edgeNode = new int[edges * 2];
 		for (int e = 0, e2 = 0; e < eC; e++) {
-			polygonEdge[e] = polygonEdgeT[e];
-			polygonEdgeN[e2] = polygonEdgeNT[e2++]; polygonEdgeN[e2] = polygonEdgeNT[e2++];
+			edge[e] = edgeT[e];
+			edgeNode[e2] = edgeNT[e2++]; edgeNode[e2] = edgeNT[e2++];
 		}
 	}
 	
@@ -1419,15 +1419,15 @@ public class FEM1 {
 		if (borderPolygons == null) facetNeighbours(true, true);
 		
 		maxTsize = 0;														// do simple average edge length calculation
-		for (int e = 0; e < polygonEdge.length; e++) maxTsize += polygonEdge[e];
-		maxTsize /= (double)polygonEdge.length;
+		for (int e = 0; e < edge.length; e++) maxTsize += edge[e];
+		maxTsize /= (double)edge.length;
 		
 		element2 = new FEM1Element[64];										// start at 64 tetrahedrons as default
 		int pBo = polygonOffset[borderPolygons[0]];							// just pick first available border facet as basis
-		int i0 = polygonEdgeIndex[pBo], i1 = polygonEdgeIndex[pBo+1], i2 = polygonEdgeIndex[pBo+2];
+		int i0 = edgeIndex[pBo], i1 = edgeIndex[pBo+1], i2 = edgeIndex[pBo+2];
 		// find shortest edge of this polygon, using the nonredundant reference array polygonEdgeIndex[]
-		double shortestE01 = polygonEdge[i0] < polygonEdge[i1] ? polygonEdge[i0] : polygonEdge[i1];
-		double shortestE = shortestE01 < polygonEdge[i2] ? shortestE01 : polygonEdge[i2];
+		double shortestE01 = edge[i0] < edge[i1] ? edge[i0] : edge[i1];
+		double shortestE = shortestE01 < edge[i2] ? shortestE01 : edge[i2];
 		
 		if (shortestE > maxTsize) {											// is seed facet still overall larger than maximum allowed tetrahedron size?
 			
