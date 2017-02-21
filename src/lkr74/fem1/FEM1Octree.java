@@ -23,12 +23,14 @@ public class FEM1Octree {
 	int octantIterator = 0;					// bitwise "array" holding the created octant indexes (spees up iteration)
 	int octantIteratorMN = 0;				// bitwise "array" holding the created octant indexes that exceed maxNodes criterion (speeds up iteration)
 	
+	double disbalance = 0;					// how disbalanced current branch is (=0 for a leaf)
 	static float disbalanceCap = 0.85f;		// the max. level of disbalance allowed before stopping further branching
 	static int vOBJcnt = 0, pOBJidx = 1;	// running vertex count & poly.index during OBJ export of octree visualisation
+	
 	// codes for the 8 subdivisions of an octree node (M = minus, P = plus, ex: OCT_PMP = (x+,y-,z+))
 	final static byte OCT_MMM=0, OCT_PMM=1, OCT_MPM=2, OCT_PPM=3, OCT_MMP=4, OCT_PMP=5, OCT_MPP=6, OCT_PPP=7;
-	public final static short MAX_LEVEL = 128; //Short.MAX_VALUE;
-	public final static short FACTOR_NODESX = 128; //Short.MAX_VALUE;
+	public static short maxLevel = 128;		// limiter of level of octree subdivision
+	public final static short FACTOR_NODESX = 128;
 	
 	// instantiates first octant, finding bounding box and setting up node reference array
 	public FEM1Octree(FEM1 fem) {
@@ -99,7 +101,7 @@ public class FEM1Octree {
 	
 	
 	// splits current octree node into 8 partitions, divides up the nodes, returns rate of disbalance within the current branch
-	public double split(FEM1 fem, int maxItems) {
+	public void split(FEM1 fem, int maxItems) {
 		
 		double[] nodeCoord = fem.node;
 		// worst case allocation of octosplitted node arrays
@@ -122,7 +124,8 @@ public class FEM1Octree {
 		for (int e = 0; e < edges; e++) {											// distribute edge references into the 8 octants
 			int eN = edge[e] * 2;
 			int[] pEdgeN = fem.edgeNode;
-			int bits = edgeMembership(pEdgeN[eN++], pEdgeN[eN++], pEdgeN[eN++], pEdgeN[eN++], pEdgeN[eN++], pEdgeN[eN++], 0, 0xFF);
+			double[] split = new double[6 * 8];
+			int bits = edgeMembership(pEdgeN[eN++], pEdgeN[eN++], pEdgeN[eN++], pEdgeN[eN++], pEdgeN[eN++], pEdgeN[eN++], split, 0, 0, 0xFF);
 			if ((bits & 1) != 0) nodeOct[eMMM++] = edge[e]; bits >>= 1; if ((bits & 1) != 0) nodeOct[ePMM++] = edge[e]; bits >>= 1;
 			if ((bits & 1) != 0) nodeOct[eMPM++] = edge[e]; bits >>= 1; if ((bits & 1) != 0) nodeOct[ePPM++] = edge[e]; bits >>= 1;
 			if ((bits & 1) != 0) nodeOct[eMMP++] = edge[e]; bits >>= 1; if ((bits & 1) != 0) nodeOct[ePMP++] = edge[e]; bits >>= 1;
@@ -224,23 +227,22 @@ public class FEM1Octree {
 		octantIteratorMN |= (octantsMN << 24);
 		node = null; edge = null;					// a branch doesnt need item references (but keeping nodes count of entire branch can be useful)
 		// branch disbalance deducted from ALL item types clustered across octants
-		double disbalance = octantNodeDisbalance(nodes, nMMM+eMMM, nPMM2+ePMM2, nMPM2+eMPM2, nPPM2+ePPM2, nMMP2+eMMP2, nPMP2+nPMP2, nMPP2+eMPP2, nPPP2+ePPP2);
-		return disbalance;
+		disbalance = octantNodeDisbalance(nodes+edges, nMMM+eMMM, nPMM2+ePMM2, nMPM2+eMPM2, nPPM2+ePPM2, nMMP2+eMMP2, nPMP2+ePMP2, nMPP2+eMPP2, nPPP2+ePPP2);
 	}
 	
 	
 	
 	// method recursively constructs octree with at most maxItems items per container and splitting limited by maximal branch disbalance
-	public int buildOctree(FEM1 fem, int maxItems, double disbalance) {
+	public int buildOctree(FEM1 fem, int maxItems, double disbalanceGrowth) {
 		
 		// if current container has over maxNodes nodes & branch levels are not overrun & terminate limiter hasn't been assigned
-		if (level < MAX_LEVEL && disbalance < disbalanceCap) {
-			double disbalanceB = split(fem, maxItems);							// split into octants (if possible), becoming a branch
+		if (level < maxLevel && disbalanceGrowth < disbalanceCap) {
+			split(fem, maxItems);							// split into octants (if possible), becoming a branch
 			branches = octantIterator >> 24;
 			int octantIt = octantIteratorMN, oEnd = octantIteratorMN >> 24;
 			for (int o = 0; o < oEnd; o++, octantIt >>= 3) {					// we are iterating over octants that contain more than "maxItems" items
 				FEM1Octree octant = this.octant[octantIt & 7];
-				branches += octant.buildOctree(fem, maxItems, (double)((disbalance + disbalanceB) * 0.5));				
+				branches += octant.buildOctree(fem, maxItems, (disbalance + disbalanceGrowth) * 0.5);				
 			}
 		}
 		return branches;
@@ -286,7 +288,7 @@ public class FEM1Octree {
 			if (nodeX) oct2.nodesX++; else oct2.nodes++;	
 			oct2.node[0] = n;
 		} else {																	// if target leaf container octant was found (or this is octree was a leaf)
-			oct2.octantAddNode(x, y, z, n, nodeX);
+			oct2.octantAddNode(n, nodeX);
 			if (oct2.nodes > maxItems || oct2.edges > maxItems)
 				oct2.split(fem, maxItems);											// if node+edge count exceeds maxItems, split up the octant
 		}
@@ -294,9 +296,11 @@ public class FEM1Octree {
 	}
 	
 	// method directly inserts node into a known octant, whether as extraneous or as a real node
-	public void octantAddNode(double x, double y, double z, int n, boolean nodeX) {
+	public void octantAddNode(int n, boolean nodeX) {
 		int nodesTot = nodes + nodesX;
-		if (nodesTot + 1 >= node.length) {														// need to expand octant's node array?
+		if (node == null) {
+			node = new int[8]; node[nodes++] = n;		
+		} else if (nodesTot + 1 >= node.length) {													// need to expand octant's node array?
 			int[] nodeNew = new int[FEM1Octree.extra_space(nodesTot + 1)];
 			
 			if (nodeX) {for (int n1 = 0; n1 < nodesTot; n1++) nodeNew[n1] = node[n1];			// if adding an extraneous node, copy everything straight-on
@@ -314,96 +318,153 @@ public class FEM1Octree {
 
 	
 	
-	// method divides down an edge into the 8 octants, bitflagging only the visited octants, using recursive calls
+	// method divides down an edge into the 8 octants, bitflagging the intersected octants, using recursive calls
+	// method records splitted edge segments and shifts them toward their proper octant offsets within split[] array
+	// the segments are then accessable as 2 coords by ´steps of (octantNo*6) and matched by the bitflags
 	// octant bitflags (high to low): PPP,MPP,PMP,MMP,PPM,MPM,PMM,MMM
-	int edgeMembership(double xa, double ya, double za, double xb, double yb, double zb, int dim, int bits) {
+	int edgeMembership(double xa, double ya, double za, double xb, double yb, double zb, double[] split, int offs, int dim, int bits) {
 		
 		switch (dim) {
 		case 0:
 			if (xa <= xC) {
 				if (xC < xb) {																		// point a in lower x-octants, b in higher
-						double xbaD = 1. / (xa - xb), f1 = (xC - xa) * xbaD, f2 = (xb - xC) * xbaD;
-						double ys = f1 > f2 ? ya+(yb-ya)*f1 : yb+(ya-yb)*f2, zs = f1 > f2 ? za+(zb-za)*f1 : zb+(za-zb)*f2;
-						return 	bits & (edgeMembership(xa, ya, za, xC, ys, zs, dim + 1, 0x55) | edgeMembership(xC, ys, zs, xb, yb, zb, dim + 1, 0xAA));
-				} else	return 	bits & edgeMembership(xa, ya, za, xb, yb, zb, dim + 1, 0x55);		// edge completely in OCT_M** domain
+						double xbaD = 1. / (xb - xa), f1 = (xC - xa) * xbaD, f2 = (xb - xC) * xbaD;
+						double ys = f1 > f2 ? ya+(yb-ya)*f1 : yb-(yb-ya)*f2, zs = f1 > f2 ? za+(zb-za)*f1 : zb-(zb-za)*f2;
+						split[0]=xa; split[1]=ya; split[2]=za; split[3]=xC; split[4]=ys; split[5]=zs;
+						split[6]=xC; split[7]=ys; split[8]=zs; split[9]=xb; split[10]=yb; split[11]=zb;
+						return 	edgeMembership(xa, ya, za, xC, ys, zs, split, 0, dim+1, 0x55) | edgeMembership(xC, ys, zs, xb, yb, zb, split, 6, dim+1, 0xAA);
+				} else if (xa < xM && xb < xM) return 0;											// edge outside octant
+				else {	split[0]=xa; split[1]=ya; split[2]=za; split[3]=xb; split[4]=yb; split[5]=zb;
+						return 	edgeMembership(xa, ya, za, xb, yb, zb, split, 0, dim+1, 0x55);		// edge completely in OCT_M** domain
+				}
 			} else if (xb <= xC) {
-				if (xC < xb) {																		// reverse: point b in lower x-octants, a in higher
-						double xbaD = 1. / (xb - xa), f1 = (xC - xb) * xbaD, f2 = (xa - xC) * xbaD;
-						double ys = f1 > f2 ? yb+(ya-yb)*f1 : ya+(yb-ya)*f2, zs = f1 > f2 ? zb+(za-zb)*f1 : za+(zb-za)*f2;
-						return 	bits & (edgeMembership(xb, yb, zb, xC, ys, zs, dim + 1, 0x55) | edgeMembership(xC, ys, zs, xa, ya, za, dim + 1, 0xAA));
-				} else	return 	bits & edgeMembership(xb, yb, zb, xa, ya, za, dim + 1, 0x55);		// edge completely in OCT_M** domain
-			} else		return	bits & edgeMembership(xa, ya, za, xb, yb, zb, dim + 1, 0xAA);		// edge completely in OCT_P** domain	
+				if (xC < xa) {																		// reverse: point b in lower x-octants, a in higher
+						double xbaD = 1. / (xa - xb), f1 = (xC - xb) * xbaD, f2 = (xa - xC) * xbaD;
+						double ys = f1 > f2 ? yb+(ya-yb)*f1 : ya-(ya-yb)*f2, zs = f1 > f2 ? zb+(za-zb)*f1 : za-(za-zb)*f2;
+						split[0]=xb; split[1]=yb; split[2]=zb; split[3]=xC; split[4]=ys; split[5]=zs;
+						split[6]=xC; split[7]=ys; split[8]=zs; split[9]=xa; split[10]=ya; split[11]=za;
+						return 	edgeMembership(xb,yb,zb,xC,ys,zs, split, 0, dim+1, 0x55) | edgeMembership(xC,ys,zs,xa,ya,za, split, 6, dim+1, 0xAA);
+				} else if (xa < xM && xb < xM) return 0;											// edge outside octant
+				else {	split[0]=xb; split[1]=yb; split[2]=zb; split[3]=xa; split[4]=ya; split[5]=za;
+						return 	edgeMembership(xb, yb, zb, xa, ya, za, split, 0, dim+1, 0x55);		// edge completely in OCT_M** domain
+				}
+			} else if (xa > xP && xb > xP) return 0;												// edge outside octant		
+			else {		split[6]=xa; split[7]=ya; split[8]=za; split[9]=xb; split[10]=yb; split[11]=zb;
+						return	edgeMembership(xa, ya, za, xb, yb, zb, split, 6, dim+1, 0xAA);		// edge completely in OCT_P** domain	
+			}
 		case 1:
 			if (ya <= yC) {
 				if (yC < yb) {																		// point a in lower y-octants, b in higher
-						double ybaD = 1. / (ya - yb), f1 = (yC - ya) * ybaD, f2 = (yb - yC) * ybaD;
-						double xs = f1 > f2 ? xa+(xb-xa)*f1 : xb+(xa-xb)*f2, zs = f1 > f2 ? za+(zb-za)*f1 : zb+(za-zb)*f2;
-						return 	bits & (edgeMembership(xa, ya, za, xs, yC, zs, dim + 1, 0x33) | edgeMembership(xs, yC, zs, xb, yb, zb, dim + 1, 0xCC));
-				} else	return 	bits & edgeMembership(xa, ya, za, xb, yb, zb, dim + 1, 0x33);		// edge completely in OCT_*M* domain
+						double ybaD = 1. / (yb - ya), f1 = (yC - ya) * ybaD, f2 = (yb - yC) * ybaD;
+						double xs = f1 > f2 ? xa+(xb-xa)*f1 : xb-(xb-xa)*f2, zs = f1 > f2 ? za+(zb-za)*f1 : zb-(zb-za)*f2;
+						int offY=offs+12; split[offs++]=xa; split[offs++]=ya; split[offs++]=za; split[offs++]=xs; split[offs++]=yC; split[offs++]=zs;
+						split[offY++]=xs; split[offY++]=yC; split[offY++]=zs; split[offY++]=xb; split[offY++]=yb; split[offY++]=zb;
+						return 	bits & (edgeMembership(xa,ya,za,xs,yC,zs, split, offs-6, dim+1, 0x33) | edgeMembership(xs,yC,zs,xb,yb,zb, split, offY-6, dim+1, 0xCC));
+				} else if (ya < yM && yb < yM) return 0;											// edge outside octant
+				else	return 	bits & edgeMembership(xa,ya,za,xb,yb,zb, split, offs, dim+1, 0x33);	// edge completely in OCT_*M* domain
 			} else if (yb <= yC) {
-				if (yC < yb) {																		// reverse: point b in lower y-octants, a in higher
-						double ybaD = 1. / (yb - ya), f1 = (yC - yb) * ybaD, f2 = (ya - yC) * ybaD;
-						double xs = f1 > f2 ? xb+(xa-xb)*f1 : xa+(xb-xa)*f2, zs = f1 > f2 ? zb+(za-zb)*f1 : za+(zb-za)*f2;
-						return 	bits & (edgeMembership(xb, yb, zb, xs, yC, zs, dim + 1, 0x33) | edgeMembership(xs, yC, zs, xa, ya, za, dim + 1, 0xCC));
-				} else	return 	bits & edgeMembership(xb, yb, zb, xa, ya, za, dim + 1, 0x33);		// edge completely in OCT_*M* domain
-			} else		return	bits & edgeMembership(xa, ya, za, xb, yb, zb, dim + 1, 0xCC);		// edge completely in OCT_*P* domain	
+				if (yC < ya) {																		// reverse: point b in lower y-octants, a in higher
+						double ybaD = 1. / (ya - yb), f1 = (yC - yb) * ybaD, f2 = (ya - yC) * ybaD;
+						double xs = f1 > f2 ? xb+(xa-xb)*f1 : xa-(xa-xb)*f2, zs = f1 > f2 ? zb+(za-zb)*f1 : za-(za-zb)*f2;
+						int offY=offs+12; split[offs++]=xb; split[offs++]=yb; split[offs++]=zb; split[offs++]=xs; split[offs++]=yC; split[offs++]=zs;
+						split[offY++]=xs; split[offY++]=yC; split[offY++]=zs; split[offY++]=xa; split[offY++]=ya; split[offY++]=za;
+						return 	bits & (edgeMembership(xb,yb,zb,xs,yC,zs, split, offs-6, dim+1, 0x33) | edgeMembership(xs,yC,zs,xa,ya,za, split, offY-6, dim+1, 0xCC));
+				} else if (ya < yM && yb < yM) return 0;											// edge outside octant
+				else	return 	bits & edgeMembership(xb,yb,zb,xa,ya,za, split, offs, dim+1, 0x33);	// edge completely in OCT_*M* domain
+			} else if (ya > yP && yb > yP) return 0;												// edge outside octant		
+			else {		int offY=offs+12; split[offY++]=split[offs++]; split[offY++]=split[offs++]; split[offY++]=split[offs++];
+						split[offY++]=split[offs++]; split[offY++]=split[offs++]; split[offY++]=split[offs++];
+						return	bits & edgeMembership(xa,ya,za,xb,yb,zb, split, offY-6, dim+1,0xCC);// edge completely in OCT_*P* domain	
+			}
 		case 2:
 			if (za <= zC) {
-				if (zC < zb) {	return 	bits;														// point a in lower z-octants, b in higher	
-				} else	return 	bits & 0x0F;														// edge completely in OCT_**M domain
+				if (zC < zb) {
+						double zbaD = 1. / (zb - za), f1 = (zC - za) * zbaD, f2 = (zb - zC) * zbaD;
+						double xs = f1 > f2 ? xa+(xb-xa)*f1 : xb-(xb-xa)*f2, ys = f1 > f2 ? ya+(yb-ya)*f1 : yb-(yb-ya)*f2;
+						int offZ=offs+24; split[offs++]=xa; split[offs++]=ya; split[offs++]=za; split[offs++]=xs; split[offs++]=ys; split[offs++]=zC;
+						split[offZ++]=xs; split[offZ++]=ys; split[offZ++]=zC; split[offZ++]=xb; split[offZ++]=yb; split[offZ++]=zb;
+						return 	bits;																// point a in lower z-octants, b in higher	
+				} else if (za < zM && zb < zM) return 0;											// edge outside octant
+				else	return 	bits & 0x0F;														// edge completely in OCT_**M domain
 			} else if (zb <= zC) {
-				if (zC < zb) {	return 	bits;														// reverse: point b in lower x-octants, a in higher	
-				} else	return 	bits & 0x0F;														// edge completely in OCT_**M domain
-			} else		return	bits & 0xF0;														// edge completely in OCT_**P domain	
+				if (zC < za) {
+						double zbaD = 1. / (za - zb), f1 = (zC - zb) * zbaD, f2 = (za - zC) * zbaD;
+						double xs = f1 > f2 ? xb+(xa-xb)*f1 : xa-(xa-xb)*f2, ys = f1 > f2 ? yb+(ya-yb)*f1 : ya-(ya-yb)*f2;
+						int offZ=offs+24; split[offs++]=xb; split[offs++]=yb; split[offs++]=zb; split[offs++]=xs; split[offs++]=ys; split[offs++]=zC;
+						split[offZ++]=xs; split[offZ++]=ys; split[offZ++]=zC; split[offZ++]=xa; split[offZ++]=ya; split[offZ++]=za;
+						return 	bits;																// reverse: point b in lower x-octants, a in higher	
+				} else if (za < zM && zb < zM) return 0;											// edge outside octant
+				else	return 	bits & 0x0F;														// edge completely in OCT_**M domain
+			} else if (za > zP && zb > zP) return 0;												// edge outside octant		
+			else {		int offZ=offs+24; split[offZ++]=split[offs++]; split[offZ++]=split[offs++]; split[offZ++]=split[offs++];
+						split[offZ++]=split[offs++]; split[offZ++]=split[offs++]; split[offZ++]=split[offs++];
+						return	bits & 0xF0;														// edge completely in OCT_**P domain	
+			}
 		}
-		return 0;
+		return 0;																					// never ends up here
 	}
 	
 	// method inserts an edge segment into octree by recursive splitting & membership testing
 	// TODO: debug method
-	public int addEdge(FEM1 fem, double xa, double ya, double za, double xb, double yb, double zb, int edgeIndex, int maxItems, double disbalance) {
+	public int addEdge(FEM1 fem, double xa, double ya, double za, double xb, double yb, double zb, int e, int maxItems, double disbalanceGrowth) {
 		
-		// max depth reached or disbalanced exceeded at leaf level (thus overriding maxEdges criterion)
-		if (level >= MAX_LEVEL || (edges <= maxItems && octant == null)) {
-			octantAddEdge(edgeIndex);
-			if (nodes > maxItems || edges > maxItems) split(fem, maxItems);				// split this octant if maxItems exceeded
-			return 0;
-		}	
-		int bits = edgeMembership(xa, ya, za, xb, yb, zb, 0, 0xFF);
-		
-		int[] eDisb = { 0,0,0,0,0,0,0,0 };
-		for (int o = 0, bits2 = bits; o < 8; o++, bits2 >>= 1)							// precalculate expected branch disbalance with the added edges
-			if ((bits2 & 1) != 0 && octant[o] != null)
-				eDisb[o] = octant[o].nodes + octant[o].edges + 1;
-		double disbalanceB = octantNodeDisbalance(edges, eDisb[0], eDisb[1], eDisb[2], eDisb[3], eDisb[4], eDisb[5], eDisb[6], eDisb[7]);
-
-		for (int o = 0; o < 8; o++, bits >>= 1) {										// start adding edges
-			if ((bits & 1) != 0) {
-				if (octant[o] == null) {												// if containing octant doesn't exist
-					if (disbalance < disbalanceCap) {									// if disbalanceCap allows dividing edge membership further
-						octant[o] = new FEM1Octree(this, (short) o, 0, null, 1, null);	// create branch containing 1 edge, account for it in disbalance
-						branches++;														// which adds one branch
-						branches += octant[o].addEdge(fem, xa, ya, za, xb, yb, zb, edgeIndex, maxItems, (disbalanceB + disbalance) * 0.5);
-						
-					} else {															// case of disbalanceCap reached
-						int[] edge1 = {edgeIndex};
-						octant[o] = new FEM1Octree(this, (short) o, 0, null, 1, edge1);	// make leaf octant with one edge
-						branches++;														// which adds one branch
-					}
-				} else	octant[o].addEdge(fem, xa, ya, za, xb, yb, zb, edgeIndex, maxItems, disbalance);	// we're not at leaf level yet, continue
-			}
+		int branchesNew = 0;
+		// if a leaf was reached
+		if (octant == null) {
+			octantAddEdge(e);
+			if (level < maxLevel && (nodes > maxItems || edges > maxItems)) {
+				split(fem, maxItems);													// split this octant if the 2 criterions are fulfilled
+				branches = branchesNew = octantIterator >> 24; }
+			return branchesNew;
 		}
-		return branches;		
+		double[] split = new double[6 * 8];
+		int bits = edgeMembership(xa, ya, za, xb, yb, zb, split, 0, 0, 0xFF);			// what suboctants does the edge belong to, set the proper bits
+		
+		// DEBUG: wasteful to do rebalancing along with every insertion, better to do infrequent calling of a balanceOctree() method
+//		int[] eDisb = { 0,0,0,0,0,0,0,0 };
+//		for (int o = 0, bits2 = bits; o < 8; o++, bits2 >>= 1)							// precalculate expected branch disbalance with the added edges
+//			if ((bits2 & 1) != 0 && octant[o] != null)
+//				eDisb[o] = octant[o].nodes + octant[o].edges + 1;
+//		disbalance = octantNodeDisbalance(edges, eDisb[0], eDisb[1], eDisb[2], eDisb[3], eDisb[4], eDisb[5], eDisb[6], eDisb[7]);
+
+		int o = bits < 0x0F ? 0 : ((bits & 0x0F)==0 ? 4 : 0); if (o == 4) bits >>= 4;
+		while (bits != 0) {																// start adding edges
+			if ((bits & 1) == 1) {
+				if (octant[o] == null) {												// if containing octant doesn't exist
+					if (disbalanceGrowth < disbalanceCap) {								// if disbalanceCap allows dividing edge containment further
+						FEM1Octree octant1 = octant[o] = new FEM1Octree(this, (short)o, 0, null);
+						octant1.octant = new FEM1Octree[8];								// create transitive branch
+						octant1.disbalance = 1;											// enforce transitive branch creation until disbalance limit
+						int oC = o * 6;
+						int b = octant1.addEdge(fem,split[oC++],split[oC++],split[oC++],split[oC++],split[oC++],split[oC++],e,maxItems, (1+disbalanceGrowth)*.5);
+						branches += b + 1; branchesNew += b + 1;
+					} else {															// case of disbalanceCap reached, doing one leaf only and returning
+						octant[o] = new FEM1Octree(this, (short)o, 0, null);			// make leaf octant with one edge
+						octant[o].octantAddEdge(e);
+						branches++; branchesNew++;
+					}
+				} else {
+					int oC = o * 6;
+					int b = octant[o].addEdge(fem,split[oC++],split[oC++],split[oC++],split[oC++],split[oC++],split[oC++],e,maxItems,disbalance);	// we're not at leaf level yet, continue
+					branches += b; branchesNew += b;
+				}
+			}
+			bits >>= 1; o++;
+		}
+		edges++;		// note difference from nodes: even though the edge ends up in several suboctants, it is still only one single edge at all branching levels
+		return branchesNew;		
 	}
 	
 	
 	// method directly inserts edge into a known octant
 	public void octantAddEdge(int e) {
-		if (edges + 1 >= edge.length) {															// need to expand octant's edge array?
+		if (edge == null) edge = new int[8];											// need to initialise coctant's edges?
+		else if (edges + 1 >= edge.length) {											// need to expand octant's edge array?
 			int[] edgeNew = new int[FEM1Octree.extra_space(edges + 1)];		
-			for (int n1 = 0; n1 < edges; n1++) edgeNew[n1] = edge[n1];							// copy everything straight-on
-			edgeNew[edges++] = e; edge = edgeNew;												// add extraneous edge at end	
-		} else edge[edges++] = e;
+			for (int n1 = 0; n1 < edges; n1++) edgeNew[n1] = edge[n1];					// copy everything straight-on
+			edgeNew[edges++] = e; edge = edgeNew;										// add extraneous edge at end
+			return; }
+		edge[edges++] = e;
 	}
 
 	
@@ -415,9 +476,9 @@ public class FEM1Octree {
 		if (octant == null) { FEM1Octree[] leafArray = { this }; return leafArray; }	// octant was a leaf itself
 		
 		FEM1Octree[] leafArray = new FEM1Octree[branches];					// worst-case-allocate for octant leaves
-		FEM1Octree[] stackO = new FEM1Octree[MAX_LEVEL - level];			// worst-case-allocate for octant stack
+		FEM1Octree[] stackO = new FEM1Octree[maxLevel - level];			// worst-case-allocate for octant stack
 		stackO[0] = this;
-		int[] stack = new int[MAX_LEVEL - level];							// worst-case stack allocation
+		int[] stack = new int[maxLevel - level];							// worst-case stack allocation
 		stack[0] = octantIterator;
 		int s = 0, leaves = 0;
 		while (s >= 0) {
@@ -444,9 +505,9 @@ public class FEM1Octree {
 		if (octant == null) { FEM1Octree[] leafArray = { this }; return leafArray; }	// octant was a leaf itself
 		
 		FEM1Octree[] leafArray = new FEM1Octree[branches];					// worst-case-allocate for octant leaves
-		FEM1Octree[] stackO = new FEM1Octree[MAX_LEVEL - level];			// worst-case-allocate for octant stack
+		FEM1Octree[] stackO = new FEM1Octree[maxLevel - level];			// worst-case-allocate for octant stack
 		stackO[0] = this;
-		int[] stack = new int[MAX_LEVEL - level];							// worst-case stack allocation
+		int[] stack = new int[maxLevel - level];							// worst-case stack allocation
 		stack[0] = octantIterator;
 		int s = 0, leaves = 0;
 		while (s >= 0) {
@@ -487,8 +548,8 @@ public class FEM1Octree {
 			int n3 = n * 3;
 			if (n3 > nodeG.length) {
 					n3 -= nodeG.length;
-					octant1 = locateCoordinate(fem.nodeWork[n3++], fem.nodeWork[n3++], fem.nodeWork[n3], MAX_LEVEL);
-			} else	octant1 = locateCoordinate(nodeG[n3++], nodeG[n3++], nodeG[n3], MAX_LEVEL);
+					octant1 = locateCoordinate(fem.nodeWork[n3++], fem.nodeWork[n3++], fem.nodeWork[n3], maxLevel);
+			} else	octant1 = locateCoordinate(nodeG[n3++], nodeG[n3++], nodeG[n3], maxLevel);
 		} else
 			octant1 = octants[0];
 		
@@ -589,7 +650,7 @@ public class FEM1Octree {
 
 	// method vectorises by centroid deviation into a scalar the level of nodal distribution disbalance between octants,
 	// where 1 = max. disbalance (all nodes ending up in a single octant)
-	double octantNodeDisbalance(int total, int nMMM, int nPMM, int nMPM, int nPPM, int nMMP, int nPMP, int nMPP, int nPPP) {
+	static double octantNodeDisbalance(int total, int nMMM, int nPMM, int nMPM, int nPPM, int nMMP, int nPMP, int nMPP, int nPPP) {
 		double totalD = 0.5773 / total, vDisbX = 0, vDisbY = 0, vDisbZ = 0;
 		if (nMMM > 0) { double nMMMf = (double)nMMM * totalD; vDisbX -= nMMMf; vDisbY -= nMMMf; vDisbZ -= nMMMf; }
 		if (nPMM > 0) { double nPMMf = (double)nPMM * totalD; vDisbX += nPMMf; vDisbY -= nPMMf; vDisbZ -= nPMMf; }
@@ -601,12 +662,32 @@ public class FEM1Octree {
 		if (nPPP > 0) { double nPPPf = (double)nPPP * totalD; vDisbX += nPPPf; vDisbY += nPPPf; vDisbZ += nPPPf; }
 		return Math.sqrt(vDisbX * vDisbX + vDisbY * vDisbY + vDisbZ * vDisbZ);
 	}
+
 	
-	
+	// user wants a maximal subdivision granularity, method calculates what branch level to stop subdividing at to reach that granularity
+	// assumingly the return value will be assigned to maxLevel static parameter
+	public short maxLevelFromGranularity(double granularity) {
+		FEM1Octree octant = this; while (octant.parent != null) octant = octant.parent;
+		double subDim = octant.xP - octant.xM; int level = 0;
+		while (subDim > granularity) { level++; subDim *= .5; }
+		return (short)level;
+	}
+
+	// method calculates what granularity is attainable from current maxLevel subdivision limit, starting at world bounding box
+	public double granularityFromMaxLevel() {
+		FEM1Octree octant = this; while (octant.parent != null) octant = octant.parent;
+		double granularity = octant.xP - octant.xM; int level = maxLevel;
+		while (level-- > 0) { granularity *= .5; }
+		return granularity;
+	}
+
 	// method tells how many extraneous nodes to allocate additional space for
 	public static int extra_space(int n) { return (n >> 1) == 0 ? n + 1 : n + (n >> 1); }
 	
-	
+	///////////////////////////////////////////////////////////////////////////////////////////////////////////
+	//			OUTPUT METHODS
+	///////////////////////////////////////////////////////////////////////////////////////////////////////////	
+
 	public String toString() {
 		StringBuilder sb = new StringBuilder();
 		sb.append("Octree, total branches: " + branches + "\n");
@@ -627,14 +708,19 @@ public class FEM1Octree {
 		}
 		sb2.append(String.format(" x(%.3f,%.3f)y(%.3f,%.3f)z(%.3f,%.3f)\n", xM,xP,yM,yP,zM,zP));
 		for (int t = 0; t < level; t++) sb2.append("   ");
-		sb2.append("Level: " + level + ", nodes: " + nodes + ", edges: " + edges + ", branches: " + branches + "\n");
+		sb2.append("Level: " + level + ", nodes: " + nodes + ", edges: " + edges + ", branches: " + branches + ", disbalance: " + disbalance + "\n");
+		// note: nodes can be > 0 even if node == null, for branches
 		if (node != null) {
 			for (int t = 0; t < level; t++) sb2.append("   ");
 			sb2.append("n:[");
 			if (maxItemPrint < nodes)
 					for (int n = 0; n < maxItemPrint; n++) sb2.append(node[n] + (n == maxItemPrint - 1 ? "...]\n" : ","));
-			else	for (int n = 0; n < nodes; n++) sb2.append(node[n] + (n == nodes - 1 ? "]" : ","));
-			sb2.append(edges > 0 ? " e:[" : "\n");
+			else	for (int n = 0; n < nodes; n++) sb2.append(node[n] + (n == nodes - 1 ? "]\n" : ","));
+		}
+		// note: edges can be > 0 even if edge == null, for branches
+		if (edge != null) {
+			for (int t = 0; t < level; t++) sb2.append("   ");
+			sb2.append("e:[");
 			if (maxItemPrint < edges)
 					for (int e = 0; e < maxItemPrint; e++) sb2.append(edge[e] + (e == maxItemPrint - 1 ? "...]\n" : ","));
 			else	for (int e = 0; e < edges; e++) sb2.append(edge[e] + (e == edges - 1 ? "]\n" : ","));
@@ -652,8 +738,11 @@ public class FEM1Octree {
 		return sb2;
 	}
 	
-	public void toOBJ(FEM1 fem, boolean leafsOnly) {
-		File file = new File(fem.name + "_octree.obj");
+	
+	// method writes octree structure to OBJ file
+	public static final int OBJ_NODES = 1, OBJ_EDGES = 2, OBJ_FACETS = 4;
+	public void toOBJ(FEM1 fem, boolean leafsOnly, int output) {
+		File file = new File(fem.name + "_octree" + ((output&OBJ_NODES)!=0?"N":"") + ((output&OBJ_EDGES)!=0?"E":"") + ((output&OBJ_FACETS)!=0?"F":"") + ".obj");
 		if (!file.exists()) { try {	file.createNewFile(); } catch (IOException e) { e.printStackTrace(); }}
 		BufferedWriter bw = null;
 		try {		bw = new BufferedWriter(new FileWriter(file));
@@ -663,9 +752,9 @@ public class FEM1Octree {
 		vOBJcnt = 0; pOBJidx = 1;
 		
 		sb.append("# Visualisation of octree\n#\n");
-		sb.append(appendVerticesToOBJ(fem, precFormat, leafsOnly));
+		sb.append(appendVerticesToOBJ(fem, precFormat, leafsOnly, output));
 		sb.append("# " + vOBJcnt + " vertices\n\ng " + fem.name + "_octree\n");
-		sb.append(appendPolygonsToOBJ(fem, leafsOnly));
+		sb.append(appendPolygonsToOBJ(fem, leafsOnly, output));
 		sb.append("# " + (pOBJidx - 1) / 6 + " faces\n\ng\n");
 		
 		try {	bw.write(sb.toString());									// write out & close file
@@ -674,32 +763,36 @@ public class FEM1Octree {
 
 	}
 	
-	StringBuilder appendVerticesToOBJ(FEM1 fem, String precFormat, boolean leafsOnly) {
+	StringBuilder appendVerticesToOBJ(FEM1 fem, String precFormat, boolean leafsOnly, int output) {
 		StringBuilder sb2 = new StringBuilder();
 		if (!leafsOnly || (leafsOnly && octant == null)) {
-			double[] pCoord = {xM,yM,zM, xP,yM,zM, xM,yP,zM, xP,yP,zM, xM,yM,zP, xP,yM,zP, xM,yP,zP, xP,yP,zP};
-			for (int p = 0, c = 0; p < 8; p++)
-				sb2.append("v  "+String.format(precFormat,pCoord[c++])+" "+String.format(precFormat,pCoord[c++])+" "+String.format(precFormat,pCoord[c++])+"\n");
-			vOBJcnt += 8;
+			if (output==0 || (output&OBJ_NODES)!=0 && node!=null || (output&OBJ_EDGES)!=0 && edge!=null) {
+				double[] pCoord = {xM,yM,zM, xP,yM,zM, xM,yP,zM, xP,yP,zM, xM,yM,zP, xP,yM,zP, xM,yP,zP, xP,yP,zP};
+				for (int p = 0, c = 0; p < 8; p++)
+					sb2.append("v  "+String.format(precFormat,pCoord[c++])+" "+String.format(precFormat,pCoord[c++])+" "+String.format(precFormat,pCoord[c++])+"\n");
+				vOBJcnt += 8;
+			}
 		}
 		if (octant != null) {
-			for (int o = 0; o < 8; o++) if (octant[o] != null) sb2.append(octant[o].appendVerticesToOBJ(fem, precFormat, leafsOnly)); }
+			for (int o = 0; o < 8; o++) if (octant[o] != null) sb2.append(octant[o].appendVerticesToOBJ(fem, precFormat, leafsOnly, output)); }
 		return sb2;
 	}
 
-	StringBuilder appendPolygonsToOBJ(FEM1 fem, boolean leafsOnly) {
+	StringBuilder appendPolygonsToOBJ(FEM1 fem, boolean leafsOnly, int output) {
 		StringBuilder sb2 = new StringBuilder();
 		if (!leafsOnly || (leafsOnly && octant == null)) {
-			sb2.append("f " + pOBJidx + " " + (pOBJidx+1) + " " + (pOBJidx+5) + " " + (pOBJidx+4) + "\n");
-			sb2.append("f " + (pOBJidx+1) + " " + (pOBJidx+3) + " " + (pOBJidx+7) + " " + (pOBJidx+5) + "\n");
-			sb2.append("f " + (pOBJidx+3) + " " + (pOBJidx+2) + " " + (pOBJidx+6) + " " + (pOBJidx+7) + "\n");
-			sb2.append("f " + pOBJidx + " " + (pOBJidx+2) + " " + (pOBJidx+6) + " " + (pOBJidx+4) + "\n");
-			sb2.append("f " + pOBJidx + " " + (pOBJidx+1) + " " + (pOBJidx+3) + " " + (pOBJidx+2) + "\n");
-			sb2.append("f " + (pOBJidx+4) + " " + (pOBJidx+5) + " " + (pOBJidx+7) + " " + (pOBJidx+6) + "\n");
-			pOBJidx += 8;
+			if (output==0 || (output&OBJ_NODES)!=0 && node!=null || (output&OBJ_EDGES)!=0 && edge!=null) {
+				sb2.append("f " + pOBJidx + " " + (pOBJidx+1) + " " + (pOBJidx+5) + " " + (pOBJidx+4) + "\n");
+				sb2.append("f " + (pOBJidx+1) + " " + (pOBJidx+3) + " " + (pOBJidx+7) + " " + (pOBJidx+5) + "\n");
+				sb2.append("f " + (pOBJidx+3) + " " + (pOBJidx+2) + " " + (pOBJidx+6) + " " + (pOBJidx+7) + "\n");
+				sb2.append("f " + pOBJidx + " " + (pOBJidx+2) + " " + (pOBJidx+6) + " " + (pOBJidx+4) + "\n");
+				sb2.append("f " + pOBJidx + " " + (pOBJidx+1) + " " + (pOBJidx+3) + " " + (pOBJidx+2) + "\n");
+				sb2.append("f " + (pOBJidx+4) + " " + (pOBJidx+5) + " " + (pOBJidx+7) + " " + (pOBJidx+6) + "\n");
+				pOBJidx += 8;
+			}
 		}
 		if (octant != null) {
-			for (int o = 0; o < 8; o++) if (octant[o] != null) sb2.append(octant[o].appendPolygonsToOBJ(fem, leafsOnly)); }
+			for (int o = 0; o < 8; o++) if (octant[o] != null) sb2.append(octant[o].appendPolygonsToOBJ(fem, leafsOnly, output)); }
 		return sb2;
 	}
 

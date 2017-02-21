@@ -19,6 +19,10 @@ import lkr74.matrixlib.NspArray;
 import lkr74.matrixlib.NspNode;
 
 public class FEM1 {
+	
+	///////////////////////////////////////////////////////////////////////////////////////////////////////////
+	//			FINITE ELEMENT CONSTRUCTOR CLASS 1
+	///////////////////////////////////////////////////////////////////////////////////////////////////////////	
 
 	// note: for more programmer-friendly access, methods for accessing the following 1D-arrays
 	// can be implemented, to reference specific coordinates and elements
@@ -429,14 +433,14 @@ public class FEM1 {
 		int n3 = nodesWork * NCOORD;
 		if (nodeWork != null && n3 < nodeWork.length) {
 			nodeWork[n3++] = x; nodeWork[n3++] = y; nodeWork[n3] = z; nodes++; nodesWork++;
-			if (nodeFlag != null) nodeWorkFlag[nodesWork] = flag;
+			if (nodeWorkFlag != null) nodeWorkFlag[nodesWork] = flag;
 		} else {														// if we filled nodeWork[] array
 			mergeNodeWork();											// merge it into node[] array
 			int nodesWork2 = nodes / nodeworkFactor;
 			if (nodesWork2 < 8) nodesWork2 = 8;
 			nodeWork = new double[nodesWork2 * NCOORD];					// create new nodeWork[] array
 			nodeWork[0] = x; nodeWork[1] = y; nodeWork[2] = z;
-			if (nodeFlag != null) nodeWorkFlag[0] = flag;
+			if (nodeWorkFlag != null) nodeWorkFlag[0] = flag;
 			nodesWork = 1;
 			deletedNode = new int[nodes++ + nodesWork2];				// assign new array for deleted nodes
 		}
@@ -1569,10 +1573,10 @@ public class FEM1 {
 			FEM1Octree octant = null;
 			if (closestOctants[nP2].octantDistance(xm, ym, zm, false) == 0)	{
 				octant = closestOctants[nP2];
-				octant.octantAddNode(xm, ym, zm, nM3 / 3, true);
+				octant.octantAddNode(nM3 / 3, true);
 			} else if (closestOctants[nP2 + 1].octantDistance(xm, ym, zm, false) == 0) {
 				octant = closestOctants[nP2 + 1];
-				octant.octantAddNode(xm, ym, zm, nM3 / 3, true);
+				octant.octantAddNode(nM3 / 3, true);
 			}
 			// the case of the median crossing over to a corner octant to the two neighbour octants:
 			// find the topmost container and do an extraneous node insertion

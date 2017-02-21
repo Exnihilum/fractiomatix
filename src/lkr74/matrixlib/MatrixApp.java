@@ -607,8 +607,9 @@ public class MatrixApp {
 		
 		FEM1Octree octree = new FEM1Octree(fem);
 		if (octree.nodes > fem.octreeMaxItems) octree.buildOctree(fem, fem.octreeMaxItems, 0);		// max 60 nodes per octant leaf found as optimal value
-		octree.addEdge(fem, 0, -43.8261, 3.9602, 0, -66.2773, 26.6212, 0, fem.octreeMaxItems, 0);
-		octree.toOBJ(fem, true);
+		//octree.addEdge(fem, 0, -43.8261, 3.9602, 0, -66.2773, 26.6212, 0, fem.octreeMaxItems, 0);
+		octree.addEdge(fem, -84, 77.8848, 3.9602, 0, -66.2773, 26.6212, 0, fem.octreeMaxItems, 0);
+		octree.toOBJ(fem, true, FEM1Octree.OBJ_EDGES);
 		//fem.closestNodesToOBJ(octree);
 		//octree.addEdge(fem, xa, ya, za, xb, yb, zb, edgeIndex, maxItems, disbalance)
 		
