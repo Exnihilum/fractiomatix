@@ -1,16 +1,20 @@
 package lkr74.matrixlib;
 
-//a NspArray is a freestanding sparse datastructure that can be manipulated by relevant methods,
-//multiplied, recombined, added and so on, if the method returns an assembled NspArray, then it
-//has to be integrated with the arrays of the opposite aspect: Hsp -> update Vsp, Vsp -> update Hsp
-public class NspArray {
-	public int nodes, size;
-	public NspNode[] array;
+public class NSPArray {
 	
-	public NspArray(int nodes, int size, NspNode[] array) { this.nodes = nodes; this.size = size; this.array = array; }
+	// A NspArray is a freestanding sparse datastructure that can be manipulated by relevant methods,
+	// multiplied, recombined, added and so on, if the method returns an assembled NspArray, then it
+	// has to be integrated with the arrays of the opposite aspect: Hsp -> update Vsp, Vsp -> update Hsp
+	// This is a helper class for the NSPMatrix class, since a NSPMAtrix consists of NSPArrays
+	// Leonard Krylov 2016
+	
+	public int nodes, size;
+	public NSPNode[] array;
+	
+	public NSPArray(int nodes, int size, NSPNode[] array) { this.nodes = nodes; this.size = size; this.array = array; }
 
 	@Override
-	protected NspArray clone() { return new NspArray(nodes, size, array != null ? array.clone() : null); }
+	protected NSPArray clone() { return new NSPArray(nodes, size, array != null ? array.clone() : null); }
 	
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
 	//			OUTPUT METHODS

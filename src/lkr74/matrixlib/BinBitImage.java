@@ -7,6 +7,9 @@ import java.nio.IntBuffer;
 import java.util.Arrays;
 
 public class BinBitImage {
+	
+	// A binary bitfield that mirrors some matrix operations (not extensively used)
+	// Leonard Krylov 2016
 
 	static final double ROUNDOFF_ERROR = Matrix.ROUNDOFF_ERROR;
 

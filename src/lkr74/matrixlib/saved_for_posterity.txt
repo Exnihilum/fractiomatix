@@ -1,3 +1,21 @@
+		// a test to show that cache-optimising and loop-unrolling matrix multiplication can be totally counterproductive
+		// (supposed to be testrun in a main() method)
+		Matrix R = new Matrix("R", 19, 12, Matrix.Type.Random);
+		Matrix Rt = R.transpose(COPY), Rres;
+		Matrix.DEBUG_LEVEL--;
+		
+		tStart = System.nanoTime();
+		for (int i = 0; i < iters; i++) { Rres = R.multiply(Rt); Rres.det++; }
+		tEnd = System.nanoTime();
+		System.out.printf("Matrix.multiply() averaged %.1f ns\n", (double)(tEnd - tStart)/(double)iters);
+
+		tStart = System.nanoTime();
+		for (int i = 0; i < iters; i++) { Rres = R.multiply_cacheopt(Rt); Rres.det++; }
+		tEnd = System.nanoTime();
+		System.out.printf("Matrix.multiply_cacheopt() averaged %.1f ns\n", (double)(tEnd - tStart)/(double)iters);
+		Matrix.DEBUG_LEVEL++;
+
+
 	// method find the closest node to the suppplied one by constructing coordinate-wise sortings and doing an expansive nearest-neighbour search
 	// always choosing the shortest coordinate-neighbour index to step out along, until three indexes from the reindexing arrays match up
 	// note: method was a naive approach that does not work!

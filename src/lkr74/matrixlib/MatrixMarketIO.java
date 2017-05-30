@@ -7,6 +7,9 @@ import java.io.IOException;
 
 public class MatrixMarketIO {
 	
+	// Class for loading in a MatrixMarket file format into a Matrix or NSPMatrix datastructure
+	// Leonard Krylov 2016
+	
 	BufferedReader br = null;
 	StringBuilder sb;
 	Matrix M = null;
@@ -35,8 +38,8 @@ public class MatrixMarketIO {
 		double[] iv = new double[2];
 		boolean keepReading = true;
 		String[] dataRow = null, mName = fName.split("[//.]+");
-		NspArray aVsp = null;
-		NspNode[] bVsp = null;							
+		NSPArray aVsp = null;
+		NSPNode[] bVsp = null;							
 		int offV = 0;							// offsVsp = offset into current Vsp buffer
 		
 		int debug_level = Matrix.DEBUG_LEVEL;
@@ -173,7 +176,7 @@ public class MatrixMarketIO {
 							if (NSPMatrix.updateArraySize(aVsp.nodes + 1, aVsp))
 								bVsp = aVsp.array;
 	
-							bVsp[offV] = new NspNode(r, c, v1, v2, 0, offV);	// insert row index w. vertical array offset
+							bVsp[offV] = new NSPNode(r, c, v1, v2, 0, offV);	// insert row index w. vertical array offset
 							M2.nNZ++;											// total node count incremented
 							if (r == c) M2.pivotNsp[r] = bVsp[offV];			// if it's a pivot, put in fast-access array
 							M2.readjustHalfBandwidth(r, c);

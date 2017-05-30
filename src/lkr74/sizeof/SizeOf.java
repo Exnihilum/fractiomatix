@@ -5,12 +5,12 @@ import lkr74.matrixlib.FrontalMatrix;
 import lkr74.matrixlib.Matrix;
 import lkr74.matrixlib.NSPMatrix;
 
-// Adaptation of Vladimir Roubtsov's method for finding true size of an allocated Object
-// the switch clause covers the measurable object types, their instantiation is made by cloning an existing
-// object that needs measuring
-public class SizeOf
-{
+public class SizeOf {
 	private long size = 0;
+	
+	// Adaptation of Vladimir Roubtsov's method for finding true size of an allocated Object
+	// the switch clause covers the measurable object types, their instantiation is made by cloning an existing
+	// object that needs measuring
 	
 	public SizeOf (Object gaugeObject, boolean verbose)
 	{
@@ -27,8 +27,7 @@ public class SizeOf
 		String fullClassName = gaugeObject.getClass().getName();
 		String className = fullClassName.substring(fullClassName.lastIndexOf('.') + 1);
 		
-		for (; i < count; i++)
-		{
+		for (; i < count; i++) {
 			if (usedMemory() > maxUseMem) break;				// interrupt on allocating more than 1/8th of free memory
 			Object object = null;
 			// Instantiate your data here and assign it to object
@@ -39,13 +38,10 @@ public class SizeOf
 			case "FrontalMatrix":	object = ((FrontalMatrix)gaugeObject).clone(); break;
 			default: System.out.println("Unknown SizeOf class.\n"); return;
 			}
-
 			if (i >= 0) objects[i] = object;
-			else {
-				object = null; // Discard the warm up object
-				runGC ();
-				heap1 = usedMemory();							// Take a before heap snapshot
-			}
+			else {	object = null;								// Discard the warm up object
+					runGC ();
+					heap1 = usedMemory(); }						// Take a before heap snapshot
 		}
 		runGC ();
 		long heap2 = usedMemory (); // Take an after heap snapshot:
@@ -61,18 +57,12 @@ public class SizeOf
 	
 	public long size() { return size; }
 
+	// It helps to call Runtime.gc() using several method calls:
+	private static void runGC () { for (int r = 0; r < 4; ++ r) _runGC (); }
 
-	private static void runGC () {
-		// It helps to call Runtime.gc() using several method calls:
-		for (int r = 0; r < 4; ++ r) _runGC ();
-	}
-
-
-	private static void _runGC ()
-	{
+	private static void _runGC () {
 		long usedMem1 = usedMemory (), usedMem2 = Long.MAX_VALUE;
-		for (int i = 0; (usedMem1 < usedMem2) && (i < 500); ++ i)
-		{
+		for (int i = 0; (usedMem1 < usedMem2) && (i < 500); ++ i) {
 			s_runtime.runFinalization ();
 			s_runtime.gc ();
 			Thread.currentThread ();
@@ -83,9 +73,7 @@ public class SizeOf
 	}
 
 
-	private static long usedMemory () {
-		return s_runtime.totalMemory () - s_runtime.freeMemory ();
-	}
+	private static long usedMemory () { return s_runtime.totalMemory () - s_runtime.freeMemory (); }
 
 	private static final Runtime s_runtime = Runtime.getRuntime ();
-} //
+}

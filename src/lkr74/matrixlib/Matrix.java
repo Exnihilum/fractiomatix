@@ -5,19 +5,18 @@ import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.security.InvalidParameterException;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 
 public class Matrix implements Cloneable {
 
-	///////////////////////////////////////////////////////////////////////////////////////////////////////////
-	//			FIXED VALUES
-	///////////////////////////////////////////////////////////////////////////////////////////////////////////
+	//////////////////////////////////////////////////////////////////////////////////////////////////////////
+	//			FLAT ARRAY MATRIX OPERATIONS																//
+	//			Leonard Krylov 2016																			//
+	//////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	public static final double ROUNDOFF_ERROR = 1e-8;
 	static double pivotCritFactor = 0.5;						// pivotCritFactor * candidate pivot will elect candidate if > than current pivot

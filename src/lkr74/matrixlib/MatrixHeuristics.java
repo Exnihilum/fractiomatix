@@ -2,9 +2,10 @@ package lkr74.matrixlib;
 
 import lkr74.mathgenerics.RandFill;
 
-// TODO: the Matrix heuristics class is meant to do some automated microbenchmark tests to determine
-// certain boundaries of matrixlib types utilisation and for picking algorithms strategically
 public class MatrixHeuristics {
+	
+	// TODO: the Matrix heuristics class is meant to do some automated microbenchmark tests to determine
+	// certain boundaries of matrixlib types utilisation and for picking algorithms strategically
 
 	public static final int USE_RC = 0, USE_CSR = 1, USE_NSP = 2;
 	public static int[][] multiplyAlgoPrio;

@@ -4,9 +4,10 @@ import java.security.InvalidParameterException;
 
 public class FrontalMatrix {
 
-	///////////////////////////////////////////////////////////////////////////////////////////////////////////
-	//			FRONTAL MATRIX DATASTRUCTURE FOR MULTIFRONTAL LINEAR SOLVER
-	///////////////////////////////////////////////////////////////////////////////////////////////////////////
+	//////////////////////////////////////////////////////////////////////////////////////////////////////////
+	//			FRONTAL MATRIX DATASTRUCTURE FOR MULTIFRONTAL LINEAR SOLVER									//
+	//			Leonard Krylov 2016																			//
+	//////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	final static int FM_ALLOCBLOCK = 16, FAILED_VECSIZE = 3;
 	final static boolean EXTRA_FM_SPACE = false;
@@ -102,7 +103,7 @@ public class FrontalMatrix {
 	// note: gContribC/gContribR,gExtraC are arrays with a special structure, generated in FrontalDAG class
 	public FrontalMatrix(NSPMatrix A, int pivot, int nExtraP, int[][] gContribC, int[][] gContribR, int[][] gExtraC, int[][] gExtraR) {
 		
-		NspNode[] bHsp = A.Hsp[pivot].array, bVsp = A.Vsp[pivot].array;
+		NSPNode[] bHsp = A.Hsp[pivot].array, bVsp = A.Vsp[pivot].array;
 		// if there are no values in the row or column, return empty frontal matrix, let caller handle problemn
 		if (bHsp == null || bVsp == null) return;
 
@@ -162,7 +163,7 @@ public class FrontalMatrix {
 	// space in back for extra rows & columns
 	public FrontalMatrix(NSPMatrix M, int pivot, int nExtraP, int nExtraR, int nExtraC) {
 				
-		NspNode[] bHsp = M.Hsp[pivot].array, bVsp = M.Vsp[pivot].array;
+		NSPNode[] bHsp = M.Hsp[pivot].array, bVsp = M.Vsp[pivot].array;
 		// if there are no values in the row or column, return empty frontal matrix, let caller handle problemn
 		if (bHsp == null || bVsp == null) return;
 
@@ -209,7 +210,7 @@ public class FrontalMatrix {
 		
 		boolean newFM = false;
 		int offPH = M.pivotNsp[pivot1].offH, offPV = M.pivotNsp[pivot1].offV, iMatchC = offPH, iMatchR = offPV;
-		NspNode[] bHsp1 = M.Hsp[pivot1].array, bVsp1 = M.Vsp[pivot1].array;
+		NSPNode[] bHsp1 = M.Hsp[pivot1].array, bVsp1 = M.Vsp[pivot1].array;
 		int p1nodesH = M.Hsp[pivot1].nodes, p1nodesV = M.Vsp[pivot1].nodes; 
 		
 		// advance index from pivot1 to start of pivot2 along row & column, as comparisons will start there
@@ -244,7 +245,7 @@ public class FrontalMatrix {
 		int iTBR = fm.iTB;										// iTB indexes the temporarily built rows
 		
 		// check for matching pattern by row aspect
-		NspNode[] bHsp2 = M.Hsp[pivot2].array;
+		NSPNode[] bHsp2 = M.Hsp[pivot2].array;
 		// i1 iterates over the outer/lower pivot row, i2 iterates over the inner/higher (which has one element less at the beginning)
 		int i1 = iMatchC, i2 = M.pivotNsp[pivot2].offH;
 		int iEnd1 = p1nodesH, iEnd2 = M.Hsp[pivot2].nodes;
@@ -302,7 +303,7 @@ public class FrontalMatrix {
 		}
 		
 		// check for matching pattern by column aspect
-		NspNode[] bVsp2 = M.Vsp[pivot2].array;
+		NSPNode[] bVsp2 = M.Vsp[pivot2].array;
 		i1 = iMatchR; i2 = M.pivotNsp[pivot2].offV;
 		iEnd1 = p1nodesV; iEnd2 = M.Vsp[pivot2].nodes;
 		int iTBC = iTBR;
@@ -1052,7 +1053,7 @@ public class FrontalMatrix {
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
 	
 	
-	private void extendRowData(NspNode[] dS, double[] dD, int jS, int jD) {
+	private void extendRowData(NSPNode[] dS, double[] dD, int jS, int jD) {
 		int m = 0;
 		while (true) {
 			switch (mixCode[m++]) {
@@ -1078,7 +1079,7 @@ public class FrontalMatrix {
 		}
 	}
 
-	private void extendColumnData(NspNode[] dS, double[] dD, int jS, int jD, int rTot) {
+	private void extendColumnData(NSPNode[] dS, double[] dD, int jS, int jD, int rTot) {
 		int m = 0, rTot2 = rTot * 2;
 		while (true) {
 			switch (mixCode[m++]) {

@@ -5,14 +5,14 @@ import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.IOException;
 import java.util.Arrays;
-
+import java.util.concurrent.TimeUnit;
 import org.jfree.data.xy.XYDataset;
 import org.jfree.data.xy.XYSeries;
 import org.jfree.data.xy.XYSeriesCollection;
 import org.jfree.ui.RefineryUtilities;
-
 import lkr74.fem1.FEM1;
 import lkr74.fem1.FEM1Element;
+import lkr74.fem1.FEM1Octant;
 import lkr74.fem1.FEM1Octree;
 import lkr74.mathgenerics.RandFill;
 import lkr74.mathgenerics.XYLineChart_AWT;
@@ -220,20 +220,19 @@ public class MatrixApp {
 	
 	
 	
-	// test NspNode finder with three search algorithms (iterative, linear & binary) at different heuristic levels
-	// seems like the linear finder is generally faster than binary search, and searches faster than iterative after 50 elements	
+	// test NspNode finder with three search algorithms (iterative, linear & binary) at different heuristic switch levels	
 	public static int[] testFindHVSpNode(int arraySize, int iters, int filterIter, boolean verbose) {
 		
 		long tstart, tend;
 		double[][] testRuns = new double[3][arraySize];
 		
-		int offs = (int)(Math.random()*arraySize) / 4, sizeStep = (int)Math.sqrt(arraySize), cMax = 0;
+		int offs = (int)(Math.random()*arraySize) / 4, sizeStep = (int)Math.sqrt(arraySize);
 		int itrLim = NSPMatrix.nodeSearch_iterateLim, linLim = NSPMatrix.nodeSearch_linearLim;
 		
-		NspNode[] nodes = new NspNode[arraySize];
+		NSPNode[] nodes = new NSPNode[arraySize];
 		//for (int i = 0, r = offs; i < arraySize; i++, r += 1 + (int)(Math.random()*31))
 		for (int i = 0, rstep = offs; i < arraySize; i++, rstep += 1 + (int)(Math.random() * sizeStep))
-			nodes[i] = new NspNode(0, rstep, i, i);
+			nodes[i] = new NSPNode(0, rstep, i, i);
 		
 		// prerun
 		for (int k = 0; k < iters * 5; k++) {
@@ -253,10 +252,8 @@ public class MatrixApp {
 			for (int i = 0, rstep = offs; i < sLen; i++) {
 			//for (int i = 0, rstep = offs; i < sLen; i++, rstep++)
 				randSeek[i] = nodes[i].c = rstep;								// memorise what column values we randomly generated
-				cMax = rstep;
 				rstep += 1 + (int)(Math.random() * sizeStep);
 			}
-			cMax += (int)(Math.random()*arraySize);								// add random amount of zeroes at end of dataset, cMax = "last c in dataset"
 			for (int i = 0; i < sLen; i++) {									// switch around sought column values randomly
 				int r = (int)(Math.random() * sLen); int tmp = randSeek[i]; randSeek[i] = randSeek[r]; randSeek[r] = tmp; }
 			
@@ -347,108 +344,6 @@ public class MatrixApp {
 		return prioChoice;
 	}
 	
-	
-	// test what size of maximal node clustering per octant leaf gives fastest search of two closest nodes, method returns optimal cluster size for the data
-	// inputs: iterate creating and node searching octrees from clusterSize1 to clusterSize2
-	// filterIter tells how many filtering rounds to execute on data curve
-	public static int testOctreeBuildClosestNodes(String dataFile, int clusterSize1, int clusterSize2, int filterIter, boolean verbose) {
-		
-		if (clusterSize1 < 2) clusterSize1 = 2;
-		if (clusterSize2 < clusterSize1) clusterSize2 = clusterSize1 + 1;
-		
-		double[][] testRuns = new double[3][clusterSize2 - clusterSize1];
-		FEM1 fem = null;
-		try {
-			BufferedReader br = new BufferedReader(new FileReader(dataFile));
-			fem = new FEM1(br, FEM1.MESH_PSC);
-			br.close();
-		} catch (FileNotFoundException e) { e.printStackTrace();
-		} catch (IOException e) { 			e.printStackTrace(); }
-			
-		// test what size of maximal node clustering per octant leaf gives fastest search of two closest nodes
-		long tStart, tEnd, tEnd2;
-		for (int i = clusterSize1, warmup = 10; i < clusterSize2;) {
-			System.gc();
-			tStart = System.nanoTime();
-			tEnd = 0; tEnd2 = 0;
-			FEM1Octree octree = new FEM1Octree(fem);
-			octree.buildOctree(fem, i, 0);
-			tEnd = System.nanoTime() - tStart;
-			int[] closest = new int[fem.nodes * 2];					// worst case allocation
-			double[] distance = new double[fem.nodes];				// worst case allocation
-			int nPairs = fem.closestNodePairs(octree, closest, distance, null);
-			tEnd2 = System.nanoTime() - tStart;
-			if (warmup-- > 0) continue; else {
-				testRuns[0][i - clusterSize1] = tEnd *.001;
-				testRuns[1][i - clusterSize1] = tEnd2 *.001;
-				testRuns[2][i - clusterSize1] = (tEnd + tEnd2) *.001;
-				if (verbose)	System.out.printf("Max node cluster size " + i++ + " took %.1f ns, closest pairs took %.1f ns, sum: %.1f\n",
-													(double)tEnd, (double)tEnd2, (double)(tEnd+tEnd2));
-			}
-		}
-		int clSizeRange = clusterSize2 - clusterSize1 - 1;
-		for (int f = 0; f < filterIter; f++) {
-			double[][] testRuns2 = testRuns.clone();
-			for (int i = 1; i < clSizeRange; i++) {
-				//testRuns2[0][i] = (testRuns[0][i-1] + testRuns[0][i] + testRuns[0][i+1]) * 0.3333;
-				//testRuns2[1][i] = (testRuns[1][i-1] + testRuns[1][i] + testRuns[1][i+1]) * 0.3333;
-				testRuns2[2][i] = (testRuns[2][i-1] + testRuns[2][i] + testRuns[2][i+1]) * 0.3333;
-			}
-			testRuns = testRuns2;
-		}
-		double lowest = testRuns[2][0];
-		int optimalSize = clusterSize1;
-		for (int i = 1; i <= clSizeRange; i++) if (testRuns[2][i] < lowest) { lowest = testRuns[2][i]; optimalSize = i + clusterSize1; }
-		if (verbose) {
-			System.out.println("Optimal cluster size: " + optimalSize);
-			XYDataset bestFitChartSet;
-			String[] testNames = {"","","","","octree build","closest node search","build + search"};
-			int[] testCases = {0, 1, 2};
-			bestFitChartSet = createStatisticSet(testRuns, testNames, testCases);
-			XYLineChart_AWT bestFitChart = new XYLineChart_AWT(
-					"Octree varying cluster size build and closest node search test", "exec. time", "msecs/op.", bestFitChartSet, 1024, 768);
-			bestFitChart.pack();          
-			RefineryUtilities.centerFrameOnScreen(bestFitChart);   
-			bestFitChart.setVisible( true ); 
-		}	
-		return optimalSize;
-	}
-	
-	
-	public static int testAllocFactor(int nwfNo, int size) {
-		// test different nodeWork allocation factors, comparing speed of execution
-		double[][] testRuns = new double[3][nwfNo];
-		boolean warmup = true;
-		for (int nwf = 1; nwf < nwfNo; nwf++) {
-			FEM1 fem2 = new FEM1("test");
-			fem2.nodeworkFactor = nwf;
-			long tStart = System.nanoTime();
-			for (int n = 0; n < size; n++) fem2.addNode(0, 0, 0, (byte)0);
-			for (int n = 0; n < size; n++) fem2.deleteNode((int)(Math.random() * fem2.nodes));
-			long tEnd = System.nanoTime();
-			if (warmup) { nwf--; warmup = false; continue; }
-			testRuns[0][nwf - 1] = (double)(tEnd - tStart) / 1000000.0;
-			testRuns[1][nwf - 1] = 0.1 * (double)(tEnd - tStart) / (double)(fem2.node.length + fem2.nodeWork.length);
-			tStart = System.nanoTime();
-			for (int n = 0; n < size; n++)
-				if (Math.random() > 0.2)	fem2.addNode(0, 0, 0, (byte)0);
-				else						fem2.deleteNode((int)(Math.random() * fem2.nodes));
-			tEnd = System.nanoTime();
-			testRuns[2][nwf - 1] = (double)(tEnd - tStart) / 1000000.0;
-			System.out.printf("factor " + fem2.nodeworkFactor + "add*N+delete*N: %.1f ms, random add/delete: %.1f ms\n", testRuns[0][nwf - 1], testRuns[2][nwf - 1]);
-		}
-
-		XYDataset bestFitChartSet;
-		String[] testNames = {"","","","","add*N+delete*N","add*N+delete*N / mem.usage","random add/delete"};
-		int[] testCases = {0, 1, 2};
-		bestFitChartSet = createStatisticSet(testRuns, testNames, testCases);
-		XYLineChart_AWT bestFitChart = new XYLineChart_AWT(
-				"nodeWork allocation factor", "exec. time", "nsecs/test", bestFitChartSet, 1024, 768);
-		bestFitChart.pack();          
-		RefineryUtilities.centerFrameOnScreen(bestFitChart);   
-		bestFitChart.setVisible( true ); 
-		return 0;
-	}
 	
 	
 	// test client
@@ -544,6 +439,7 @@ public class MatrixApp {
 						7,7,7,7,7,7,7,8,
 						8,8,8,8,8,8,8,8};
 			
+		// runs matrix multiplication comparison
 //		int[] mtests = {4, 2, -2, -4};
 //		matrixMultiTest(mtests);
 //		if(1==1) return;
@@ -551,29 +447,11 @@ public class MatrixApp {
 		int iters = 100000;
 		long tStart, tEnd;
 		
-		// a test to show that cache-optimising and loop-unrolling matrix multiplication can be totally counterproductive
-//		Matrix R = new Matrix("R", 19, 12, Matrix.Type.Random);
-//		Matrix Rt = R.transpose(COPY), Rres;
-//		Matrix.DEBUG_LEVEL--;
-//		
-//		tStart = System.nanoTime();
-//		for (int i = 0; i < iters; i++) { Rres = R.multiply(Rt); Rres.det++; }
-//		tEnd = System.nanoTime();
-//		System.out.printf("Matrix.multiply() averaged %.1f ns\n", (double)(tEnd - tStart)/(double)iters);
-//
-//		tStart = System.nanoTime();
-//		for (int i = 0; i < iters; i++) { Rres = R.multiply_cacheopt(Rt); Rres.det++; }
-//		tEnd = System.nanoTime();
-//		System.out.printf("Matrix.multiply_cacheopt() averaged %.1f ns\n", (double)(tEnd - tStart)/(double)iters);
-//		Matrix.DEBUG_LEVEL++;
-//		if(1==1) return;
 		
 		// test element search heuristics of triple-method element finder testFindHVSpNode()
 		// this test will tell what element limits to set for each type of search approach: iterative/linear/binary search
 //		testFindHVSpNode(300, 150000, 10, true);
-//		if(1==1) return;
 
-//		double[] m3x3 = Matrix.invert3x3(d5);
 //		double[] w1D = {.55555555,.88888888,.55555555 }, w = new double[9*3];
 //		for (int j = 0; j < 3; j++)
 //			for (int i = 0; i < 3; i++) w[3*j+i] = w1D[i]*w1D[j];
@@ -585,33 +463,144 @@ public class MatrixApp {
 		double[] tensor = FEM1.matStiffness_1D(matProps);
 		
 		// test what size of maximal node clustering per octant leaf gives fastest search of two closest nodes			
-//		int optimalCluster = testOctreeBuildClosestNodes("data/landscape.obj", 2, 1000, 20, true);
+//		int optimalCluster = FEM1Benchmark.testOctreeBuildClosestNodes("data/landscape.obj", 2, 500, 20, true);	
+		// test octree build single & multitasked, with variable thread spawn capping values
+//		FEM1Benchmark.testBuildingOctree("data/landscape.obj", true, false, true, true);
 //		if(1==1) return;
 		
-		// test different nodeWork allocation factors, comparing speed of execution (larger work-array allocations operate faster)
-		//testAllocFactor(256, 80000);
-
+		// generates the permutations of the stencils used for matching in the IST algorithm
+//		int[] perms = FEM1.stencilPermutations();
+//		System.out.println(FEM1.stencilPermToJavaCode(perms));
+		//VisitBitArray.criterionmaxResets(true);
+		
+		// test two example tetrahedra, one perfect and one semi-bad
+//		double[] perfectTetrahedron = {-0.2309,0,-0.3266, 0.2309,-0.3266,0, -0.2309,0,0.3266, 0.2309,0.3266,0 };
+//		double[] badTetrahedron = {-.2525,-0.0679,-1.9709, -0.2894,0.0215,-1.97, -0.264,0.003,-1.9, -.36,.054,-1.9 };
+//		double ptVal = fem.tetraVolumePositivity(perfectTetrahedron, 0, 1, 2, 3);
+//		ptVal = fem.tetraVolumePositivity(badTetrahedron, 0, 1, 2, 3);
+//		ptVal = fem.tetraQuality(perfectTetrahedron, 0, 1, 2, 3);
+//		ptVal = fem.tetraQuality(badTetrahedron, 0, 1, 2, 3);
+//		ptVal = fem.tetraSmallestDihedral(fem.tetraDihedralAngles(perfectTetrahedron, 0, 1, 2, 3));
+//		ptVal = fem.tetraSmallestDihedral(fem.tetraDihedralAngles(badTetrahedron, 0, 1, 2, 3));	
+		// print out the smallest dihedral angles and qualities of perfectly shaped BCC tetrahedra of the IST stuffer
+//		System.out.println(FEM1.toStringBCCtetraInfo());
+		
 		FEM1 fem = null;
-		BufferedReader br = null;		
+		BufferedReader br = null;
+
 		// test loading a single object mesh from OBJ file with smoothing groups and normals
-		try {
-			br = new BufferedReader(new FileReader("data/landscape.obj"));
-			//br = new BufferedReader(new FileReader("data/roundedplate.obj"));
-			fem = new FEM1(br, FEM1.MESH_PSC);
-			br.close();
-		} catch (FileNotFoundException e) {
-			e.printStackTrace();
-		} catch (IOException e) {
-			e.printStackTrace();
+		fem.setDebugLevel(2);
+		try {	br = new BufferedReader(new FileReader("data/Beethoven.obj"));
+				fem = new FEM1(br, FEM1.MESH_PSC); br.close();
+		} catch (FileNotFoundException e) { e.printStackTrace();
+		} catch (IOException e) { e.printStackTrace(); }
+		
+		// test creating an octree from  FEM1 system elements: initialising the first octant with all data, then calling subdivider buildOctree()
+		//FEM1Octree octree = new FEM1Octree(fem, FEM1Octree.DO_NODES|FEM1Octree.DO_EDGES|FEM1Octree.DO_FACETS);
+		tStart = System.nanoTime();
+		FEM1Octree octree = new FEM1Octree(fem, FEM1Octree.DO_FACETS, 0);			// DO_FACETS activates automatic calculation of maxLevel
+		octree.root.build(octree, 0, true);	
+		fem.setDebugLevel(2);
+		FEM1Octree latticeTree = fem.volumeMeshIST(octree, 0.2, 5, true);			// subdivide to leaf octant size of 0.2m (= width of smallest element)
+		latticeTree.toOBJ(3, 7, false, true, 0);									// test octree output to OBJ
+		System.out.printf("FEM1.volumeMeshIST() took %d ns\n", System.nanoTime() - tStart);
+		fem.toOBJ(true, true);													// test outputting tetrahedral data to OBJ file
+		
+		// microbenchmark test of IST volume generator
+//		fem.setDebugLevel(1);
+//		fem.clearISTsolution();
+//		tStart = System.nanoTime();
+//		long timeOT = 0;
+//		int iNum = 50;
+//		for (int i = 0; i < iNum; i++) {
+//			long timerOT = System.nanoTime();
+//			octree = new FEM1Octree(fem, FEM1Octree.DO_FACETS, 0);					// DO_FACETS activates automatic calculation of maxLevel
+//			octree.root.build(octree, 0, true);
+//			timeOT += System.nanoTime() - timerOT;
+//			//if (i==iNum-1) fem.setDebugLevel(2);
+//			fem.volumeMeshIST(octree, 0.1, 0, true);								// subdivide to leaf octant size of 0.1m
+//		}
+//		System.out.printf("FEM1OCtant.build() took %d ns\n", timeOT/iNum);
+//		System.out.printf("GeocTree + IST generation took %d ns from average of %d iterations\n", (System.nanoTime() - tStart)/iNum, iNum);
+				
+		FEM1.getExecutor(0).shutdown();
+		try { while (!FEM1.getExecutor(0).awaitTermination(10, TimeUnit.SECONDS));
+		} catch (InterruptedException e) { e.printStackTrace(); }				
+		if(1==1) return;
+		
+		FEM1Octree lTree = fem.latticeTree(octree, 57, false);
+		// test recursive octant collector versus nonrecursive one (nonrecursive seems faster)
+//		FEM1Octant[] leafArray = null, leafArray2 = {null, null}; tStart = System.nanoTime();
+//		for (int i = 0; i < 5000; i++) {
+//			leafArray = lTree.root.leafOctantArray(lTree, lTree.maxLevel);	// nonrecursive
+//			leafArray = lTree.root.leafOctantArrayR(lTree, lTree.maxLevel);	// recursive
+//			leafArray2[0] = leafArray[0]; }
+//		long tTime = System.nanoTime() - tStart; System.out.println((double)tTime/5000);
+//		leafArray2[0] = leafArray2[1];
+		
+		// test to track down an octant and get it's 1-neighbourhood or 2-neighbourhoos
+		FEM1Octant oct = lTree.root.locateCoordinate(2.2341, -0.1424, 3.0697, lTree.topLevel);
+		FEM1Octant[] octA = new FEM1Octant[6];
+		oct.getFaceNeighbours(lTree, octA, null);
+		octA = oct.getFaceEdgeNeighbours(lTree, null, 0, -1);
+		
+		// test collection functions for different levels of octants
+//		FEM1Octant[] leaves = lTree.root.leafOctantArray(lTree);
+//		FEM1Octant[][] layers = lTree.root.layerOctantArray(lTree);
+		lTree.toOBJ(true, false, 0);
+		
+
+		// test doing a 2:1 Weak Condition subdivision of octree, where every neighbour can only have a neighbour twice the size but not larger
+		// a criterion important for differential equation fields or construction of graded mesh volumes
+		//lTree.root.split2to1(lTree, true);
+		//lTree.root.toOBJ(lTree, false, 0);
+		//if(1==1) return;
+		
+		tStart = tEnd = 0;
+		for (int i = 0; i < 600; i++) {
+			lTree = fem.latticeTree(octree, 64, true);
+			tStart = System.nanoTime();
+			lTree.root.split2to1(lTree, false);
+			tEnd += System.nanoTime() - tStart;
+		}
+		System.out.printf("FEM1.split2to1() %.1f ns\n", (double)tEnd/600.0);
+		FEM1.getExecutor(0).shutdown();
+		try { while (!FEM1.getExecutor(0).awaitTermination(10, TimeUnit.SECONDS));
+		} catch (InterruptedException e) { e.printStackTrace(); }				
+
+		if(1==1) return;
+
+		tEnd = 0;
+		long tEnd2 = 0;
+		for (int i = 0; i < 100; i++) {
+			long tStart2 = System.nanoTime();
+			lTree = fem.latticeTree(octree, 64, false);
+			tEnd2 += System.nanoTime() - tStart2;
+			tStart = System.nanoTime();
+			lTree.root.split2to1(lTree, false);
+			tEnd += System.nanoTime() - tStart;
+		}
+		System.out.printf("FEM1.latticeTree() averaged %.1f ns\n", (double)(tEnd2) / 100.0);
+		System.out.printf("FEM1Octree.split2to1_2() averaged %.1f ns\n", (double)(tEnd) / 100.0);
+		//lTree.root.toOBJ(lTree, true, FEM1Octree.DO_NODES);
+		if(1==1) return;
+		
+		// test getting bounding box from an edge and a facet
+		double[] bbox = fem.edgeBBox(0);
+		// test getting octree leaves overlapped by a bounding box
+		for (int f = 0; f < fem.polygons; f++) {
+			bbox = fem.facetBBox(f);
+			FEM1Octant[] overlap = octree.root.octantArrayByBBox(octree, bbox[0], bbox[1], bbox[2], bbox[3], bbox[4], bbox[5], false, false);
+			overlap[0] = overlap[1];
 		}
 		
-		FEM1Octree octree = new FEM1Octree(fem);
-		if (octree.nodes > fem.octreeMaxItems) octree.buildOctree(fem, fem.octreeMaxItems, 0);		// max 60 nodes per octant leaf found as optimal value
-		//octree.addEdge(fem, 0, -43.8261, 3.9602, 0, -66.2773, 26.6212, 0, fem.octreeMaxItems, 0);
-		octree.addEdge(fem, -84, 77.8848, 3.9602, 0, -66.2773, 26.6212, 0, fem.octreeMaxItems, 0);
-		octree.toOBJ(fem, true, FEM1Octree.OBJ_EDGES);
-		//fem.closestNodesToOBJ(octree);
-		//octree.addEdge(fem, xa, ya, za, xb, yb, zb, edgeIndex, maxItems, disbalance)
+		//octree.root.addEdge(octree, 0, -43.8261, 3.9602, 0, -66.2773, 26.6212, 0, octree.maxEdges, 0);
+		//octree.root.addEdge(octree, -84, 77.8848, 3.9602, 0, -66.2773, 26.6212, 0, octree.maxEdges, 0);
+		//octree.root.toOBJ(octree, true, FEM1Octree.DO_NODES);
+//		octree.root.toOBJ(octree, true, FEM1Octree.DO_EDGES);
+//		octree.root.toOBJ(octree, true, FEM1Octree.DO_FACETS);
+		// export closestNodes() visualisation to OBJ file
+		fem.closestNodesToOBJ(octree);
 		
 //		FEM1Octree[] octantsClosest = new FEM1Octree[2];
 //		double[] distanceClosest = new double[1];
@@ -627,22 +616,29 @@ public class MatrixApp {
 			br.close();
 		} catch (IOException e) { e.printStackTrace(); }
 		
+		// test enclosure of a coordinate within tetrahedron 0
 		int enclosure = fem.getElement2(0).tetraVertexEnclosure(0.1791, -0.3527, 2.7746, true);
 		double[] isect = new double[12];
+		// test intersection of a segment with tetrahedron 0
 		enclosure = fem.getElement2(0).tetraSegmentIntersection(0.571, -0.2194, 1.918, -0.181, -0.5808, 0.9791, true, isect);
 		System.out.println(FEM1Element.toBitsInteger(enclosure, "                  iiiiFFFFeFFFFe\n                  43214321e4321e\n"));
 		
+		// determine what nodes are internal (not neighbouring boundary) of FEM-system
 		int[] internalNodes = fem.internalNodes();
+		// test node deletion and resulting neighbourhood readjustment
 //		int[] deletionRef = {0, 1, 2};
 //		fem.deleteElements(deletionRef);
 		
+		// test method that locates optimal position of a fourth tetrahedral node relative to 3 supplied previous nodes
 		FEM1Element optElem = fem.optimalTetrahedron(0, 1, 2, fem.addNode(0, 0, 0, (byte)0));
 		
+		// test sorting the FEM-system's tetrahedra according to quality
 		tStart = System.nanoTime();
 		int[] tWorst = fem.tetraWorstSort(10, .8, .2, false);
 		tEnd = System.nanoTime();
 		System.out.printf("FEM1.tetraWorstSort() averaged %.1f ns\n", (double)(tEnd - tStart));
 		
+		// run test of every test criterion appliable to a tetrahedron, for every tetrahedron of FEM-system
 		for (int e = 0; e < fem.elements2; e++) {
 			FEM1Element elem = fem.getElement2(e);
 			if (elem == null) continue;
@@ -664,7 +660,10 @@ public class MatrixApp {
 			System.out.println("Volume gradient node2: " + elem.data[16] + ", " + elem.data[17] + ", " + elem.data[18]);
 			System.out.println("Volume gradient node3: " + elem.data[19] + ", " + elem.data[20] + ", " + elem.data[21]);
 		}
+		if(1==1) return;
 		
+		// test first type of FEM-system (Long Chen, "Programming of Finite Elements Method in Matlab")
+		// TODO: unclear how Matlab treats partial matrix indexation, or a defect in Chen's code gives unpredicted results
 		NSPMatrix Mfem = fem.assembleNSPMatrix();			// test FEM1 tetrahedral stiffness matrix assembly into an NSPMatrix
 		new SizeOf(Mfem, true);								// test SizeOf() method, determining total memory usage of an arbitrary object
 		Matrix Mfem2 = fem.assembleMatrix();				// test FEM1 tetrahedral stiffness matrix assembly into a Matrix
@@ -767,7 +766,7 @@ public class MatrixApp {
 		// test sparse row inner product method multiplyHVsp() of NSPMatrix
 		double n = NSPMatrix.multiplyHVsp(G8.Hsp[1], G8.Hsp[0], 0, 0);
 		System.out.println("multiplyHVsp: " + n);
-		NspArray nd = NSPMatrix.addHVsp(G8.Hsp[0], G8.Vsp[6], 2.0, 0, 1, 1);
+		NSPArray nd = NSPMatrix.addHVsp(G8.Hsp[0], G8.Vsp[6], 2.0, 0, 1, 1);
 		System.out.println(nd.toString());
 		for (int i = 0; i < 9; i++) {
 			for (int j = 0; j < 9; j++) { double v = G8.valueOf(i, j); System.out.print((v != 0 ? v : " - ") + "  "); }
@@ -903,7 +902,7 @@ public class MatrixApp {
 		S1 = S1.rescale(0, 0, 6, 6, COPY);
 		S1 = S1.multiply(S1.transpose(COPY));
 		
-		// Test multiplicating matrix with a value
+		// Test multiplying matrix with a value
 		Matrix A1 = new Matrix("A1", 9, 9, d3, null);
 		A1 = A1.multiply(-2000, NO_COPY);
 

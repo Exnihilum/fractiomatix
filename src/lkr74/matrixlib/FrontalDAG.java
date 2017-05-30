@@ -10,15 +10,20 @@ import lkr74.matrixlib.FrontalDAGVertex;
 
 public class FrontalDAG implements Cloneable {
 
+	//////////////////////////////////////////////////////////////////////////////////////////////////////////
+	//			FRONTAL DAG GRAPH OPERATIONS FOR THE FRONTAL MATRIX LU SOLVER								//
+	//			Leonard Krylov 2016																			//
+	//////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 	protected static final int DAG_ALLOCBLOCK = 16;
 	
 	String name = "DAG";
 	int verts = 0, bitSets = 0, edges = 0, subProblems = 0;
-	FrontalDAGVertex[] vertex = null;
+	FrontalDAGVertex[] vertex = null;			// the vertices of the DAG
 	private long[] visitBits = null;
 	// subProblem holds indexes to first vertex of every found subproblem, parentsL & parentsU are accumulative counters for every vertex's L/U-parents
 	private int[] subProblem = null, parentsL = null, parentsU = null;
-	private boolean distantFirst = true;
+	private boolean distantFirst = true;		// insertion order of vertex edges
 	FrontalDAG dataDAG = null;					// keep reference to the dataDAG created from this DAG
 	private int allocBlockExtras = 4;
 	int[][] mutator;
@@ -28,7 +33,7 @@ public class FrontalDAG implements Cloneable {
 		this.name = name;
 		this.verts = verts;
 		vertex = new FrontalDAGVertex[verts];
-		visitBits = new long[bitSets = (verts >> 6) + 1];
+		visitBits = visitBitArray(verts);
 		subProblem = new int[verts];
 		mutator = new int[2][];
 		mutator[0] = new int[verts]; mutator[1] = new int[verts];
@@ -41,8 +46,8 @@ public class FrontalDAG implements Cloneable {
 		try { O = super.clone(); } catch (CloneNotSupportedException e) { e.printStackTrace(); }
 		FrontalDAG dag = (FrontalDAG) O;
 		
-		dag.vertex = new FrontalDAGVertex[verts];
-		for (int i = 0; i < verts; i++) dag.vertex[i] = vertex[i].clone();
+		dag.vertex = new FrontalDAGVertex[verts];							// new vertexes array
+		for (int i = 0; i < verts; i++) dag.vertex[i] = vertex[i].clone();	// clone every vertex in vertexes array
 		dag.visitBits = visitBits.clone();
 		dag.subProblem = subProblem.clone();
 		dag.parentsL = parentsL == null ? null : parentsL.clone();
@@ -139,10 +144,10 @@ public class FrontalDAG implements Cloneable {
 		// iterate through M's sparse row arrays, adding edges to the U-DAG
 		for (int v = dagL.verts - 1; v > 0; v--) {
 			
-			NspArray aHsp = M.Hsp[v], aVsp = M.Vsp[v];
+			NSPArray aHsp = M.Hsp[v], aVsp = M.Vsp[v];
 			
 			int toPivotH = M.pivotNsp[v].offH, toPivotV = M.pivotNsp[v].offV;
-			NspNode[] bHsp = aHsp.array, bVsp = aVsp.array;
+			NSPNode[] bHsp = aHsp.array, bVsp = aVsp.array;
 			FrontalDAGVertex vtx = dagL.vertex[v];
 			int[] edge = null;
 			// superNodeDisjoint = false if ANY offspring to a supernode is found, if loop iterates through a superpivot
@@ -488,8 +493,8 @@ public class FrontalDAG implements Cloneable {
 			// 3b) if a path k~U~>i / k~L~>i exists in Task-DAG AND
 			// 3c) if LU-parent(k) > j
 
-			NspArray aHsp = M.Hsp[v];
-			NspNode[] bHsp = aHsp.array;
+			NSPArray aHsp = M.Hsp[v];
+			NSPNode[] bHsp = aHsp.array;
 			int i = M.pivotNsp[v].offH + 1, pntsL = parentsL[vSC], pntsU = parentsU[vSC];
 			if (vtx.superPivot >= 0)															// if we're dealing with a supernode
 				while (i < aHsp.nodes && bHsp[i].c < vtx.superChild) i++;						// go outside supernode pivot block boundary
@@ -500,8 +505,8 @@ public class FrontalDAG implements Cloneable {
 					
 					// for every U-parent of i
 					boolean inStructJ = false;
-					NspArray aVsp = M.Vsp[j];
-					NspNode[] bVsp = aVsp.array;
+					NSPArray aVsp = M.Vsp[j];
+					NSPNode[] bVsp = aVsp.array;
 					int r2 =  M.pivotNsp[j].offV + 1;
 					for (int p = pntsL; p < pntsU; p++) {
 						
@@ -535,8 +540,8 @@ public class FrontalDAG implements Cloneable {
 			}
 			
 			// do the same heuristic for adding L-edge i-L->j from a transposed aspect			
-			NspArray aVsp = M.Vsp[v];
-			NspNode[] bVsp = aVsp.array;
+			NSPArray aVsp = M.Vsp[v];
+			NSPNode[] bVsp = aVsp.array;
 			i = M.pivotNsp[v].offV + 1;
 			if (vtx.superPivot >= 0)													// if we're dealing with a supernode
 				while (i < aVsp.nodes && bVsp[i].r < vtx.superChild) i++;				// go outside supernode pivot block boundary
@@ -599,7 +604,7 @@ public class FrontalDAG implements Cloneable {
 			// (and the same heuristic done for the transposed case)
 			
 			if (pLU < Integer.MAX_VALUE) {												// if h is the LU-parent of j (current vertex) and...
-				NspNode pivNj = M.pivotNsp[v];
+				NSPNode pivNj = M.pivotNsp[v];
 				int h = pLU, j = vSC, r1 = pivNj.offV + 1, c1 = pivNj.offH + 1;
 				for (int i = j + 1; i < h; i++)	{										// for j < i < h ...
 					
@@ -612,8 +617,8 @@ public class FrontalDAG implements Cloneable {
 					if (i > j &&														// and there exists an L-path j~L~>i such that i < h (for-loop fulfills i < h)
 						dataDAG.pathTo(i, j, FrontalDAGVertex.L_PATH, 0, vStack, true) != null) {
 
-						NspArray aVsp = M.Vsp[v];
-						NspNode[] bVsp = aVsp.array;
+						NSPArray aVsp = M.Vsp[v];
+						NSPNode[] bVsp = aVsp.array;
 						boolean inStructJ = false;
 						for (int p = vtxSCi.parentsL; p < vtxSCi.parentsU; p++) {		// 2) none of i's U-parents...
 							for (int r = r1; r < aVsp.nodes; r++)						// are in Struct(U[*,j])
@@ -630,8 +635,8 @@ public class FrontalDAG implements Cloneable {
 					if (i > j &&														// if there exists an U-path j~U~>i such that i < h ...
 						dataDAG.pathTo(i, j, FrontalDAGVertex.U_PATH, 0, vStack, true) != null) {
 
-						NspArray aHsp = M.Hsp[v];
-						NspNode[]  bHsp = aHsp.array;
+						NSPArray aHsp = M.Hsp[v];
+						NSPNode[]  bHsp = aHsp.array;
 						boolean inStructJ = false;
 						for (int p = 0; p < vtxSCi.parentsL; p++) {						// 2) none of i's L-parents...
 							for (int c = c1; c < aHsp.nodes; c++)						// are in Struct(L[j,*])
@@ -1579,6 +1584,7 @@ public class FrontalDAG implements Cloneable {
 	public int superChild(int v) { return vertex[v].superPivot >= 0 ? vertex[v].superChild : v; }
 	public int superParent(int v) { return vertex[v].superPivot >= 0 ? vertex[v].superPivot : v; }
 	
+	long[] visitBitArray(int verts) { return new long[bitSets = (verts >> 6) + 1]; }
 	public void clearVisits() { visitBits = new long[bitSets]; }
 	public boolean visited(int vtx) { return (visitBits[vtx >> 6] & (0x1L << (vtx & 63))) != 0; }
 	public void visit(int vtx) { visitBits[vtx >> 6] |= (0x1L << (vtx & 63)); }

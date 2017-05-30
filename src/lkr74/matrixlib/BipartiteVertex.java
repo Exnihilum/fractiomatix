@@ -1,6 +1,9 @@
 package lkr74.matrixlib;
 
 public class BipartiteVertex {
+	
+	// Definition of a graph vertex in a Bipartite decomposition
+	// Leonard Krylov 2016
 
 	protected static final int BPVERT_ALLOCBLOCK = 16;
 	public static final int C_VERTEX = 1<<30, SUPERSINK = 1<<29, FLAGS = C_VERTEX + SUPERSINK;

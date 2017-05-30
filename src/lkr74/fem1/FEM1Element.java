@@ -3,6 +3,12 @@ package lkr74.fem1;
 import lkr74.matrixlib.Matrix;
 
 public class FEM1Element {
+	
+	//////////////////////////////////////////////////////////////////////////////////////////////////////////
+	//			FINITE ELEMENT OBJECTIFIED PROCESSING														//
+	//			Leonard Krylov 2017																			//
+	//////////////////////////////////////////////////////////////////////////////////////////////////////////	
+	
 	// the flags parameter is set to one of these defintions
 	public static final int TETRAHEDRON = 0, HEXAHEDRON = 1, ISOTETRAHEDRON = 2, ISOHEXAHEDRON = 3;
 	// the named offsets into a tetrahedron's data[] array
@@ -458,7 +464,7 @@ public class FEM1Element {
 			if (data[TD_EDGE12] == 0) { data[TD_EDGE12] = Math.sqrt(delta[9]*delta[9] + delta[10]*delta[10] + delta[11]*delta[11]); }
 			if (data[TD_EDGE13] == 0) { data[TD_EDGE13] = Math.sqrt(delta[12]*delta[12] + delta[13]*delta[13] + delta[14]*delta[14]); }
 			if (data[TD_EDGE23] == 0) { double x32 = -node2[n2++]+node3[n3++], y32 = -node2[n2++]+node3[n3++], z32 = -node2[n2]+node3[n3];
-			data[TD_EDGE23] = Math.sqrt(x32*x32 + y32*y32 + z32*z32); }
+										data[TD_EDGE23] = Math.sqrt(x32*x32 + y32*y32 + z32*z32); }
 		} else {
 			int n0 = nodeRef[0] * FEM1.NCOORD, n1 = nodeRef[1] * FEM1.NCOORD;
 			if (n0 >= node.length) { node0 = nodeWork; n0 -= node.length; } else node0 = node;
@@ -497,10 +503,13 @@ public class FEM1Element {
 			if (delta == null) delta = new double[5 * FEM1.NCOORD];
 			int n0 = nodeRef[0] * FEM1.NCOORD, n1 = nodeRef[1] * FEM1.NCOORD, n2 = nodeRef[2] * FEM1.NCOORD, n3 = nodeRef[3] * FEM1.NCOORD; 
 			double[] node0, node1, node2, node3;
-			if (n0 >= node.length) { node0 = nodeWork; n0 -= node.length; } else node0 = node;
-			if (n1 >= node.length) { node1 = nodeWork; n1 -= node.length; } else node1 = node;
-			if (n2 >= node.length) { node2 = nodeWork; n2 -= node.length; } else node2 = node;
-			if (n3 >= node.length) { node3 = nodeWork; n3 -= node.length; } else node3 = node;
+			if (nodeWork == null) {
+				node0 = node1 = node2 = node3 = node;
+			} else {
+				if (n0 >= node.length) { node0 = nodeWork; n0 -= node.length; } else node0 = node;
+				if (n1 >= node.length) { node1 = nodeWork; n1 -= node.length; } else node1 = node;
+				if (n2 >= node.length) { node2 = nodeWork; n2 -= node.length; } else node2 = node;
+				if (n3 >= node.length) { node3 = nodeWork; n3 -= node.length; } else node3 = node; }
 			x0 = node0[n0++]; y0 = node0[n0++]; z0 = node0[n0]; x1 = node1[n1++]; y1 = node1[n1++]; z1 = node1[n1];
 			x10 = delta[0] = x1-x0; y10 = delta[1] = y1-y0; z10 = delta[2] = z1-z0;
 			x20 = delta[3] = node2[n2++] - x0; y20 = delta[4] = node2[n2++] - y0; z20 = delta[5] = node2[n2--] - z0; n2--;
@@ -523,11 +532,11 @@ public class FEM1Element {
 		
 		if (data[TD_AREA023] == 0) {
 			sq1 = y10 * z30 - z10 * y30; sq2 = z10 * x30 - x10 * z30; sq3 = x10 * y30 - y10 * x30;
-			data[7] = 0.5 * Math.sqrt(sq1*sq1 + sq2*sq2 + sq3*sq3);			// facet 031
+			data[7] = 0.5 * Math.sqrt(sq1*sq1 + sq2*sq2 + sq3*sq3);			// facet 023
 		}
 		if (data[TD_AREA031] == 0) {
 			sq1 = y20 * z30 - z20 * y30; sq2 = z20 * x30 - x20 * z30; sq3 = x20 * y30 - y20 * x30;
-			data[8] = 0.5 * Math.sqrt(sq1*sq1 + sq2*sq2 + sq3*sq3);			// facet 023
+			data[8] = 0.5 * Math.sqrt(sq1*sq1 + sq2*sq2 + sq3*sq3);			// facet 031
 		}
 		if (data[TD_AREA132] == 0) {
 			sq1 = y21 * z31 - z21 * y31; sq2 = z21 * x31 - x21 * z31; sq3 = x21 * y31 - y21 * x31;
@@ -566,7 +575,7 @@ public class FEM1Element {
 				data[TD_NORM023] = y20 * z30 - z20 * y30; data[TD_NORM023+1] = z20 * x30 - x20 * z30; data[TD_NORM023+2] = x20 * y30 - y20 * x30;
 			}
 			if ((flags & FLAG_NORM031) == 0) {		// if facet 031 normal uninitialised
-				data[TD_NORM031] = y30 * z10 - z30 * y10; data[TD_NORM031+1] = x30 * z10 - z30 * x10; data[TD_NORM031+2] = x30 * y10 - y30 * x10;
+				data[TD_NORM031] = y30 * z10 - z30 * y10; data[TD_NORM031+1] = z30 * x10 - x30 * z10; data[TD_NORM031+2] = x30 * y10 - y30 * x10;
 			}
 			if ((flags & FLAG_NORM132) == 0) {		// if facet 132 normal uninitialised
 				double x31 = x3 - x1, y31 = y3 - y1, z31 = z3 - z1;
@@ -684,13 +693,13 @@ public class FEM1Element {
 		}
 		// find tetrahedron's triangular areas
 		double sq1 = y10 * z20 - z10 * y20, sq2 = z10 * x20 - x10 * z20, sq3 = x10 * y20 - y10 * x20;
-		double Vt6 = (sq1 * x30 + sq2 * y30 + sq3 * z30);	// Vt6 is tetrahedron volume * 6		
+		double Vt6 = (sq1 * x30 + sq2 * y30 + sq3 * z30);		// Vt6 is tetrahedron volume * 6		
 		if (times6) return (Vt6 < 0 ? -Vt6 : Vt6);				// caller wants V*6 returned, do not store
 		return volume = (Vt6 < 0 ? -Vt6 : Vt6) * DIV6;			// store the volume
 	}
 	
 	
-	// finds center od mass of tetrahedron
+	// finds center of mass of tetrahedron
 	static final double DIV4 = 1./4.;
 	public double[] tetraMassCenter() {
 		double[] massC = {0, 0, 0};
@@ -747,14 +756,14 @@ public class FEM1Element {
 			double x31 = node3[n3++] - x1, y31 = node3[n3++] - y1, z31 = node3[n3] - z1; n3 -= 2;
 			double x2 = node2[n2++], y2 = node2[n2++], z2 = node2[n2];
 			double x21 = x2 - x1, y21 = y2 - y1, z21 = z2 - z1;
-			data[g++] = y31*z21 - z31*y21; data[g++] = x31*z21 - z31*x21; data[g++] = x31*y21 - y31*x21;
+			data[g++] = y31*z21 - z31*y21; data[g++] = z31*x21 - x31*z21; data[g++] = x31*y21 - y31*x21;
 			double x0 = node0[n0++], y0 = node0[n0++], z0 = node0[n0];
 			double x20 = x2 - x0, y20 = y2 - y0, z20 = z2 - z0;
 			double x30 = node3[n3++] - x0, y30 = node3[n3++] - y0, z30 = node3[n3] - z0;
-			data[g++] = y20*z30 - z20*y30; data[g++] = x20*z30 - z20*x30; data[g++] = x20*y30 - y20*x30;
+			data[g++] = y20*z30 - z20*y30; data[g++] = z20*x30 - x20*z30; data[g++] = x20*y30 - y20*x30;
 			double x10 = x1 - x0, y10 = y1 - y0, z10 = z1 - z0;
-			data[g++] = y30*z10 - z30*y10; data[g++] = x30*z10 - z30*x10; data[g++] = x30*y10 - y30*x10;
-			data[g++] = y10*z20 - z10*y20; data[g++] = x10*z20 - z10*x20; data[g++] = x10*y20 - y10*x20;
+			data[g++] = y30*z10 - z30*y10; data[g++] = z30*x10 - x30*z10; data[g++] = x30*y10 - y30*x10;
+			data[g++] = y10*z20 - z10*y20; data[g++] = x10*z20 - x10*z20; data[g++] = x10*y20 - y10*x20;
 			return;
 		}
 		if (g0) {
@@ -762,22 +771,22 @@ public class FEM1Element {
 			double x31 = node3[n3++] - x1, y31 = node3[n3++] - y1, z31 = node3[n3] - z1; n3 -= 2;
 			double x2 = node2[n2++], y2 = node2[n2++], z2 = node2[n2];
 			double x21 = x2 - x1, y21 = y2 - y1, z21 = z2 - z1;
-			data[g++] = y31*z21 - z31*y21; data[g++] = x31*z21 - z31*x21; data[g++] = x31*y21 - y31*x21; }
+			data[g++] = y31*z21 - z31*y21; data[g++] = z31*x21 - x31*z21; data[g++] = x31*y21 - y31*x21; }
 		if (g1) {
 			double ax = node0[n0++], ay = node0[n0++], az = node0[n0];
 			double cax = node2[n2++] - ax, cay = node2[n2++] - ay, caz = node2[n2] - az;
 			double dax = node3[n3++] - ax, day = node3[n3++] - ay, daz = node3[n3] - az;
-			data[g++] = cay*daz - caz*day; data[g++] = cax*daz - caz*dax; data[g++] = cax*day - cay*dax; }
+			data[g++] = cay*daz - caz*day; data[g++] = caz*dax - cax*daz; data[g++] = cax*day - cay*dax; }
 		if (g2) {
 			double ax = node0[n0++], ay = node0[n0++], az = node0[n0];
 			double bax = node1[n1++] - ax, bay = node1[n1++] - ay, baz = node1[n1] - az;
 			double dax = node3[n3++] - ax, day = node3[n3++] - ay, daz = node3[n3] - az;
-			data[g++] = day*baz - daz*bay; data[g++] = dax*baz - daz*bax; data[g++] = dax*bay - day*bax; }
+			data[g++] = day*baz - daz*bay; data[g++] = daz*bax - dax*baz; data[g++] = dax*bay - day*bax; }
 		if (g3) {
 			double ax = node0[n0++], ay = node0[n0++], az = node0[n0];
 			double bax = node1[n1++] - ax, bay = node1[n1++] - ay, baz = node1[n1] - az;
 			double cax = node2[n2++] - ax, cay = node2[n2++] - ay, caz = node2[n2] - az;
-			data[g++] = bay*caz - baz*cay; data[g++] = bax*caz - baz*cax; data[g++] = bax*cay - bay*cax;
+			data[g++] = bay*caz - baz*cay; data[g++] = baz*cax - bax*caz; data[g++] = bax*cay - bay*cax;
 		}
 	}
 	
@@ -791,10 +800,12 @@ public class FEM1Element {
 		int n0, n1, n2, n3, enclosure = 0;
 		double n012x, n012y, n012z, n023x, n023y, n023z, n031x, n031y, n031z, n132x, n132y, n132z;	
 		n0 = nodeRef[0] * FEM1.NCOORD; n1 = nodeRef[1] * FEM1.NCOORD; n2 = nodeRef[2] * FEM1.NCOORD; n3 = nodeRef[3] * FEM1.NCOORD;
-		if (n0 >= node.length) { node0 = nodeWork; n0 -= node.length; } else node0 = node;
-		if (n1 >= node.length) { node1 = nodeWork; n1 -= node.length; } else node1 = node;
-		if (n2 >= node.length) { node2 = nodeWork; n2 -= node.length; } else node2 = node;
-		if (n3 >= node.length) { node3 = nodeWork; n3 -= node.length; } else node3 = node;
+		if (nodeWork == null) {
+					node0 = node1 = node2 = node3 = node;
+		} else {	if (n0 >= node.length) { node0 = nodeWork; n0 -= node.length; } else node0 = node;
+					if (n1 >= node.length) { node1 = nodeWork; n1 -= node.length; } else node1 = node;
+					if (n2 >= node.length) { node2 = nodeWork; n2 -= node.length; } else node2 = node;
+					if (n3 >= node.length) { node3 = nodeWork; n3 -= node.length; } else node3 = node; }
 		double x0 = node0[n0++], y0 = node0[n0++], z0 = node0[n0], x1 = node1[n1++], y1 = node1[n1++], z1 = node1[n1];
 		
 		if (hasXNormals() || hasNormals()) {				// if we already have calculated normals or crossproduct normals
@@ -823,7 +834,7 @@ public class FEM1Element {
 		if (n023x * nx + n023y * ny + n023z * nz > 0) {	
 			enclosure |=(NFF023<<1)+1; if (!rigorousTest) return enclosure; }
 		
-		n031x = data[TD_NORM031] = y30 * z10 - z30 * y10; n031y = data[TD_NORM031+1] = x30 * z10 - z30 * x10; n031z = data[TD_NORM031+2] = x30 * y10 - y30 * x10;
+		n031x = data[TD_NORM031] = y30 * z10 - z30 * y10; n031y = data[TD_NORM031+1] = z30 * x10 - x30 * z10; n031z = data[TD_NORM031+2] = x30 * y10 - y30 * x10;
 		flags |= FLAG_NORM031;
 		if (n031x * nx + n031y * ny + n031z * nz > 0) {
 			enclosure |=(NFF031<<1)+1; if (!rigorousTest) return enclosure; }
@@ -853,11 +864,12 @@ public class FEM1Element {
 		double[] node0, node1, node2, node3;
 		int n0, n1, n2, n3;
 		n0 = nodeRef[0] * FEM1.NCOORD; n1 = nodeRef[1] * FEM1.NCOORD; n2 = nodeRef[2] * FEM1.NCOORD; n3 = nodeRef[3] * FEM1.NCOORD;
-		if (n0 >= node.length) { node0 = nodeWork; n0 -= node.length; } else node0 = node;
-		if (n1 >= node.length) { node1 = nodeWork; n1 -= node.length; } else node1 = node;
-		if (n2 >= node.length) { node2 = nodeWork; n2 -= node.length; } else node2 = node;
-		if (n3 >= node.length) { node3 = nodeWork; n3 -= node.length; } else node3 = node;
-		
+		if (nodeWork == null) {
+					node0 = node1 = node2 = node3 = node;
+		} else {	if (n0 >= node.length) { node0 = nodeWork; n0 -= node.length; } else node0 = node;
+					if (n1 >= node.length) { node1 = nodeWork; n1 -= node.length; } else node1 = node;
+					if (n2 >= node.length) { node2 = nodeWork; n2 -= node.length; } else node2 = node;
+					if (n3 >= node.length) { node3 = nodeWork; n3 -= node.length; } else node3 = node; }
 		double x0 = node0[n0++], y0 = node0[n0++], z0 = node0[n0];
 		if (!hasNormals()) evaluateNormals(true);
 		
@@ -938,10 +950,13 @@ public class FEM1Element {
 		double xa=0, ya=0, za=0, xb=0, yb=0, zb=0, xc=0, yc=0, zc=0;
 		int n0 = nodeRef[0] * FEM1.NCOORD, n1 = nodeRef[1] * FEM1.NCOORD, n2 = nodeRef[2] * FEM1.NCOORD, n3 = nodeRef[3] * FEM1.NCOORD;
 		double[] node0, node1, node2, node3;
-		if (n0 >= node.length) { node0 = nodeWork; n0 -= node.length; } else node0 = node;
-		if (n1 >= node.length) { node1 = nodeWork; n1 -= node.length; } else node1 = node;
-		if (n2 >= node.length) { node2 = nodeWork; n2 -= node.length; } else node2 = node;
-		if (n3 >= node.length) { node3 = nodeWork; n3 -= node.length; } else node3 = node;
+		if (nodeWork == null) {
+			node0 = node1 = node2 = node3 = node;
+		} else {
+			if (n0 >= node.length) { node0 = nodeWork; n0 -= node.length; } else node0 = node;
+			if (n1 >= node.length) { node1 = nodeWork; n1 -= node.length; } else node1 = node;
+			if (n2 >= node.length) { node2 = nodeWork; n2 -= node.length; } else node2 = node;
+			if (n3 >= node.length) { node3 = nodeWork; n3 -= node.length; } else node3 = node; }
 		switch (facet) {
 		case NFF012: xa=node0[n0++]; ya=node0[n0++]; za=node0[n0]; xb=node1[n1++]; yb=node1[n1++]; zb=node1[n1]; xc=node2[n2++]; yc=node2[n2++]; zc=node2[n2]; break;
 		case NFF023: xa=node0[n0++]; ya=node0[n0++]; za=node0[n0]; xb=node2[n2++]; yb=node2[n2++]; zb=node2[n2]; xc=node3[n3++]; yc=node3[n3++]; zc=node3[n3]; break;
@@ -949,10 +964,10 @@ public class FEM1Element {
 		case NFF132: xa=node1[n1++]; ya=node1[n1++]; za=node1[n1]; xb=node3[n3++]; yb=node3[n3++]; zb=node3[n3]; xc=node2[n2++]; yc=node2[n2++]; zc=node2[n2]; break;
 		}
 		double xba = xb - xa, yba = yb - ya, zba = zb - za, xca = xc - xa, yca = yc - ya, zca = zc - za;
-		double xCr1 = yba * zca - zba * yca, yCr1 = xba * zca - zba * xca, zCr1 = xba * yca - yba * xca;
+		double xCr1 = yba * zca - zba * yca, yCr1 = zba * xca - xba * zca, zCr1 = xba * yca - yba * xca;
 		double baXcaL2D = 1 / (Math.sqrt(xCr1*xCr1 + yCr1*yCr1 + zCr1*zCr1) * 2);
 		double xCr3 = yca * zCr1 - zca * yCr1, yCr3 = xca * zCr1 - zca * xCr1, zCr3 = xca * yCr1 - yca * xCr1;
-		double xCr2 = yCr1 * zba - zCr1 * yba, yCr2 = xCr1 * zba - zCr1 * xba, zCr2 = xCr1 * yba - yCr1 * xba;
+		double xCr2 = yCr1 * zba - zCr1 * yba, yCr2 = zCr1 * xba - xCr1 * zba, zCr2 = xCr1 * yba - yCr1 * xba;
 		double caL = Math.sqrt(xca*xca + yca*yca + zca*zca), baL = Math.sqrt(xba*xba + yba*yba + zba*zba);
 		double xSumD = caL * xCr2 + baL * xCr3, ySumD = caL * yCr2 + baL * yCr3, zSumD = caL * zCr2 + baL * zCr3;
 		double[] cCenter = new double[3];
@@ -1075,7 +1090,7 @@ public class FEM1Element {
 	public static String toBitsInteger(int i, String bitfield) {
 		StringBuilder sb = new StringBuilder();
 		sb.append(bitfield);		
-		for (int b = 31; b >= 0; b--) if ((i & (1 << b)) != 0) sb.append("1"); else sb.append(" ");
+		for (int b = 31; b >= 0; b--) if ((i & (1 << b)) != 0) sb.append("1"); else sb.append("-");
 		sb.append("\n"); return sb.toString();
 	}
 }

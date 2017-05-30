@@ -4,745 +4,130 @@ import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class FEM1Octree {
-	
-	// the class helps localising incoming FEM nodes and do a neighbourhood search on closest node 
 
-	double xM, yM, zM, xP, yP, zP;			// boundaries of this octree octant (xM,yM,zM = x-,y-,z- and xP,yP,zP = x+,y+,z+)
-	double xC, yC, zC;						// subdivision centroid of this octree octant
-	short status = 0, level = 0;			// status tells what octant it is, level tells how high up we are in the octree
+	//////////////////////////////////////////////////////////////////////////////////////////////////////////
+	//			TOP LEVEL DEFINITIONS FOR A FEM1 OCTREE														//
+	//			Leonard Krylov 2017																			//
+	//////////////////////////////////////////////////////////////////////////////////////////////////////////	
 
-	public int nodes, nodesX, branches = 0;	// nodesX = extraneous nodes past the true nodes, inserted/deleted for in-tree processing (extra space allocated for those)
-	int[] node;								// node references of this octant container
-	public int edges;
-	int[] edge;								// edge references of this octant container
+	FEM1 fem = null;						// this is the FEM system that spawned this octree
+	public FEM1Octant root = null;			// this is the first octant of this octree
 	
-	FEM1Octree parent =  null;				// backlink to parent
-	public FEM1Octree[] octant = null;		// array of 8 child octant references
-	int octantIterator = 0;					// bitwise "array" holding the created octant indexes (spees up iteration)
-	int octantIteratorMN = 0;				// bitwise "array" holding the created octant indexes that exceed maxNodes criterion (speeds up iteration)
-	
-	double disbalance = 0;					// how disbalanced current branch is (=0 for a leaf)
-	static float disbalanceCap = 0.85f;		// the max. level of disbalance allowed before stopping further branching
-	static int vOBJcnt = 0, pOBJidx = 1;	// running vertex count & poly.index during OBJ export of octree visualisation
-	
-	// codes for the 8 subdivisions of an octree node (M = minus, P = plus, ex: OCT_PMP = (x+,y-,z+))
-	final static byte OCT_MMM=0, OCT_PMM=1, OCT_MPM=2, OCT_PPM=3, OCT_MMP=4, OCT_PMP=5, OCT_MPP=6, OCT_PPP=7;
-	public static short maxLevel = 128;		// limiter of level of octree subdivision
+	final short maxLevel;					// limiter of subdivision level
+	public short topLevel;					// maximal attained level
 	public final static short FACTOR_NODESX = 128;
+	public static final int DO_NODES = 1, DO_EDGES = 2, DO_FACETS = 4;	// flagging for processing of particular container data
 	
-	// instantiates first octant, finding bounding box and setting up node reference array
-	public FEM1Octree(FEM1 fem) {
-		
-		if (fem.bBox == null) fem.bBox = new double[6];	
-		double[] nodeCoord = fem.node;
-		node = new int[extra_space(fem.nodes)];
-		int nodes3 = fem.nodes * 3;
-		xM = nodeCoord[0]; yM = nodeCoord[1]; zM = nodeCoord[2];					// arbitrarily choose first incoming vertex for initial bounding box
-		xP = xM; yP = yM; zP = zM;
+	double[] node = null;					// TODO: inelegant hack to reuse buildOctree() with the boundary lattice cubes
 
-		for (int n = 3; n < nodes3;) {
-			if (nodeCoord[n] < xM) xM = nodeCoord[n]; else if (nodeCoord[n] > xP) xP = nodeCoord[n]; n++;
-			if (nodeCoord[n] < yM) yM = nodeCoord[n]; else if (nodeCoord[n] > yP) yP = nodeCoord[n]; n++;
-			if (nodeCoord[n] < zM) zM = nodeCoord[n]; else if (nodeCoord[n] > zP) zP = nodeCoord[n]; n++;
-		}
-		double xDlt = xP - xM, yDlt = yP - yM, zDlt = zP - zM, maxBB = xDlt > yDlt ? xDlt : yDlt;
-		if (maxBB < zDlt) maxBB = zDlt;
-		double xP2 = (xP + xM + maxBB) * .5; xM = fem.bBox[0] = (xP + xM - maxBB) * .5; xP = fem.bBox[3] = xP2;	// equalise bounding box sides to the one maximal side
-		double yP2 = (yP + yM + maxBB) * .5; yM = fem.bBox[1] = (yP + yM - maxBB) * .5; yP = fem.bBox[4] = yP2;
-		double zP2 = (zP + zM + maxBB) * .5; zM = fem.bBox[2] = (zP + zM - maxBB) * .5; zP = fem.bBox[5] = zP2;
-		xC = (xP + xM) * .5; yC = (yP + yM) * .5; zC = (zP + zM) * .5;
-		
-		int n = 0, nEnd = fem.nodes & 0xFFFFFFFC;
-		while (n < nEnd) {						// set up initial node reference array
-			node[n] = n++; node[n] = n++; node[n] = n++; node[n] = n++; }			// note: enforced simple loop unrolling
-		for (int n2 = fem.nodes & 3; n2 > 0; n2--) node[nEnd++] = n++;
-		nodes = fem.nodes;
-		branches = 1;
-		
-	}
-	
-	// method instantiates a skeleton child
-	public FEM1Octree(FEM1Octree parent, short status, int nodes, int[] node) {
-		this.parent = parent; this.status = status;
-		this.level = (short)(parent.level + 1);
-		this.nodes = nodes; this.node = node;
-		switch (status) {
-			case OCT_MMM: xM=parent.xM; yM=parent.yM; zM=parent.zM; xP=parent.xC; yP=parent.yC; zP=parent.zC; break;
-			case OCT_PMM: xM=parent.xC; yM=parent.yM; zM=parent.zM; xP=parent.xP; yP=parent.yC; zP=parent.zC; break;
-			case OCT_MPM: xM=parent.xM; yM=parent.yC; zM=parent.zM; xP=parent.xC; yP=parent.yP; zP=parent.zC; break;
-			case OCT_PPM: xM=parent.xC; yM=parent.yC; zM=parent.zM; xP=parent.xP; yP=parent.yP; zP=parent.zC; break;
-			case OCT_MMP: xM=parent.xM; yM=parent.yM; zM=parent.zC; xP=parent.xC; yP=parent.yC; zP=parent.zP; break;
-			case OCT_PMP: xM=parent.xC; yM=parent.yM; zM=parent.zC; xP=parent.xP; yP=parent.yC; zP=parent.zP; break;
-			case OCT_MPP: xM=parent.xM; yM=parent.yC; zM=parent.zC; xP=parent.xC; yP=parent.yP; zP=parent.zP; break;
-			case OCT_PPP: xM=parent.xC; yM=parent.yC; zM=parent.zC; xP=parent.xP; yP=parent.yP; zP=parent.zP; break; }
-		xC = (xP + xM) * .5; yC = (yP + yM) * .5; zC = (zP + zM) * .5;
-	}
+	short enforcedLevel = 0;				// set > 0 to keep splitting until enforced level is attained
+	float disbalanceCap = 0.90f;			// the max. level of disbalance allowed before stopping further branching
+	int threadSpawnItemsCap = 70;			// number of items a branch should contain at least, to motivate spawning a thread to process it
+	public int maxNodes = 60;				// the max. number of nodes per octant leaf we allow
+	public int maxEdges = 30;				// the max. number of edges per octant leaf we allow
+	public int maxFacets = 10;				// the max. number of facets per octant leaf we allow
+	int maxFacetEncounters = 8;				// how big the coordinate array for facet encounters should be (dynamically readjusted upwards)
+	static final AtomicInteger processed = new AtomicInteger(0);	// keeps count of how many octants have been processed by threads
+	static final AtomicInteger offshoots = new AtomicInteger(0);	// keeps count of how many offshoots were generated
+	int enumerator = 0;						// keeps track of value during enumeration of octants
+	int[] levelSums = null;					// octant count sums per level, incremented by instantiators or by process() method
+	AtomicInteger[] levelSumsT = null;		// incremented by threaded methods that must track how many octants were processed in a certain level
+	boolean splitMade = false;				// for the threadbased 2:1 splitter to flag that more method calls are needed
+	boolean latticeTree = false;			// is this a boundary lattice tree?
+	int latticeSubdivs = 1;					// how many final cubes per ordinate the mesh volume was subdivided into (defaults to minLatticeSubdivs)
+	int gradations = 4;						// specifies how many gradations of level of detail that is requested for the inner volume
+	double subdivDtreeWidth = 0;
 
-	public FEM1Octree(FEM1Octree parent, short status, int nodes, int[] node, int edges, int[] edge) {
-		this.parent = parent; this.status = status;
-		this.level = (short)(parent.level + 1);
-		this.nodes = nodes; this.node = node;
-		this.edges = edges; this.edge = edge;
-		switch (status) {
-			case OCT_MMM: xM=parent.xM; yM=parent.yM; zM=parent.zM; xP=parent.xC; yP=parent.yC; zP=parent.zC; break;
-			case OCT_PMM: xM=parent.xC; yM=parent.yM; zM=parent.zM; xP=parent.xP; yP=parent.yC; zP=parent.zC; break;
-			case OCT_MPM: xM=parent.xM; yM=parent.yC; zM=parent.zM; xP=parent.xC; yP=parent.yP; zP=parent.zC; break;
-			case OCT_PPM: xM=parent.xC; yM=parent.yC; zM=parent.zM; xP=parent.xP; yP=parent.yP; zP=parent.zC; break;
-			case OCT_MMP: xM=parent.xM; yM=parent.yM; zM=parent.zC; xP=parent.xC; yP=parent.yC; zP=parent.zP; break;
-			case OCT_PMP: xM=parent.xC; yM=parent.yM; zM=parent.zC; xP=parent.xP; yP=parent.yC; zP=parent.zP; break;
-			case OCT_MPP: xM=parent.xM; yM=parent.yC; zM=parent.zC; xP=parent.xC; yP=parent.yP; zP=parent.zP; break;
-			case OCT_PPP: xM=parent.xC; yM=parent.yC; zM=parent.zC; xP=parent.xP; yP=parent.yP; zP=parent.zP; break; }
-		xC = (xP + xM) * .5; yC = (yP + yM) * .5; zC = (zP + zM) * .5;
-	}
+	// dynamic allocation readjuster for leavesOverlappingBBox() method
+	int oOBB_lAllocs = 0, oOBB_lAllocs_fail = 0, oOBB_allocSize = 4;
+	float oOBB_lAllocs_successRate = 0;
+	// gets relative timings of the three mesh operations (divided by the slowest one), for thread workload balancing
+	// note: this is probably irrelevant unless a mechanism for enforcing start of the three node/edge/facet ops all at once is created
+	float splitNtiming = 1, splitEtiming = 1, splitFtiming = 1;
+	int threadSplitF = 28;											// how many items needed at least to multithread splitting ops
+	float splitNf = 29.2f, splitEf = 1, splitFf = 1.59f;			// the factors that modulate threadSplitF
+	
+	int vOBJcnt = 0, pOBJidx = 1;									// running vertex count & poly.index during OBJ export of octree visualisation
 
-	
-	
-	
-	// splits current octree node into 8 partitions, divides up the nodes, returns rate of disbalance within the current branch
-	public void split(FEM1 fem, int maxItems) {
-		
-		double[] nodeCoord = fem.node;
-		// worst case allocation of octosplitted node arrays
-		int nMMM=0, nPMM=nodes, nMPM=nPMM+nodes, nPPM=nMPM+nodes, nMMP=nPPM+nodes, nPMP=nMMP+nodes, nMPP=nPMP+nodes, nPPP=nMPP+nodes;
-		int eMMM=0, ePMM=edges, eMPM=ePMM+edges, ePPM=eMPM+edges, eMMP=ePPM+edges, ePMP=eMMP+edges, eMPP=ePMP+edges, ePPP=eMPP+edges;
-		int nodes2 = nodes, edges2 = edges;
-		int[] nodeOct = nodes > 0 ? new int[nodes * 8] : null, edgeOct = edges > 0 ? new int[edges * 8] : null;
-		
-		for (int n = 0; n < nodes; n++) {											// distribute node references into the 8 octants
-			int n3 = node[n] * 3;
-			double xN = nodeCoord[n3++], yN = nodeCoord[n3++], zN = nodeCoord[n3];
-			if (xN <= xC) {
-				if (yN <= yC) {	if (zN <= zC)	{ nodeOct[nMMM++] = node[n]; } else { nodeOct[nMMP++] = node[n]; }}
-				else {			if (zN <= zC)	{ nodeOct[nMPM++] = node[n]; } else { nodeOct[nMPP++] = node[n]; }}
-			} else {
-				if (yN <= yC) {	if (zN <= zC)	{ nodeOct[nPMM++] = node[n]; } else { nodeOct[nPMP++] = node[n]; }}
-				else {			if (zN <= zC)	{ nodeOct[nPPM++] = node[n]; } else { nodeOct[nPPP++] = node[n]; }}
-			}
-		}
-		for (int e = 0; e < edges; e++) {											// distribute edge references into the 8 octants
-			int eN = edge[e] * 2;
-			int[] pEdgeN = fem.edgeNode;
-			double[] split = new double[6 * 8];
-			int bits = edgeMembership(pEdgeN[eN++], pEdgeN[eN++], pEdgeN[eN++], pEdgeN[eN++], pEdgeN[eN++], pEdgeN[eN++], split, 0, 0, 0xFF);
-			if ((bits & 1) != 0) nodeOct[eMMM++] = edge[e]; bits >>= 1; if ((bits & 1) != 0) nodeOct[ePMM++] = edge[e]; bits >>= 1;
-			if ((bits & 1) != 0) nodeOct[eMPM++] = edge[e]; bits >>= 1; if ((bits & 1) != 0) nodeOct[ePPM++] = edge[e]; bits >>= 1;
-			if ((bits & 1) != 0) nodeOct[eMMP++] = edge[e]; bits >>= 1; if ((bits & 1) != 0) nodeOct[ePMP++] = edge[e]; bits >>= 1;
-			if ((bits & 1) != 0) nodeOct[eMPP++] = edge[e]; bits >>= 1; if ((bits & 1) != 0) nodeOct[ePPP++] = edge[e]; bits >>= 1;		
-		}
+	static int DEBUG_LEVEL;											// debug level at first gotten from the FEM1 object
 
-		octant = new FEM1Octree[8];
-		int[] nodeChild = null, edgeChild = null;
-		
-		int nPMM2=0, nMPM2=0, nPPM2=0, nMMP2=0, nPMP2=0, nMPP2=0, nPPP2=0, ePMM2=0, eMPM2=0, ePPM2=0, eMMP2=0, ePMP2=0, eMPP2=0, ePPP2=0;
-		if (nodes > 0) {
-			nPMM2 = nPMM - nodes2; nMPM2 = nMPM - (nodes2+=nodes); nPPM2 = nPPM - (nodes2+=nodes);
-			nMMP2 = nMMP - (nodes2+=nodes); nPMP2 = nPMP - (nodes2+=nodes); nMPP2 = nMPP - (nodes2+=nodes); nPPP2 = nPPP - (nodes2+=nodes); }
-		if (edges > 0) {
-			ePMM2 = ePMM - edges2; eMPM2 = eMPM - (edges2+=edges); ePPM2 = ePPM - (edges2+=edges);
-			eMMP2 = eMMP - (edges2+=edges); ePMP2 = ePMP - (edges2+=edges); eMPP2 = eMPP - (edges2+=edges); ePPP2 = ePPP - (edges2+=edges); }
-		int octants = 0, octantsMN = 0;
-		
-		if (nMMM > 0 || eMMM > 0) {
-			nodeChild = nMMM > 0 ? new int[extra_space(nMMM)] : null;
-			edgeChild = eMMM > 0 ? new int[extra_space(eMMM)] : null;
-			for (int n = 0; n < nMMM; n++) nodeChild[n] = nodeOct[n];
-			for (int e = 0; e < eMMM; e++) edgeChild[e] = edgeOct[e];
-			octant[OCT_MMM] = new FEM1Octree(this, OCT_MMM, nMMM, nodeChild, eMMM, edgeChild);		// initialise octant MMM
-			octantIterator = octantIterator | OCT_MMM; octants++;
-			if (nMMM > maxItems || eMMM > maxItems) { octantIteratorMN = octantIteratorMN | OCT_MMM; octantsMN++; }
+	// instantiates a skeleton tree with default settings
+	public FEM1Octree(FEM1 fem, int doWhat, int maxLevel) {
+		this.fem = fem; 
+		node = fem.node;
+		DEBUG_LEVEL = FEM1.DEBUG_LEVEL;
+		levelSums = new int[maxLevel + 1];
+		levelSums[0] = 1;
+		root = new FEM1Octant(this, doWhat);
+		if ((doWhat&DO_FACETS) != 0) {
+			int maxBin = fem.edgeSpread.maxBin();					// find out what group of facet sizes is the most numerous
+			// find out what octant size that groups size will motivate
+			maxLevel = maxLevelFromGranularity((fem.edgeSpread.div[maxBin+1] + fem.edgeSpread.div[maxBin]) / 2);
+			int divisions = 1; for (int m = maxLevel; m-- > 0; divisions *= 2);
+			while (divisions < fem.minLatticeSubdivs) { divisions *=2; maxLevel++; }
 		}
-		nodes2 = nodes; edges2 = edges;
-		if (nPMM2 > 0 || ePMM2 > 0) {
-			nodeChild = nPMM2 > 0 ? new int[extra_space(nPMM2)] : null;
-			edgeChild = ePMM2 > 0 ? new int[extra_space(ePMM2)] : null;
-			for (int n = nodes, n2 = 0; n < nPMM; n++, n2++) nodeChild[n2] = nodeOct[n];
-			for (int e = edges, e2 = 0; e < ePMM; e++, e2++) edgeChild[e2] = edgeOct[e];
-			octant[OCT_PMM] = new FEM1Octree(this, OCT_PMM, nPMM2, nodeChild, ePMM2, edgeChild);	// initialise octant PMM
-			octantIterator = (octantIterator << 3) | OCT_PMM; octants++;
-			if (nPMM2 > maxItems || ePMM2 > maxItems) {  octantIteratorMN = (octantIteratorMN << 3) | OCT_PMM; octantsMN++; }
-		}
-		nodes2 += nodes; edges2 += edges;
-		if (nMPM2 > 0 || eMPM2 > 0) {
-			nodeChild = nMPM2 > 0 ? new int[extra_space(nMPM2)] : null;
-			edgeChild = eMPM2 > 0 ? new int[extra_space(eMPM2)] : null;
-			for (int n = nodes2, n2 = 0; n < nMPM; n++, n2++) nodeChild[n2] = nodeOct[n];
-			for (int e = edges2, e2 = 0; e < eMPM; e++, e2++) edgeChild[e2] = edgeOct[e];
-			octant[OCT_MPM] = new FEM1Octree(this, OCT_MPM, nMPM2, nodeChild, eMPM2, edgeChild);		// initialise octant MPM
-			octantIterator = (octantIterator << 3) | OCT_MPM; octants++;
-			if (nMPM2 > maxItems || eMPM2 > maxItems) { octantIteratorMN = (octantIteratorMN << 3) | OCT_MPM; octantsMN++; }
-		}
-		nodes2 += nodes; edges2 += edges;
-		if (nPPM2 > 0 || ePPM2 > 0) {
-			nodeChild = nPPM2 > 0 ? new int[extra_space(nPPM2)] : null;
-			edgeChild = ePPM2 > 0 ? new int[extra_space(ePPM2)] : null;
-			for (int n = nodes2, n2 = 0; n < nPPM; n++, n2++) nodeChild[n2] = nodeOct[n];
-			for (int e = edges2, e2 = 0; e < ePPM; e++, e2++) edgeChild[e2] = edgeOct[e];
-			octant[OCT_PPM] = new FEM1Octree(this, OCT_PPM, nPPM2, nodeChild, ePPM2, edgeChild);		// initialise octant MMM
-			octantIterator = (octantIterator << 3) | OCT_PPM; octants++;
-			if (nPPM2 > maxItems || ePPM2 > maxItems) { octantIteratorMN = (octantIteratorMN << 3) | OCT_PPM; octantsMN++; }
-		}
-		nodes2 += nodes; edges2 += edges;
-		if (nMMP2 > 0 || eMMP2 > 0) {
-			nodeChild = nMMP2 > 0 ? new int[extra_space(nMMP2)] : null;
-			edgeChild = eMMP2 > 0 ? new int[extra_space(eMMP2)] : null;
-			for (int n = nodes2, n2 = 0; n < nMMP; n++, n2++) nodeChild[n2] = nodeOct[n];
-			for (int e = edges2, e2 = 0; e < eMMP; e++, e2++) edgeChild[e2] = edgeOct[e];
-			octant[OCT_MMP] = new FEM1Octree(this, OCT_MMP, nMMP2, nodeChild, eMMP2, edgeChild);		// initialise octant MMP
-			octantIterator = (octantIterator << 3) | OCT_MMP; octants++;
-			if (nMMP2 > maxItems || eMMP2 > maxItems) { octantIteratorMN = (octantIteratorMN << 3) | OCT_MMP; octantsMN++; }
-		}
-		nodes2 += nodes; edges2 += edges;
-		if (nPMP2 > 0 || ePMP2 > 0) {
-			nodeChild = nPMP2 > 0 ? new int[extra_space(nPMP2)] : null;
-			edgeChild = ePMP2 > 0 ? new int[extra_space(ePMP2)] : null;
-			for (int n = nodes2, n2 = 0; n < nPMP; n++, n2++) nodeChild[n2] = nodeOct[n];
-			for (int e = edges2, e2 = 0; e < ePMP; e++, e2++) edgeChild[e2] = edgeOct[e];
-			octant[OCT_PMP] = new FEM1Octree(this, OCT_PMP, nPMP2, nodeChild, ePMP2, edgeChild);		// initialise octant PMP
-			octantIterator = (octantIterator << 3) | OCT_PMP; octants++;
-			if (nPMP2 > maxItems || ePMP2 > maxItems) { octantIteratorMN = (octantIteratorMN << 3) | OCT_PMP; octantsMN++; }
-		}
-		nodes2 += nodes; edges2 += edges;
-		if (nMPP2 > 0 || eMPP2 > 0) {
-			nodeChild = nMPP2 > 0 ? new int[extra_space(nMPP2)] : null;
-			edgeChild = eMPP2 > 0 ? new int[extra_space(eMPP2)] : null;
-			for (int n = nodes2, n2 = 0; n < nMPP; n++, n2++) nodeChild[n2] = nodeOct[n];
-			for (int e = edges2, e2 = 0; e < eMPP; e++, e2++) edgeChild[e2] = edgeOct[e];
-			octant[OCT_MPP] = new FEM1Octree(this, OCT_MPP, nMPP2, nodeChild, eMPP2, edgeChild);		// initialise octant MPP
-			octantIterator = (octantIterator << 3) | OCT_MPP; octants++;
-			if (nMPP2 > maxItems || eMPP2 > maxItems) { octantIteratorMN = (octantIteratorMN << 3) | OCT_MPP; octantsMN++; }
-		}
-		nodes2 += nodes; edges2 += edges;
-		if (nPPP2 > 0 || ePPP2 > 0) {
-			nodeChild = nPPP2 > 0 ? new int[extra_space(nPPP2)] : null;
-			edgeChild = ePPP2 > 0 ? new int[extra_space(ePPP2)] : null;
-			for (int n = nodes2, n2 = 0; n < nPPP; n++, n2++) nodeChild[n2] = nodeOct[n];
-			for (int e = edges2, e2 = 0; e < ePPP; e++, e2++) edgeChild[e2] = edgeOct[e];
-			octant[OCT_PPP] = new FEM1Octree(this, OCT_PPP, nPPP2, nodeChild, ePPP2, edgeChild);		// initialise octant PPP
-			octantIterator = (octantIterator << 3) | OCT_PPP; octants++;
-			if (nPPP2 > maxItems || ePPP2 > maxItems) { octantIteratorMN = (octantIteratorMN << 3) | OCT_PPP; octantsMN++; }
-		}
-		octantIterator |= (octants << 24);
-		octantIteratorMN |= (octantsMN << 24);
-		node = null; edge = null;					// a branch doesnt need item references (but keeping nodes count of entire branch can be useful)
-		// branch disbalance deducted from ALL item types clustered across octants
-		disbalance = octantNodeDisbalance(nodes+edges, nMMM+eMMM, nPMM2+ePMM2, nMPM2+eMPM2, nPPM2+ePPM2, nMMP2+eMMP2, nPMP2+ePMP2, nMPP2+eMPP2, nPPP2+ePPP2);
+		this.maxLevel = (short)maxLevel;
 	}
 	
-	
-	
-	// method recursively constructs octree with at most maxItems items per container and splitting limited by maximal branch disbalance
-	public int buildOctree(FEM1 fem, int maxItems, double disbalanceGrowth) {
-		
-		// if current container has over maxNodes nodes & branch levels are not overrun & terminate limiter hasn't been assigned
-		if (level < maxLevel && disbalanceGrowth < disbalanceCap) {
-			split(fem, maxItems);							// split into octants (if possible), becoming a branch
-			branches = octantIterator >> 24;
-			int octantIt = octantIteratorMN, oEnd = octantIteratorMN >> 24;
-			for (int o = 0; o < oEnd; o++, octantIt >>= 3) {					// we are iterating over octants that contain more than "maxItems" items
-				FEM1Octree octant = this.octant[octantIt & 7];
-				branches += octant.buildOctree(fem, maxItems, (disbalance + disbalanceGrowth) * 0.5);				
-			}
-		}
-		return branches;
+	// instantiates first octant of subdivision of a boundary lattice (finds bounding box and sets up node reference array)
+	public FEM1Octree(FEM1Octree sourceTree, int gradations) {
+		fem = sourceTree.fem;
+		DEBUG_LEVEL = FEM1.DEBUG_LEVEL;
+		latticeTree = true;
+		this.gradations = gradations;
+		node = sourceTree.fem.bLatticeNode;
+		disbalanceCap = 1;					// do not stop subdivision until attaining the lattice cubes as leaves
+		maxNodes = 1;						// we want subdivision to one lattice cube per leaf
+		// since arbitrary non-power-of-2 subdivs can be specified, we need to expand lattice tree to a power-of-2 subdivision & scale
+		// from the subdivision & scale we're given, fitting that subdivision (+1 extra lattice cube layer per side) inside a power-of-2 scale
+		while (latticeSubdivs < fem.latticeSubdivs + 2) latticeSubdivs *= 2;
+		FEM1Octant stRoot = sourceTree.root;
+		double lStep = fem.latticeStep, extent = fem.latticeStep * latticeSubdivs;
+		// extend the lattice tree from source tree's zero point (+ space for 1 lattice layer per ordinate) to power-of-2 coverage of
+		// the requested lattice subdivision (+ space for 1 lattice layer per ordinate)
+		root = new FEM1Octant(sourceTree,	stRoot.xM-lStep, stRoot.yM-lStep, stRoot.zM-lStep,
+											stRoot.xM-lStep+extent, stRoot.yM-lStep+extent, stRoot.zM-lStep+extent);
+		subdivDtreeWidth = (double)latticeSubdivs / (root.xP - root.xM);	// useful for calculating integer coordinates from an octant
+		maxLevel = enforcedLevel = maxLevelFromGranularity(fem.latticeStep + FEM1Octant.OCT_MARGIN);
+		levelSums = new int[maxLevel + 1];
+		levelSums[0] = 1;
+		levelSumsT = new AtomicInteger[maxLevel + 1];
+		for (int c = 0; c <= maxLevel; c++) levelSumsT[c] = new AtomicInteger(0);
 	}
-	
-	
-	// method locates the best fitting octant container of the supplied coordinate, returning EITHER a branch OR a leaf octant
-	// method will stop if level is reached, setting level to MAX_LEVEL is a way to "ignore" the level limit
-	public FEM1Octree locateCoordinate(double x, double y, double z, short level) {
-
-		FEM1Octree oct = this, oct2 = this;
-		while (oct2.octant != null && oct2.level < level) {
-			if (x <= oct2.xC) {	if (y <= oct2.yC) {	if (z <= oct2.zC)	{ oct2 = oct2.octant[OCT_MMM]; } else { oct2 = oct2.octant[OCT_MMP]; }}
-								else {				if (z <= oct2.zC)	{ oct2 = oct2.octant[OCT_MPM]; } else { oct2 = oct2.octant[OCT_MPP]; }}
-			} else {			if (y <= oct2.yC) {	if (z <= oct2.zC)	{ oct2 = oct2.octant[OCT_PMM]; } else { oct2 = oct2.octant[OCT_PMP]; }}
-								else {				if (z <= oct2.zC)	{ oct2 = oct2.octant[OCT_PPM]; } else { oct2 = oct2.octant[OCT_PPP]; }}}
-			if (oct2 == null) break;
-			oct = oct2;
-		}
-		return oct;
-	}
-	
-	
-	// method locates the best fitting octant container of the supplied coordinate, then adds the coordinate as the supplied node index
-	// if the found topmost container was a branch, method creates a suboctant, inserting node as the only member
-	// method returns the octant that became final container of the inserted node
-	// the nodeX flag indicates whether to insert a real or extraneous node
-	public FEM1Octree addNode(FEM1 fem, double x, double y, double z, int n, int maxItems, boolean nodeX) {
-		int topmost = -1;
-		FEM1Octree oct = this, oct2 = this;
-		while (oct2.octant != null && oct2.level < level) {
-			if (x <= oct2.xC) {
-				if (y <= oct2.yC) {	if (z <= oct2.zC)	{ oct2 = oct2.octant[topmost = OCT_MMM]; } else { oct2 = oct2.octant[topmost = OCT_MMP]; }}
-				else {				if (z <= oct2.zC)	{ oct2 = oct2.octant[topmost = OCT_MPM]; } else { oct2 = oct2.octant[topmost = OCT_MPP]; }}
-			} else {
-				if (y <= oct2.yC) {	if (z <= oct2.zC)	{ oct2 = oct2.octant[topmost = OCT_PMM]; } else { oct2 = oct2.octant[topmost = OCT_PMP]; }}
-				else {				if (z <= oct2.zC)	{ oct2 = oct2.octant[topmost = OCT_PPM]; } else { oct2 = oct2.octant[topmost = OCT_PPP]; }}}
-			if (oct2 == null) break;
-			oct = oct2;
-		}
-		if (oct2 == null) {															// if containing child octant within branch octant isn't initialised
-			oct2 = oct.octant[topmost] = new FEM1Octree(oct, (short)topmost, 0, new int[extra_space(1)]);
-			if (nodeX) oct2.nodesX++; else oct2.nodes++;	
-			oct2.node[0] = n;
-		} else {																	// if target leaf container octant was found (or this is octree was a leaf)
-			oct2.octantAddNode(n, nodeX);
-			if (oct2.nodes > maxItems || oct2.edges > maxItems)
-				oct2.split(fem, maxItems);											// if node+edge count exceeds maxItems, split up the octant
-		}
-		return oct2;
-	}
-	
-	// method directly inserts node into a known octant, whether as extraneous or as a real node
-	public void octantAddNode(int n, boolean nodeX) {
-		int nodesTot = nodes + nodesX;
-		if (node == null) {
-			node = new int[8]; node[nodes++] = n;		
-		} else if (nodesTot + 1 >= node.length) {													// need to expand octant's node array?
-			int[] nodeNew = new int[FEM1Octree.extra_space(nodesTot + 1)];
-			
-			if (nodeX) {for (int n1 = 0; n1 < nodesTot; n1++) nodeNew[n1] = node[n1];			// if adding an extraneous node, copy everything straight-on
-						nodeNew[nodesTot] = n; 													// add extraneous node at end
-						nodesX++; }
-			else {		for (int n1 = 0; n1 < nodes; n1++) nodeNew[n1] = node[n1];				// if adding real node, leave gap between nodes & nodesX
-						for (int n1 = nodes, n2 = n1 + 1; n1 < nodesTot; n1++, n2++) nodeNew[n2] = node[n1];
-						nodeNew[nodes++] = n; }													// add real node in gap
-			node = nodeNew;
-		} else {
-			if (nodeX)	{	node[nodesTot] = n; nodesX++; } 									// regular append at end of array, in nodesX interval
-			else {			node[nodesX] = node[nodes]; node[nodes++] = n; }					// move out one node from nodes interval, insert new node
-		}
-	}
-
-	
-	
-	// method divides down an edge into the 8 octants, bitflagging the intersected octants, using recursive calls
-	// method records splitted edge segments and shifts them toward their proper octant offsets within split[] array
-	// the segments are then accessable as 2 coords by ´steps of (octantNo*6) and matched by the bitflags
-	// octant bitflags (high to low): PPP,MPP,PMP,MMP,PPM,MPM,PMM,MMM
-	int edgeMembership(double xa, double ya, double za, double xb, double yb, double zb, double[] split, int offs, int dim, int bits) {
-		
-		switch (dim) {
-		case 0:
-			if (xa <= xC) {
-				if (xC < xb) {																		// point a in lower x-octants, b in higher
-						double xbaD = 1. / (xb - xa), f1 = (xC - xa) * xbaD, f2 = (xb - xC) * xbaD;
-						double ys = f1 > f2 ? ya+(yb-ya)*f1 : yb-(yb-ya)*f2, zs = f1 > f2 ? za+(zb-za)*f1 : zb-(zb-za)*f2;
-						split[0]=xa; split[1]=ya; split[2]=za; split[3]=xC; split[4]=ys; split[5]=zs;
-						split[6]=xC; split[7]=ys; split[8]=zs; split[9]=xb; split[10]=yb; split[11]=zb;
-						return 	edgeMembership(xa, ya, za, xC, ys, zs, split, 0, dim+1, 0x55) | edgeMembership(xC, ys, zs, xb, yb, zb, split, 6, dim+1, 0xAA);
-				} else if (xa < xM && xb < xM) return 0;											// edge outside octant
-				else {	split[0]=xa; split[1]=ya; split[2]=za; split[3]=xb; split[4]=yb; split[5]=zb;
-						return 	edgeMembership(xa, ya, za, xb, yb, zb, split, 0, dim+1, 0x55);		// edge completely in OCT_M** domain
-				}
-			} else if (xb <= xC) {
-				if (xC < xa) {																		// reverse: point b in lower x-octants, a in higher
-						double xbaD = 1. / (xa - xb), f1 = (xC - xb) * xbaD, f2 = (xa - xC) * xbaD;
-						double ys = f1 > f2 ? yb+(ya-yb)*f1 : ya-(ya-yb)*f2, zs = f1 > f2 ? zb+(za-zb)*f1 : za-(za-zb)*f2;
-						split[0]=xb; split[1]=yb; split[2]=zb; split[3]=xC; split[4]=ys; split[5]=zs;
-						split[6]=xC; split[7]=ys; split[8]=zs; split[9]=xa; split[10]=ya; split[11]=za;
-						return 	edgeMembership(xb,yb,zb,xC,ys,zs, split, 0, dim+1, 0x55) | edgeMembership(xC,ys,zs,xa,ya,za, split, 6, dim+1, 0xAA);
-				} else if (xa < xM && xb < xM) return 0;											// edge outside octant
-				else {	split[0]=xb; split[1]=yb; split[2]=zb; split[3]=xa; split[4]=ya; split[5]=za;
-						return 	edgeMembership(xb, yb, zb, xa, ya, za, split, 0, dim+1, 0x55);		// edge completely in OCT_M** domain
-				}
-			} else if (xa > xP && xb > xP) return 0;												// edge outside octant		
-			else {		split[6]=xa; split[7]=ya; split[8]=za; split[9]=xb; split[10]=yb; split[11]=zb;
-						return	edgeMembership(xa, ya, za, xb, yb, zb, split, 6, dim+1, 0xAA);		// edge completely in OCT_P** domain	
-			}
-		case 1:
-			if (ya <= yC) {
-				if (yC < yb) {																		// point a in lower y-octants, b in higher
-						double ybaD = 1. / (yb - ya), f1 = (yC - ya) * ybaD, f2 = (yb - yC) * ybaD;
-						double xs = f1 > f2 ? xa+(xb-xa)*f1 : xb-(xb-xa)*f2, zs = f1 > f2 ? za+(zb-za)*f1 : zb-(zb-za)*f2;
-						int offY=offs+12; split[offs++]=xa; split[offs++]=ya; split[offs++]=za; split[offs++]=xs; split[offs++]=yC; split[offs++]=zs;
-						split[offY++]=xs; split[offY++]=yC; split[offY++]=zs; split[offY++]=xb; split[offY++]=yb; split[offY++]=zb;
-						return 	bits & (edgeMembership(xa,ya,za,xs,yC,zs, split, offs-6, dim+1, 0x33) | edgeMembership(xs,yC,zs,xb,yb,zb, split, offY-6, dim+1, 0xCC));
-				} else if (ya < yM && yb < yM) return 0;											// edge outside octant
-				else	return 	bits & edgeMembership(xa,ya,za,xb,yb,zb, split, offs, dim+1, 0x33);	// edge completely in OCT_*M* domain
-			} else if (yb <= yC) {
-				if (yC < ya) {																		// reverse: point b in lower y-octants, a in higher
-						double ybaD = 1. / (ya - yb), f1 = (yC - yb) * ybaD, f2 = (ya - yC) * ybaD;
-						double xs = f1 > f2 ? xb+(xa-xb)*f1 : xa-(xa-xb)*f2, zs = f1 > f2 ? zb+(za-zb)*f1 : za-(za-zb)*f2;
-						int offY=offs+12; split[offs++]=xb; split[offs++]=yb; split[offs++]=zb; split[offs++]=xs; split[offs++]=yC; split[offs++]=zs;
-						split[offY++]=xs; split[offY++]=yC; split[offY++]=zs; split[offY++]=xa; split[offY++]=ya; split[offY++]=za;
-						return 	bits & (edgeMembership(xb,yb,zb,xs,yC,zs, split, offs-6, dim+1, 0x33) | edgeMembership(xs,yC,zs,xa,ya,za, split, offY-6, dim+1, 0xCC));
-				} else if (ya < yM && yb < yM) return 0;											// edge outside octant
-				else	return 	bits & edgeMembership(xb,yb,zb,xa,ya,za, split, offs, dim+1, 0x33);	// edge completely in OCT_*M* domain
-			} else if (ya > yP && yb > yP) return 0;												// edge outside octant		
-			else {		int offY=offs+12; split[offY++]=split[offs++]; split[offY++]=split[offs++]; split[offY++]=split[offs++];
-						split[offY++]=split[offs++]; split[offY++]=split[offs++]; split[offY++]=split[offs++];
-						return	bits & edgeMembership(xa,ya,za,xb,yb,zb, split, offY-6, dim+1,0xCC);// edge completely in OCT_*P* domain	
-			}
-		case 2:
-			if (za <= zC) {
-				if (zC < zb) {
-						double zbaD = 1. / (zb - za), f1 = (zC - za) * zbaD, f2 = (zb - zC) * zbaD;
-						double xs = f1 > f2 ? xa+(xb-xa)*f1 : xb-(xb-xa)*f2, ys = f1 > f2 ? ya+(yb-ya)*f1 : yb-(yb-ya)*f2;
-						int offZ=offs+24; split[offs++]=xa; split[offs++]=ya; split[offs++]=za; split[offs++]=xs; split[offs++]=ys; split[offs++]=zC;
-						split[offZ++]=xs; split[offZ++]=ys; split[offZ++]=zC; split[offZ++]=xb; split[offZ++]=yb; split[offZ++]=zb;
-						return 	bits;																// point a in lower z-octants, b in higher	
-				} else if (za < zM && zb < zM) return 0;											// edge outside octant
-				else	return 	bits & 0x0F;														// edge completely in OCT_**M domain
-			} else if (zb <= zC) {
-				if (zC < za) {
-						double zbaD = 1. / (za - zb), f1 = (zC - zb) * zbaD, f2 = (za - zC) * zbaD;
-						double xs = f1 > f2 ? xb+(xa-xb)*f1 : xa-(xa-xb)*f2, ys = f1 > f2 ? yb+(ya-yb)*f1 : ya-(ya-yb)*f2;
-						int offZ=offs+24; split[offs++]=xb; split[offs++]=yb; split[offs++]=zb; split[offs++]=xs; split[offs++]=ys; split[offs++]=zC;
-						split[offZ++]=xs; split[offZ++]=ys; split[offZ++]=zC; split[offZ++]=xa; split[offZ++]=ya; split[offZ++]=za;
-						return 	bits;																// reverse: point b in lower x-octants, a in higher	
-				} else if (za < zM && zb < zM) return 0;											// edge outside octant
-				else	return 	bits & 0x0F;														// edge completely in OCT_**M domain
-			} else if (za > zP && zb > zP) return 0;												// edge outside octant		
-			else {		int offZ=offs+24; split[offZ++]=split[offs++]; split[offZ++]=split[offs++]; split[offZ++]=split[offs++];
-						split[offZ++]=split[offs++]; split[offZ++]=split[offs++]; split[offZ++]=split[offs++];
-						return	bits & 0xF0;														// edge completely in OCT_**P domain	
-			}
-		}
-		return 0;																					// never ends up here
-	}
-	
-	// method inserts an edge segment into octree by recursive splitting & membership testing
-	// TODO: debug method
-	public int addEdge(FEM1 fem, double xa, double ya, double za, double xb, double yb, double zb, int e, int maxItems, double disbalanceGrowth) {
-		
-		int branchesNew = 0;
-		// if a leaf was reached
-		if (octant == null) {
-			octantAddEdge(e);
-			if (level < maxLevel && (nodes > maxItems || edges > maxItems)) {
-				split(fem, maxItems);													// split this octant if the 2 criterions are fulfilled
-				branches = branchesNew = octantIterator >> 24; }
-			return branchesNew;
-		}
-		double[] split = new double[6 * 8];
-		int bits = edgeMembership(xa, ya, za, xb, yb, zb, split, 0, 0, 0xFF);			// what suboctants does the edge belong to, set the proper bits
-		
-		// DEBUG: wasteful to do rebalancing along with every insertion, better to do infrequent calling of a balanceOctree() method
-//		int[] eDisb = { 0,0,0,0,0,0,0,0 };
-//		for (int o = 0, bits2 = bits; o < 8; o++, bits2 >>= 1)							// precalculate expected branch disbalance with the added edges
-//			if ((bits2 & 1) != 0 && octant[o] != null)
-//				eDisb[o] = octant[o].nodes + octant[o].edges + 1;
-//		disbalance = octantNodeDisbalance(edges, eDisb[0], eDisb[1], eDisb[2], eDisb[3], eDisb[4], eDisb[5], eDisb[6], eDisb[7]);
-
-		int o = bits < 0x0F ? 0 : ((bits & 0x0F)==0 ? 4 : 0); if (o == 4) bits >>= 4;
-		while (bits != 0) {																// start adding edges
-			if ((bits & 1) == 1) {
-				if (octant[o] == null) {												// if containing octant doesn't exist
-					if (disbalanceGrowth < disbalanceCap) {								// if disbalanceCap allows dividing edge containment further
-						FEM1Octree octant1 = octant[o] = new FEM1Octree(this, (short)o, 0, null);
-						octant1.octant = new FEM1Octree[8];								// create transitive branch
-						octant1.disbalance = 1;											// enforce transitive branch creation until disbalance limit
-						int oC = o * 6;
-						int b = octant1.addEdge(fem,split[oC++],split[oC++],split[oC++],split[oC++],split[oC++],split[oC++],e,maxItems, (1+disbalanceGrowth)*.5);
-						branches += b + 1; branchesNew += b + 1;
-					} else {															// case of disbalanceCap reached, doing one leaf only and returning
-						octant[o] = new FEM1Octree(this, (short)o, 0, null);			// make leaf octant with one edge
-						octant[o].octantAddEdge(e);
-						branches++; branchesNew++;
-					}
-				} else {
-					int oC = o * 6;
-					int b = octant[o].addEdge(fem,split[oC++],split[oC++],split[oC++],split[oC++],split[oC++],split[oC++],e,maxItems,disbalance);	// we're not at leaf level yet, continue
-					branches += b; branchesNew += b;
-				}
-			}
-			bits >>= 1; o++;
-		}
-		edges++;		// note difference from nodes: even though the edge ends up in several suboctants, it is still only one single edge at all branching levels
-		return branchesNew;		
-	}
-	
-	
-	// method directly inserts edge into a known octant
-	public void octantAddEdge(int e) {
-		if (edge == null) edge = new int[8];											// need to initialise coctant's edges?
-		else if (edges + 1 >= edge.length) {											// need to expand octant's edge array?
-			int[] edgeNew = new int[FEM1Octree.extra_space(edges + 1)];		
-			for (int n1 = 0; n1 < edges; n1++) edgeNew[n1] = edge[n1];					// copy everything straight-on
-			edgeNew[edges++] = e; edge = edgeNew;										// add extraneous edge at end
-			return; }
-		edge[edges++] = e;
-	}
-
-	
-	
-	// method returns array of all leaves within supplied octant, or supplied octant as single member if it's a leaf itself
-	// method utilises nonrecursive tree walk with expansion into a stack
-	public FEM1Octree[] leafOctantArray() {
-		
-		if (octant == null) { FEM1Octree[] leafArray = { this }; return leafArray; }	// octant was a leaf itself
-		
-		FEM1Octree[] leafArray = new FEM1Octree[branches];					// worst-case-allocate for octant leaves
-		FEM1Octree[] stackO = new FEM1Octree[maxLevel - level];			// worst-case-allocate for octant stack
-		stackO[0] = this;
-		int[] stack = new int[maxLevel - level];							// worst-case stack allocation
-		stack[0] = octantIterator;
-		int s = 0, leaves = 0;
-		while (s >= 0) {
-			int c = stack[s] & 0xFF000000;									// get remaining children of current octant on stack
-			if (c > 0) {						
-				FEM1Octree octantChild = stackO[s].octant[stack[s] & 7];	// get outstanding child
-				stack[s] = ((stack[s]&0xFFFFFF)>>3) | (c-0x1000000);		// recompose octant stack entry: pop child, make next outstanding
-				stack[++s] = octantChild.octantIterator;
-				stackO[s] = octantChild;
-			} else {
-				if (stackO[s].octant == null)								// if it was a leaf on top of octant stack
-					leafArray[leaves++] = stackO[s--];						// confirm latest leaf octant, backtrack to parent
-				else s--;
-			}
-		}
-		return leafArray;
-	}
-
-
-	// method returns array of all leaves close enough to a coordinate within supplied octant, or supplied octant as single member if it's a leaf itself
-	// method utilises nonrecursive tree walk with expansion into a stack
-	public FEM1Octree[] leafOctantArrayByDistance(double x, double y, double z, double dist) {
-		
-		if (octant == null) { FEM1Octree[] leafArray = { this }; return leafArray; }	// octant was a leaf itself
-		
-		FEM1Octree[] leafArray = new FEM1Octree[branches];					// worst-case-allocate for octant leaves
-		FEM1Octree[] stackO = new FEM1Octree[maxLevel - level];			// worst-case-allocate for octant stack
-		stackO[0] = this;
-		int[] stack = new int[maxLevel - level];							// worst-case stack allocation
-		stack[0] = octantIterator;
-		int s = 0, leaves = 0;
-		while (s >= 0) {
-			int c = stack[s] & 0xFF000000;									// get remaining children of current octant on stack
-			if (c > 0) {						
-				FEM1Octree octantChild = stackO[s].octant[stack[s] & 7];	// get outstanding child
-				stack[s] = ((stack[s]&0xFFFFFF)>>3) | (c-0x1000000);		// recompose octant stack entry: pop child, make next outstanding
-				if (octantChild.octantDistance(x, y, z, false) < dist) {	// stack child octant only if it fulfills closeness criterion
-					stack[++s] = octantChild.octantIterator;
-					stackO[s] = octantChild;
-				}
-			} else {														// if no children remain/exist
-				if (stackO[s].octant == null)								// if it was a leaf on top of octant stack
-					leafArray[leaves++] = stackO[s]; 						// add to leaf collection										
-				s--;														// backtrack
-			}
-		}
-		return leafArray;
-	}
-
-	
-	
-	// method finds the closest node of node n within supplied octree by neighbourhood backtracking/collection heuristics:
-	// 1) if there are other local nodes, first the closest node distance is found, then the scope is expanded to the ancestor octant that fully
-	// encompasses a bounding box defined by that distance, the leaf octants that fulfill the distance criterion are collected from that ancestor,
-	// and their local nodes are recursively compared against the shortest distance attained so far
-	// 2) if octant only holds one node, backtracking to first node-holding parent is made, the leaf octant closest to node is found,
-	// the closest node distance is found from it's local nodes, then one proceeds as in point 1)
-	// octants[0] can supply the node's container, if it's null then the node's container is found first
-	// if distance[] supplied, closest distance will be returned
-	// if octants[] supplied, method will return the octants that held the closest nodes
-	final static double OCT_MARGIN = 1e-25;
-	public int closestNode(FEM1 fem, int n, double[] distance, FEM1Octree[] octants) {
-		
-		double[] distC = {0}, nodeG = fem.node;
-		FEM1Octree octant1;
-		if (octants == null || octants[0] == null) {
-			int n3 = n * 3;
-			if (n3 > nodeG.length) {
-					n3 -= nodeG.length;
-					octant1 = locateCoordinate(fem.nodeWork[n3++], fem.nodeWork[n3++], fem.nodeWork[n3], maxLevel);
-			} else	octant1 = locateCoordinate(nodeG[n3++], nodeG[n3++], nodeG[n3], maxLevel);
-		} else
-			octant1 = octants[0];
-		
-		int n3 = n * 3, nClosest;
-		double x, y, z;
-		if (n3 > nodeG.length) {	n3 -= nodeG.length; x = fem.nodeWork[n3++]; y = fem.nodeWork[n3++]; z = fem.nodeWork[n3]; }
-		else				 	  {	x = nodeG[n3++]; y = nodeG[n3++]; z = nodeG[n3]; }		
-		FEM1Octree octantC = null;
-		
-		// this is the case of only one node in container, start by finding the first ancestral relation branch besides direct parentage
-		if (octant1.nodes == 1) {
-			FEM1Octree octantRB = octant1;
-			while ((octantRB.octantIterator >> 24) <= 1)						// backtrack until some other relation branch found
-				if (octantRB == this) {											// special case: entire octree has only one node, so return itself
-					if (distance != null) distance[0] = 0;
-					if (octants != null) octants[1] = null;
-					return n;
-				}
-				else octantRB = octantRB.parent;
-			FEM1Octree[] octantsN = octantRB.leafOctantArray();					// gather all leaf octants of ancestor with relation branches
-
-			double dist = Double.MAX_VALUE;
-			for (FEM1Octree octantN : octantsN) {								// find the closest leaf octant in array
-				if (octantN == null) break;
-				if (octantN == octant1) continue;								// skip node's octant
-				double distN = octantN.octantDistance(x, y, z, false);
-				if (distN < dist) { dist = distN; octantC = octantN; }
-			}
-			nClosest = fem.closestNode(x, y, z, octantC.node, distC);			// find the closest node in closest leaf octant
-		} else {
-			// this is the base case of there being more than one node within container
-			nClosest = fem.closestNode(x, y, z, octant1.node, distC);			// find out what local node that is closest
-			if (octant1 == this) {												// if this is "archparent" octant (has no neighbours), we're done 
-				if (distance != null) distance[0] = Math.sqrt(distC[0]);
-				if (octants != null) octants[1] = null;
-				return nClosest;
-			}
-		}
-			
-		// in both cases we have found a closest node candidate and the distance that will define a testing bounding box
-		double dist = distC[0];
-		// find the smallest ancestor octant that encompasses the bounding box
-		double distRt = Math.sqrt(dist);
-		double xMn = x - distRt, xPn = x + distRt, yMn = y - distRt, yPn = y + distRt, zMn = z - distRt, zPn = z + distRt;
-		FEM1Octree octantE = octant1;
-		// expand scope in the direction that isn't overshooting global bounding box and that still is farther than matching octree wall
-		if (xMn > fem.bBox[0]) while (octantE.xM >= xMn && octantE != this) octantE = octantE.parent;
-		if (xPn < fem.bBox[3]) while (octantE.xP <= xPn && octantE != this) octantE = octantE.parent;
-		if (yMn > fem.bBox[1]) while (octantE.yM >= yMn && octantE != this) octantE = octantE.parent;
-		if (yPn < fem.bBox[4]) while (octantE.yP <= yPn && octantE != this) octantE = octantE.parent;
-		if (zMn > fem.bBox[2]) while (octantE.zM >= zMn && octantE != this) octantE = octantE.parent;
-		if (zPn < fem.bBox[5]) while (octantE.zP <= zPn && octantE != this) octantE = octantE.parent;
-		if (octantE == octant1)	{												// if smallest encompasser is node's octant itself, then we're done
-			if (distance != null) distance[0] = distRt;
-			if (octants != null) octants[1] = null;
-			return nClosest;
-		}
-		// call method that collects only the octant's leaves that lie close enough to distance sphere of node's coordinate (criterion neighbours)
-		FEM1Octree[] octantsN = octantE.leafOctantArrayByDistance(x, y, z, dist);
-		FEM1Octree octantC2 = null;
-		
-		for (FEM1Octree octantN : octantsN) {									// time to check closeness of nodes of each close-enough leaf octant
-			if (octantN == null) break;
-			if (octantN == octant1 || octantN == octantC) continue;				// skip the already tested octant of the node
-			int nClosestN = fem.closestNode(x, y, z, octantN.node, distC);		// find out closest node in criterion-neighbour octant
-			if (distC[0] < dist) {												// if it was closer than closest node in this octant, assign to it
-				nClosest = nClosestN; dist = distC[0]; octantC2 = octantN; }
-		}
-		if (distance != null) distance[0] = distRt;
-		if (octants != null) octants[1] = octantC2;
-		return nClosest;
-	}
-
-	
-	
-	// method applies closeness criterions of a coordinate to an octant, returning a distance
-	double octantDistance(double x, double y, double z, boolean root) {
-		double dx, dy, dz;
-		if (x < xM) {
-			if (y < yM) {		if (z < zM) { dx=xM-x; dy=yM-y; dz=zM-z; } else if (z > zP) { dx=xM-x; dy=yM-y; dz=z-zP; } else { dx=xM-x; dy=yM-y; dz=0; }
-			} else if (y > yP) {if (z < zM) { dx=xM-x; dy=y-yP; dz=zM-z; } else if (z > zP) { dx=xM-x; dy=y-yP; dz=z-zP; } else { dx=xM-x; dy=y-yP; dz=0; }
-			} else {			if (z < zM) { dx=xM-x; dy=0; dz=zM-z; }    else if (z > zP) { dx=xM-x; dy=0; dz=z-zP; }    else { dx=xM-x; dy=0; dz=0; }}
-		} else if (x > xP) {
-			if (y < yM) {		if (z < zM) { dx=x-xP; dy=yM-y; dz=zM-z; } else if (z > zP) { dx=x-xP; dy=yM-y; dz=z-zP; } else { dx=x-xP; dy=yM-y; dz=0; }
-			} else if (y > yP) {if (z < zM) { dx=x-xP; dy=y-yP; dz=zM-z; } else if (z > zP) { dx=x-xP; dy=y-yP; dz=z-zP; } else { dx=x-xP; dy=y-yP; dz=0; }
-			} else {			if (z < zM) { dx=x-xP; dy=0; dz=zM-z; }    else if (z > zP) { dx=x-xP; dy=0; dz=z-zP; }    else { dx=x-xP; dy=0; dz=0; }}
-		} else {
-			if (y < yM) {		if (z < zM) { dx=0; dy=yM-y; dz=zM-z; } else if (z > zP) { dx=0; dy=yM-y; dz=z-zP; } else { dx=0; dy=yM-y; dz=0; }
-			} else if (y > yP) {if (z < zM) { dx=0; dy=y-yP; dz=zM-z; } else if (z > zP) { dx=0; dy=y-yP; dz=z-zP; } else { dx=0; dy=y-yP; dz=0; }
-			} else {			if (z < zM) { dx=0; dy=0; dz=zM-z; }    else if (z > zP) { dx=0; dy=0; dz=z-zP; }
-			  else { dx=0; dy=0; dz=0; }}	// this last case signifies that the coordinate lies inside octant
-		}
-		return root ? Math.sqrt(dx*dx + dy*dy + dz*dz) : dx*dx + dy*dy + dz*dz;
-	}
-	
-	
-	
-
-	// method vectorises by centroid deviation into a scalar the level of nodal distribution disbalance between octants,
-	// where 1 = max. disbalance (all nodes ending up in a single octant)
-	static double octantNodeDisbalance(int total, int nMMM, int nPMM, int nMPM, int nPPM, int nMMP, int nPMP, int nMPP, int nPPP) {
-		double totalD = 0.5773 / total, vDisbX = 0, vDisbY = 0, vDisbZ = 0;
-		if (nMMM > 0) { double nMMMf = (double)nMMM * totalD; vDisbX -= nMMMf; vDisbY -= nMMMf; vDisbZ -= nMMMf; }
-		if (nPMM > 0) { double nPMMf = (double)nPMM * totalD; vDisbX += nPMMf; vDisbY -= nPMMf; vDisbZ -= nPMMf; }
-		if (nMPM > 0) { double nMPMf = (double)nMPM * totalD; vDisbX -= nMPMf; vDisbY += nMPMf; vDisbZ -= nMPMf; }
-		if (nPPM > 0) { double nPPMf = (double)nPPM * totalD; vDisbX += nPPMf; vDisbY += nPPMf; vDisbZ -= nPPMf; }
-		if (nMMP > 0) { double nMMPf = (double)nMMP * totalD; vDisbX -= nMMPf; vDisbY -= nMMPf; vDisbZ += nMMPf; }
-		if (nPMP > 0) { double nPMPf = (double)nPMP * totalD; vDisbX += nPMPf; vDisbY -= nPMPf; vDisbZ += nPMPf; }
-		if (nMPP > 0) { double nMPPf = (double)nMPP * totalD; vDisbX -= nMPPf; vDisbY += nMPPf; vDisbZ += nMPPf; }
-		if (nPPP > 0) { double nPPPf = (double)nPPP * totalD; vDisbX += nPPPf; vDisbY += nPPPf; vDisbZ += nPPPf; }
-		return Math.sqrt(vDisbX * vDisbX + vDisbY * vDisbY + vDisbZ * vDisbZ);
-	}
-
 	
 	// user wants a maximal subdivision granularity, method calculates what branch level to stop subdividing at to reach that granularity
-	// assumingly the return value will be assigned to maxLevel static parameter
+	// assumingly the return value will be assigned to maxLevel parameter
 	public short maxLevelFromGranularity(double granularity) {
-		FEM1Octree octant = this; while (octant.parent != null) octant = octant.parent;
-		double subDim = octant.xP - octant.xM; int level = 0;
+		double subDim = root.xP - root.xM; int level = 0;
 		while (subDim > granularity) { level++; subDim *= .5; }
-		return (short)level;
+		// find out if final or previous subdivision level lies closer to granularity
+		return (granularity - subDim) < (subDim * 2 - granularity) ? (short)level : (short)(level - 1);
 	}
 
 	// method calculates what granularity is attainable from current maxLevel subdivision limit, starting at world bounding box
 	public double granularityFromMaxLevel() {
-		FEM1Octree octant = this; while (octant.parent != null) octant = octant.parent;
-		double granularity = octant.xP - octant.xM; int level = maxLevel;
+		double granularity = root.xP - root.xM; int level = maxLevel;
 		while (level-- > 0) { granularity *= .5; }
 		return granularity;
 	}
-
-	// method tells how many extraneous nodes to allocate additional space for
-	public static int extra_space(int n) { return (n >> 1) == 0 ? n + 1 : n + (n >> 1); }
 	
-	///////////////////////////////////////////////////////////////////////////////////////////////////////////
-	//			OUTPUT METHODS
-	///////////////////////////////////////////////////////////////////////////////////////////////////////////	
-
+	
+	
 	public String toString() {
 		StringBuilder sb = new StringBuilder();
-		sb.append("Octree, total branches: " + branches + "\n");
-		sb.append(appendToString());
+		sb.append(latticeTree ? "Lattice tree" : "Octree");
+		sb.append(", total branches: " + root.branches + ", total leaves: " + root.leaves + ", top level: " + topLevel + "\n");
+		sb.append(root.appendToString());
 		sb.append("\n");
 		return sb.toString();
 	}
+
 	
-	private int maxItemPrint = 10;
-	StringBuilder appendToString() {
-		StringBuilder sb2 = new StringBuilder();
-		for (int t = 0; t < level; t++) sb2.append("   ");
-		switch(status) {
-		case OCT_MMM: sb2.append("MMM: "); break; case OCT_MPM: sb2.append("MPM: "); break;
-		case OCT_PMM: sb2.append("PMM: "); break; case OCT_PPM: sb2.append("PPM: "); break;
-		case OCT_MMP: sb2.append("MMP: "); break; case OCT_MPP: sb2.append("MPP: "); break;
-		case OCT_PMP: sb2.append("PMP: "); break; case OCT_PPP: sb2.append("PPP: "); break;
-		}
-		sb2.append(String.format(" x(%.3f,%.3f)y(%.3f,%.3f)z(%.3f,%.3f)\n", xM,xP,yM,yP,zM,zP));
-		for (int t = 0; t < level; t++) sb2.append("   ");
-		sb2.append("Level: " + level + ", nodes: " + nodes + ", edges: " + edges + ", branches: " + branches + ", disbalance: " + disbalance + "\n");
-		// note: nodes can be > 0 even if node == null, for branches
-		if (node != null) {
-			for (int t = 0; t < level; t++) sb2.append("   ");
-			sb2.append("n:[");
-			if (maxItemPrint < nodes)
-					for (int n = 0; n < maxItemPrint; n++) sb2.append(node[n] + (n == maxItemPrint - 1 ? "...]\n" : ","));
-			else	for (int n = 0; n < nodes; n++) sb2.append(node[n] + (n == nodes - 1 ? "]\n" : ","));
-		}
-		// note: edges can be > 0 even if edge == null, for branches
-		if (edge != null) {
-			for (int t = 0; t < level; t++) sb2.append("   ");
-			sb2.append("e:[");
-			if (maxItemPrint < edges)
-					for (int e = 0; e < maxItemPrint; e++) sb2.append(edge[e] + (e == maxItemPrint - 1 ? "...]\n" : ","));
-			else	for (int e = 0; e < edges; e++) sb2.append(edge[e] + (e == edges - 1 ? "]\n" : ","));
-		}
-		if (octant != null) {
-			if (octant[0] != null) sb2.append(octant[0].appendToString());
-			if (octant[1] != null) sb2.append(octant[1].appendToString());
-			if (octant[2] != null) sb2.append(octant[2].appendToString());
-			if (octant[3] != null) sb2.append(octant[3].appendToString());
-			if (octant[4] != null) sb2.append(octant[4].appendToString());
-			if (octant[5] != null) sb2.append(octant[5].appendToString());
-			if (octant[6] != null) sb2.append(octant[6].appendToString());
-			if (octant[7] != null) sb2.append(octant[7].appendToString());
-		}
-		return sb2;
-	}
-	
-	
-	// method writes octree structure to OBJ file
-	public static final int OBJ_NODES = 1, OBJ_EDGES = 2, OBJ_FACETS = 4;
-	public void toOBJ(FEM1 fem, boolean leafsOnly, int output) {
-		File file = new File(fem.name + "_octree" + ((output&OBJ_NODES)!=0?"N":"") + ((output&OBJ_EDGES)!=0?"E":"") + ((output&OBJ_FACETS)!=0?"F":"") + ".obj");
+	public void toOBJ(int lvlS, int lvlE, boolean leavesOnly, boolean internal, int output) {
+		File file = new File(fem.name + "_octree" + ((output&DO_NODES)!=0?"N":"") + ((output&DO_EDGES)!=0?"E":"") + ((output&DO_FACETS)!=0?"F":"") + ".obj");
 		if (!file.exists()) { try {	file.createNewFile(); } catch (IOException e) { e.printStackTrace(); }}
 		BufferedWriter bw = null;
 		try {		bw = new BufferedWriter(new FileWriter(file));
@@ -750,51 +135,20 @@ public class FEM1Octree {
 		StringBuilder sb = new StringBuilder();
 		String precFormat = "%." + fem.precision_OBJ + "f";
 		vOBJcnt = 0; pOBJidx = 1;
+		if (lvlE > topLevel) lvlE = topLevel;
+		if (lvlS > lvlE) lvlS = lvlE;
 		
 		sb.append("# Visualisation of octree\n#\n");
-		sb.append(appendVerticesToOBJ(fem, precFormat, leafsOnly, output));
+		sb.append(root.appendVerticesToOBJ(this, lvlS, lvlE, precFormat, leavesOnly, internal, output));
 		sb.append("# " + vOBJcnt + " vertices\n\ng " + fem.name + "_octree\n");
-		sb.append(appendPolygonsToOBJ(fem, leafsOnly, output));
+		sb.append(root.appendPolygonsToOBJ(this, lvlS, lvlE, leavesOnly, internal, output));
 		sb.append("# " + (pOBJidx - 1) / 6 + " faces\n\ng\n");
 		
 		try {	bw.write(sb.toString());									// write out & close file
 				bw.flush(); bw.close();
 		} catch (IOException e) { e.printStackTrace(); }
-
 	}
 	
-	StringBuilder appendVerticesToOBJ(FEM1 fem, String precFormat, boolean leafsOnly, int output) {
-		StringBuilder sb2 = new StringBuilder();
-		if (!leafsOnly || (leafsOnly && octant == null)) {
-			if (output==0 || (output&OBJ_NODES)!=0 && node!=null || (output&OBJ_EDGES)!=0 && edge!=null) {
-				double[] pCoord = {xM,yM,zM, xP,yM,zM, xM,yP,zM, xP,yP,zM, xM,yM,zP, xP,yM,zP, xM,yP,zP, xP,yP,zP};
-				for (int p = 0, c = 0; p < 8; p++)
-					sb2.append("v  "+String.format(precFormat,pCoord[c++])+" "+String.format(precFormat,pCoord[c++])+" "+String.format(precFormat,pCoord[c++])+"\n");
-				vOBJcnt += 8;
-			}
-		}
-		if (octant != null) {
-			for (int o = 0; o < 8; o++) if (octant[o] != null) sb2.append(octant[o].appendVerticesToOBJ(fem, precFormat, leafsOnly, output)); }
-		return sb2;
-	}
-
-	StringBuilder appendPolygonsToOBJ(FEM1 fem, boolean leafsOnly, int output) {
-		StringBuilder sb2 = new StringBuilder();
-		if (!leafsOnly || (leafsOnly && octant == null)) {
-			if (output==0 || (output&OBJ_NODES)!=0 && node!=null || (output&OBJ_EDGES)!=0 && edge!=null) {
-				sb2.append("f " + pOBJidx + " " + (pOBJidx+1) + " " + (pOBJidx+5) + " " + (pOBJidx+4) + "\n");
-				sb2.append("f " + (pOBJidx+1) + " " + (pOBJidx+3) + " " + (pOBJidx+7) + " " + (pOBJidx+5) + "\n");
-				sb2.append("f " + (pOBJidx+3) + " " + (pOBJidx+2) + " " + (pOBJidx+6) + " " + (pOBJidx+7) + "\n");
-				sb2.append("f " + pOBJidx + " " + (pOBJidx+2) + " " + (pOBJidx+6) + " " + (pOBJidx+4) + "\n");
-				sb2.append("f " + pOBJidx + " " + (pOBJidx+1) + " " + (pOBJidx+3) + " " + (pOBJidx+2) + "\n");
-				sb2.append("f " + (pOBJidx+4) + " " + (pOBJidx+5) + " " + (pOBJidx+7) + " " + (pOBJidx+6) + "\n");
-				pOBJidx += 8;
-			}
-		}
-		if (octant != null) {
-			for (int o = 0; o < 8; o++) if (octant[o] != null) sb2.append(octant[o].appendPolygonsToOBJ(fem, leafsOnly, output)); }
-		return sb2;
-	}
-
+	public void toOBJ(boolean leavesOnly, boolean internal, int output) { toOBJ(0, 0, leavesOnly, internal, output); }
 
 }

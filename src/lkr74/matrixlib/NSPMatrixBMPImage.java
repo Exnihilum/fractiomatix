@@ -9,10 +9,10 @@ import io.nayuki.bmpio.AbstractRgb888Image;
 import io.nayuki.bmpio.BmpImage;
 import io.nayuki.bmpio.BmpWriter;
 
-// uses https://github.com/nayuki/BMP-IO image file in/out class
-// to output a BMP image of the matrix
 final class NSPMatrixBMPImage extends AbstractRgb888Image {
 
+	// uses https://github.com/nayuki/BMP-IO image file in/out class to output a BMP image of a NSPMatrix
+	
 	double vMax = Matrix.ROUNDOFF_ERROR, vMedian = 0;
 	BmpImage bmp = null;
 	NSPMatrix A;
@@ -25,7 +25,7 @@ final class NSPMatrixBMPImage extends AbstractRgb888Image {
 		this.A = A;
 		// find largest value of matrix to divide all others by
 		for (int j = 0; j < A.N; j++) {
-			NspNode[] bVsp = A.Vsp[j].array;
+			NSPNode[] bVsp = A.Vsp[j].array;
 			int nNodes = A.Vsp[j].nodes;
 			for (int offH = 0; offH < nNodes; offH++) {
 				double v = bVsp[offH].v;

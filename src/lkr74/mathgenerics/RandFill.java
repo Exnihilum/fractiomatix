@@ -7,6 +7,9 @@ import java.security.InvalidParameterException;
 // a useful class for iteratively test-filling arrays & matrices with values in a nonrevisitable fashion
 // "sectors" holds integer pairs, the first is start index of a sector, the second an end index
 // there is always at least one occupied slot between each sector, every new occupied slot can create a new sector partition
+//
+// Leonard Krylov 2016
+
 public class RandFill {
 	private int sectorCnt = 1, slotCount;
 	private int[] sectors;

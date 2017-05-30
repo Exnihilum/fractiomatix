@@ -1,13 +1,16 @@
 package lkr74.matrixlib;
 
 
-// The class of the bipartite graph for Dulmage-Mendelsohn decomposition will find the maximum matching of a matrix
-// facilitating the tranformation of matrix into block triangular form (BTF)
-// the class utilises Hopcroft-Karp algorithm for the maximum matching finding, which is stored in "pairing" array
-// the array consists of [ pairings-of-rows x m, supersink x 1, pairings-of-columns x n ],
-// so one adds an offset into this array to access the pairings of the columns (although the pairings are symmetrical anyway)
-// the pairing indexes themselves are ranged as they are in the matrix: (0 to m) and (0 to n)
 public class BipartiteDM {
+	
+	// The class of the bipartite graph for Dulmage-Mendelsohn decomposition will find the maximum matching of a matrix
+	// facilitating the tranformation of matrix into block triangular form (BTF)
+	// the class utilises Hopcroft-Karp algorithm for the maximum matching finding, which is stored in "pairing" array
+	// the array consists of [ pairings-of-rows x m, supersink x 1, pairings-of-columns x n ],
+	// so one adds an offset into this array to access the pairings of the columns (although the pairings are symmetrical anyway)
+	// the pairing indexes themselves are ranged as they are in the matrix: (0 to m) and (0 to n)
+	//
+	// Leonard Krylov 2016
 
 	String name = "DAG";
 	int verts = 0, vertsR = 0, vertsC = 0;
@@ -54,8 +57,8 @@ public class BipartiteDM {
 		// build up the bipartite edges from existing nz values
 		// DEBUG: two iteration options: only add edges from current (not including it) PIVOT, or add ALL nz edges within current row or column
 		for (int i = 0; i < M.M; i++) {
-			NspArray aHsp = M.Hsp[i];
-			NspNode[] bHsp = aHsp.array;
+			NSPArray aHsp = M.Hsp[i];
+			NSPNode[] bHsp = aHsp.array;
 			// opt1: look left-in-row from pivot, adding found nz as R->C edges
 			//for (int i1 = M.pivotNsp[i].offH + 1; i1 < aHsp.nodes; i++)
 			// opt2: add all R->C edges that exist in current row of NSP matrix
@@ -66,8 +69,8 @@ public class BipartiteDM {
 		}
 				
 		for (int j = 0; j < M.N; j++) {
-			NspArray aVsp = M.Vsp[j];
-			NspNode[] bVsp = aVsp.array;
+			NSPArray aVsp = M.Vsp[j];
+			NSPNode[] bVsp = aVsp.array;
 			// opt1: look down-in-column from pivot, adding found nz as C->R edges
 			//for (int i1 = M.pivotNsp[j].offV + 1; i1 < aVsp.nodes; i1++)
 			// opt2: add all C->R edges that exist in current column of NSP matrix

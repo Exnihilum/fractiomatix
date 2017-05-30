@@ -9,10 +9,9 @@ import io.nayuki.bmpio.AbstractRgb888Image;
 import io.nayuki.bmpio.BmpImage;
 import io.nayuki.bmpio.BmpWriter;
 
-// uses https://github.com/nayuki/BMP-IO image file in/out class
-// to output a BMP image of the matrix
 final class MatrixBMPImage extends AbstractRgb888Image {
 
+	// Class uses https://github.com/nayuki/BMP-IO image file in/out class to output a BMP image of a flat array Matrix
 	double vMax = Matrix.ROUNDOFF_ERROR, vMedian = 0;
 	BmpImage bmp = null;
 	Matrix A;

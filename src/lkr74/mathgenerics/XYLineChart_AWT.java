@@ -20,25 +20,30 @@ public class XYLineChart_AWT extends ApplicationFrame
 	public XYLineChart_AWT( String title, String xtag, String ytag, XYDataset dataset, int width, int height)
 	{
 		super(title);
-		JFreeChart xylineChart = ChartFactory.createXYLineChart(
-				title, xtag, ytag, dataset, PlotOrientation.VERTICAL, true, true, false);
-
+		JFreeChart xylineChart = ChartFactory.createXYLineChart(title,xtag,ytag,dataset,PlotOrientation.VERTICAL,true,true,false);
 		ChartPanel chartPanel = new ChartPanel( xylineChart );
 		chartPanel.setPreferredSize( new java.awt.Dimension( width , height ) );
 		final XYPlot plot = xylineChart.getXYPlot();
 		XYLineAndShapeRenderer renderer = new XYLineAndShapeRenderer(true, false);
-		renderer.setSeriesPaint(0 , Color.BLACK );
-		renderer.setSeriesPaint(1 , Color.BLUE );
-		renderer.setSeriesPaint(2 , Color.RED );
-		renderer.setSeriesPaint(3 , Color.GREEN );
-		renderer.setSeriesStroke(0 , new BasicStroke(2));
-		renderer.setSeriesStroke(1 , new BasicStroke(2));
-		renderer.setSeriesStroke(2 , new BasicStroke(2));
-		renderer.setSeriesStroke(3 , new BasicStroke(2));
+		renderer.setSeriesPaint(0 , Color.BLACK );	renderer.setSeriesPaint(1 , Color.BLUE );
+		renderer.setSeriesPaint(2 , Color.RED );	renderer.setSeriesPaint(3 , Color.GREEN );
+		renderer.setSeriesStroke(0 , new BasicStroke(2));	renderer.setSeriesStroke(1 , new BasicStroke(2));
+		renderer.setSeriesStroke(2 , new BasicStroke(2));	renderer.setSeriesStroke(3 , new BasicStroke(2));
 		plot.setRenderer( renderer ); 
 		setContentPane( chartPanel ); 
 	}
 
+	// create Chart data from timings of 2 compared tested functions, showing variation in one parameter (ex: size/fillrate)
+	static XYDataset createStatisticSet(double[][] timingLists, String[] testNames, int[] testCases) {
+		final XYSeriesCollection dataset = new XYSeriesCollection();          
+		for (int j = 0; j < timingLists.length; j++) {
+			final XYSeries testSeries = new XYSeries(testNames[testCases[j]+4], false);
+			for (int i = 0; i < timingLists[j].length; i++) testSeries.add(i+2, timingLists[j][i]);
+			dataset.addSeries(testSeries); }
+		return dataset;
+	}
+
+	
 	static XYDataset createElevatorDataset(double[] dlist, double[] tlist, double tstart, double dt)
 	{
 		final XYSeries elevator1 = new XYSeries("Elevator ascending (t->d)", false);

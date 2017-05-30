@@ -1,0 +1,96 @@
+	final static byte[] faceSeq_bTGBCC = {
+		0, 1, 2, 3, 5, 4,
+		// [Program 1] code for NEIGHBOUR 0 enumerated face of same size, the layout description (example):
+		//   edge nbr, slotcode, Long/Short edges,     (picked 4x octant coords),          (alternative program B if checked corner nbr is of higher level),
+		//          0,  Sl_ChgA,          Te_SLSL,  Cd_PMM,Cd_CCCn,Cd_CCC,Cd_MMM, Sl_ChgA,Cd_PCM,Cd_CCCn,Cd_CCC,Cd_MMM,Sl_FtoL,Cd_PMM,Cd_CCCn,Cd_CCC,Cd_PCM,
+		FLG_XXP,	// the mask for child-bits of neighbour
+/*7*/	0, Sl_ChgA,     Te_SLSL, Cd_PMM,Cd_CCCn,Cd_CCC,Cd_MMM, Sl_ChgA,Te_SLSS,Cd_CMM,Cd_CCCn,Cd_CCC,Cd_MMM,Sl_FtoL,Te_SLSS,Cd_PMM,Cd_CCCn,Cd_CCC,Cd_CMM,
+/*26*/	2, Sl_FtoL|Te_M,Te_SLSL, Cd_PPM,Cd_CCCn,Cd_CCC,Cd_PMM, Sl_FtoL,Te_SLSS,Cd_PCM,Cd_CCCn,Cd_CCC,Cd_PMM,Sl_FtoL,Te_SLSS,Cd_PPM,Cd_CCCn,Cd_CCC,Cd_PCM,
+/*45*/	3, Sl_FtoL,     Te_SLSL, Cd_MPM,Cd_CCCn,Cd_CCC,Cd_PPM, Sl_FtoL,Te_SLSS,Cd_CPM,Cd_CCCn,Cd_CCC,Cd_PPM,Sl_FtoL,Te_SLSS,Cd_MPM,Cd_CCCn,Cd_CCC,Cd_CPM,
+/*64*/	1, Sl_FtoL|Te_M,Te_SLSL, Cd_MMM,Cd_CCCn,Cd_CCC,Cd_MPM, Sl_FtoL,Te_SLSS,Cd_MCM,Cd_CCCn,Cd_CCC,Cd_MPM,Sl_FtoL,Te_SLSS,Cd_MMM,Cd_CCCn,Cd_CCC,Cd_MCM,
+		// [Program 2] code for neighbour 0 enumerated face with facing children
+/*83*/	0, Sl_ChgA,		Te_SSSS, Cd_PMM,Cd_CCM,Cd_CCC,Cd_MMM, Sl_ChgA,Te_SSSS,Cd_CMM,Cd_CCM,Cd_CCC,Cd_MMM,Sl_FtoL,Te_SSSS,Cd_PMM,Cd_CCM,Cd_CCC,Cd_CMM,
+/*102*/	2, Sl_FtoL|Te_M,Te_SSSS, Cd_PPM,Cd_CCM,Cd_CCC,Cd_PMM, Sl_FtoL,Te_SSSS,Cd_PCM,Cd_CCM,Cd_CCC,Cd_PMM,Sl_FtoL,Te_SSSS,Cd_PPM,Cd_CCM,Cd_CCC,Cd_PCM,
+/*121*/	3, Sl_FtoL,		Te_SSSS, Cd_MPM,Cd_CCM,Cd_CCC,Cd_PPM, Sl_FtoL,Te_SSSS,Cd_CPM,Cd_CCM,Cd_CCC,Cd_PPM,Sl_FtoL,Te_SSSS,Cd_MPM,Cd_CCM,Cd_CCC,Cd_CPM,
+/*140*/	1, Sl_FtoL|Te_M,Te_SSSS, Cd_MMM,Cd_CCM,Cd_CCC,Cd_MPM, Sl_FtoL,Te_SSSS,Cd_MCM,Cd_CCM,Cd_CCC,Cd_MPM,Sl_FtoL,Te_SSSS,Cd_MMM,Cd_CCM,Cd_CCC,Cd_MCM,
+		// [Program 3] code for neighbour 0 enumerated face of double size, the layout:
+		// (first program with diagonal slicing for octants like MMM,MMP,PPM,PPP), (second program with diagonal for octants like PMM,PMP,MPM,MPP)
+/*159*/	Sl_ChgA,Te_SSSS,Cd_PPM,Cd_MMM,Cd_CCC,Cd_PMM,Sl_FtoL,Te_LSSL,Cd_MPM,Cd_MMM,Cd_CCC,Cd_PPM,
+		Sl_ChgA,Te_SSSS,Cd_PMM,Cd_MPM,Cd_CCC,Cd_MMM,Sl_FtoL,Te_LSSL,Cd_PPM,Cd_MPM,Cd_CCC,Cd_PMM,
+
+		// [Program 1] code for NEIGHBOUR 1 enumerated face of same size
+		FLG_XPX,
+/*184*/	5, Sl_Ch01,     Te_SLSL, Cd_MMP,Cd_CCCn,Cd_CCC,Cd_MMM, Sl_Hld2,Te_SLSS,Cd_MMC,Cd_CCCn,Cd_CCC,Cd_MMM,Sl_FtoL,Te_SLSS,Cd_MMP,Cd_CCCn,Cd_CCC,Cd_MMC,
+/*203*/	0, Sl_FtoL|Te_M,Te_SLSL, Cd_PMP,Cd_CCCn,Cd_CCC,Cd_MMP, Sl_FtoL,Te_SLSS,Cd_CMP,Cd_CCCn,Cd_CCC,Cd_MMP,Sl_FtoL,Te_SLSS,Cd_PMP,Cd_CCCn,Cd_CCC,Cd_CMP,
+/*222*/	4, Sl_FtoL,     Te_SLSL, Cd_PMM,Cd_CCCn,Cd_CCC,Cd_PMP, Sl_FtoL,Te_SLSS,Cd_PMC,Cd_CCCn,Cd_CCC,Cd_PMP,Sl_FtoL,Te_SLSS,Cd_PMM,Cd_CCCn,Cd_CCC,Cd_PMC,
+/*241*/	8, Sl_FtoL|Te_M,Te_SLSL, Cd_MMM,Cd_CCCn,Cd_CCC,Cd_PMM, Sl_FtoL,Te_SLSS,Cd_CMM,Cd_CCCn,Cd_CCC,Cd_PMM,Sl_FtoL,Te_SLSS,Cd_MMM,Cd_CCCn,Cd_CCC,Cd_CMM,
+		// [Program 2] code for neighbour 1 enumerated face with facing children
+/*260*/	5, Sl_Ch01,		Te_SSSS, Cd_MMP,Cd_CMC,Cd_CCC,Cd_MMM, Sl_Hld2,Te_SSSS,Cd_MMC,Cd_CMC,Cd_CCC,Cd_MMM,Sl_FtoL,Te_SSSS,Cd_MMP,Cd_CMC,Cd_CCC,Cd_MMC,
+/*279*/	0, Sl_FtoL|Te_M,Te_SSSS, Cd_PMP,Cd_CMC,Cd_CCC,Cd_MMP, Sl_FtoL,Te_SSSS,Cd_CMP,Cd_CMC,Cd_CCC,Cd_MMP,Sl_FtoL,Te_SSSS,Cd_PMP,Cd_CMC,Cd_CCC,Cd_CMP,
+/*298*/	4, Sl_FtoL,		Te_SSSS, Cd_PMM,Cd_CMC,Cd_CCC,Cd_PMP, Sl_FtoL,Te_SSSS,Cd_PMC,Cd_CMC,Cd_CCC,Cd_PMP,Sl_FtoL,Te_SSSS,Cd_PMM,Cd_CMC,Cd_CCC,Cd_PMC,
+/*317*/	8, Sl_FtoL|Te_M,Te_SSSS, Cd_MMM,Cd_CMC,Cd_CCC,Cd_PMM, Sl_FtoL,Te_SSSS,Cd_CMM,Cd_CMC,Cd_CCC,Cd_PMM,Sl_FtoL,Te_SSSS,Cd_MMM,Cd_CMC,Cd_CCC,Cd_CMM,
+		// [Program 3] code for neighbour 1 enumerated face of double size
+/*336*/	Sl_ChgA,Te_SSSS,Cd_PMP,Cd_MMM,Cd_CCC,Cd_MMP,Sl_FtoL,Te_LSSL,Cd_PMM,Cd_MMM,Cd_CCC,Cd_PMP,
+		Sl_ChgA,Te_SSSS,Cd_MMP,Cd_PMM,Cd_CCC,Cd_MMM,Sl_FtoL,Te_LSSL,Cd_PMP,Cd_PMM,Cd_CCC,Cd_MMP,
+
+		// [Program 1] code for NEIGHBOUR 2 enumerated face of same size
+		FLG_PXX,
+/*361*/	1, Sl_Ch01,     Te_SLSL, Cd_MPM,Cd_CCCn,Cd_CCC,Cd_MMM, Sl_Hld2,Te_SLSS,Cd_MCM,Cd_CCCn,Cd_CCC,Cd_MMM,Sl_FtoL,Te_SLSS,Cd_MPM,Cd_CCCn,Cd_CCC,Cd_MCM,
+/*380*/	6, Sl_FtoL|Te_M,Te_SLSL, Cd_MPP,Cd_CCCn,Cd_CCC,Cd_MPM, Sl_FtoL,Te_SLSS,Cd_MPC,Cd_CCCn,Cd_CCC,Cd_MPM,Sl_FtoL,Te_SLSS,Cd_MPP,Cd_CCCn,Cd_CCC,Cd_MPC,
+/*399*/	9, Sl_FtoL,     Te_SLSL, Cd_MMP,Cd_CCCn,Cd_CCC,Cd_MPP, Sl_FtoL,Te_SLSS,Cd_MCP,Cd_CCCn,Cd_CCC,Cd_MPP,Sl_FtoL,Te_SLSS,Cd_MMP,Cd_CCCn,Cd_CCC,Cd_MCP,
+/*418*/	4, Sl_FtoL|Te_M,Te_SLSL, Cd_MMM,Cd_CCCn,Cd_CCC,Cd_MMP, Sl_FtoL,Te_SLSS,Cd_MMC,Cd_CCCn,Cd_CCC,Cd_MMP,Sl_FtoL,Te_SLSS,Cd_MMM,Cd_CCCn,Cd_CCC,Cd_MMC,
+		// [Program 2] code for neighbour 2 enumerated face with facing children
+/*437*/	1, Sl_Ch01,		Te_SSSS, Cd_MPM,Cd_MCC,Cd_CCC,Cd_MMM, Sl_Hld2,Te_SSSS,Cd_MCM,Cd_MCC,Cd_CCC,Cd_MMM,Sl_FtoL,Te_SSSS,Cd_MPM,Cd_MCC,Cd_CCC,Cd_MCM,
+/*456*/	6, Sl_FtoL|Te_M,Te_SSSS, Cd_MPP,Cd_MCC,Cd_CCC,Cd_MPM, Sl_FtoL,Te_SSSS,Cd_MPC,Cd_MCC,Cd_CCC,Cd_MPM,Sl_FtoL,Te_SSSS,Cd_MPP,Cd_MCC,Cd_CCC,Cd_MPC,
+/*475*/	9, Sl_FtoL,		Te_SSSS, Cd_MMP,Cd_MCC,Cd_CCC,Cd_MPP, Sl_FtoL,Te_SSSS,Cd_MCP,Cd_MCC,Cd_CCC,Cd_MPP,Sl_FtoL,Te_SSSS,Cd_MMP,Cd_MCC,Cd_CCC,Cd_MCP,
+/*494*/	4, Sl_FtoL|Te_M,Te_SSSS, Cd_MMM,Cd_MCC,Cd_CCC,Cd_MMP, Sl_FtoL,Te_SSSS,Cd_MMC,Cd_MCC,Cd_CCC,Cd_MMP,Sl_FtoL,Te_SSSS,Cd_MMM,Cd_MCC,Cd_CCC,Cd_MMC,
+		// [Program 3] code for neighbour 2 enumerated face of double size
+/*513*/	Sl_ChgA,Te_SSSS,Cd_MPP,Cd_MMM,Cd_CCC,Cd_MPM,Sl_FtoL,Te_LSSL,Cd_MMP,Cd_MMM,Cd_CCC,Cd_MPP,
+		Sl_ChgA,Te_SSSS,Cd_MPM,Cd_MMP,Cd_CCC,Cd_MMM,Sl_FtoL,Te_LSSL,Cd_MPP,Cd_MMP,Cd_CCC,Cd_MPM,
+
+		// [Program 1] code for NEIGHBOUR 3 enumerated face of same size (this one cannot compact up with the previous on topological grounds)
+		FLG_MXX,
+/*576*/	7, Sl_Hld2|Te_M,Te_SLSL, Cd_PPM,Cd_CCCn,Cd_CCC,Cd_PPP, Sl_Hld2,Te_SLSS,Cd_PPC,Cd_CCCn,Cd_CCC,Cd_PPP,Sl_FtoL,Te_SLSS,Cd_PPM,Cd_CCCn,Cd_CCC,Cd_PPC,
+/*595*/	2, Sl_FtoL,     Te_SLSL, Cd_PMM,Cd_CCCn,Cd_CCC,Cd_PPM, Sl_FtoL,Te_SLSS,Cd_PCM,Cd_CCCn,Cd_CCC,Cd_PPM,Sl_FtoL,Te_SLSS,Cd_PMM,Cd_CCCn,Cd_CCC,Cd_PCM,
+/*538*/	5, Sl_FtoL|Te_M,Te_SLSL, Cd_PMP,Cd_CCCn,Cd_CCC,Cd_PMM, Sl_FtoL,Te_SLSS,Cd_PMC,Cd_CCCn,Cd_CCC,Cd_PMM,Sl_FtoL,Te_SLSS,Cd_PMP,Cd_CCCn,Cd_CCC,Cd_PMC,
+/*557*/	10,Sl_FtoL,     Te_SLSL, Cd_PPP,Cd_CCCn,Cd_CCC,Cd_PMP, Sl_FtoL,Te_SLSS,Cd_PCP,Cd_CCCn,Cd_CCC,Cd_PMP,Sl_FtoL,Te_SLSS,Cd_PPP,Cd_CCCn,Cd_CCC,Cd_PCP,
+		// [Program 2] code for neighbour 3 enumerated face with facing children
+/*652*/	7, Sl_Hld2|Te_M,Te_SSSS, Cd_PPM,Cd_PCC,Cd_CCC,Cd_PPP, Sl_Hld2,Te_SSSS,Cd_PPC,Cd_PCC,Cd_CCC,Cd_PPP,Sl_FtoL,Te_SSSS,Cd_PPM,Cd_PCC,Cd_CCC,Cd_PPC,
+/*671*/	2, Sl_FtoL,		Te_SSSS, Cd_PMM,Cd_PCC,Cd_CCC,Cd_PPM, Sl_FtoL,Te_SSSS,Cd_PCM,Cd_PCC,Cd_CCC,Cd_PPM,Sl_FtoL,Te_SSSS,Cd_PMM,Cd_PCC,Cd_CCC,Cd_PCM,
+/*614*/	5, Sl_FtoL|Te_M,Te_SSSS, Cd_PMP,Cd_PCC,Cd_CCC,Cd_PMM, Sl_FtoL,Te_SSSS,Cd_PMC,Cd_PCC,Cd_CCC,Cd_PMM,Sl_FtoL,Te_SSSS,Cd_PMP,Cd_PCC,Cd_CCC,Cd_PMC,
+/*633*/	10,Sl_FtoL,		Te_SSSS, Cd_PPP,Cd_PCC,Cd_CCC,Cd_PMP, Sl_FtoL,Te_SSSS,Cd_PCP,Cd_PCC,Cd_CCC,Cd_PMP,Sl_FtoL,Te_SSSS,Cd_PPP,Cd_PCC,Cd_CCC,Cd_PCP,
+		// [Program 3] code for neighbour 3 enumerated face of double size
+/*690*/	Sl_ChgA,Te_SSSS,Cd_PPP,Cd_PMM,Cd_CCC,Cd_PMP,Sl_FtoL,Te_LSSL,Cd_PPM,Cd_PMM,Cd_CCC,Cd_PPP,
+		Sl_ChgA,Te_SSSS,Cd_PMP,Cd_PPM,Cd_CCC,Cd_PMM,Sl_FtoL,Te_LSSL,Cd_PPP,Cd_PPM,Cd_CCC,Cd_PMP,
+
+		// [Program 1] code for NEIGHBOUR 5 enumerated face of same size
+		FLG_XXM,
+/*715*/	10,Sl_Ch01,     Te_SLSL, Cd_MMP,Cd_CCCn,Cd_CCC,Cd_PMP, Sl_Hld2,Te_SLSS,Cd_CMP,Cd_CCCn,Cd_CCC,Cd_PMP,Sl_FtoL,Te_SLSS,Cd_MMP,Cd_CCCn,Cd_CCC,Cd_CMP,
+/*734*/	8, Sl_FtoL|Te_M,Te_SLSL, Cd_MPP,Cd_CCCn,Cd_CCC,Cd_MMP, Sl_FtoL,Te_SLSS,Cd_MCP,Cd_CCCn,Cd_CCC,Cd_MMP,Sl_FtoL,Te_SLSS,Cd_MPP,Cd_CCCn,Cd_CCC,Cd_MCP,
+/*753*/	9, Sl_FtoL,     Te_SLSL, Cd_PPP,Cd_CCCn,Cd_CCC,Cd_MPP, Sl_FtoL,Te_SLSS,Cd_CPP,Cd_CCCn,Cd_CCC,Cd_MPP,Sl_FtoL,Te_SLSS,Cd_PPP,Cd_CCCn,Cd_CCC,Cd_CPP,
+/*772*/	11,Sl_FtoL|Te_M,Te_SLSL, Cd_PMP,Cd_CCCn,Cd_CCC,Cd_PPP, Sl_FtoL,Te_SLSS,Cd_PCP,Cd_CCCn,Cd_CCC,Cd_PPP,Sl_FtoL,Te_SLSS,Cd_PMP,Cd_CCCn,Cd_CCC,Cd_PCP,
+		// [Program 2] code for neighbour 5 enumerated face with facing children
+/*791*/	10,Sl_Ch01,		Te_SSSS, Cd_MMP,Cd_CCP,Cd_CCC,Cd_PMP, Sl_Hld2,Te_SSSS,Cd_CMP,Cd_CCP,Cd_CCC,Cd_PMP,Sl_FtoL,Te_SSSS,Cd_MMP,Cd_CCP,Cd_CCC,Cd_CMP,
+/*810*/	8, Sl_FtoL|Te_M,Te_SSSS, Cd_MPP,Cd_CCP,Cd_CCC,Cd_MMP, Sl_FtoL,Te_SSSS,Cd_MCP,Cd_CCP,Cd_CCC,Cd_MMP,Sl_FtoL,Te_SSSS,Cd_MPP,Cd_CCP,Cd_CCC,Cd_MCP,
+/*829*/	9, Sl_FtoL,		Te_SSSS, Cd_PPP,Cd_CCP,Cd_CCC,Cd_MPP, Sl_FtoL,Te_SSSS,Cd_CPP,Cd_CCP,Cd_CCC,Cd_MPP,Sl_FtoL,Te_SSSS,Cd_PPP,Cd_CCP,Cd_CCC,Cd_CPP,
+/*848*/	11,Sl_FtoL|Te_M,Te_SSSS, Cd_PMP,Cd_CCP,Cd_CCC,Cd_PPP, Sl_FtoL,Te_SSSS,Cd_PCP,Cd_CCP,Cd_CCC,Cd_PPP,Sl_FtoL,Te_SSSS,Cd_PMP,Cd_CCP,Cd_CCC,Cd_PCP,
+		// [Program 3] code for neighbour 5 enumerated face of double size
+/*867*/	Sl_ChgA,Te_SSSS,Cd_PPP,Cd_MMP,Cd_CCC,Cd_MPP,Sl_FtoL,Te_LSSL,Cd_PMP,Cd_MMP,Cd_CCC,Cd_PPP,
+		Sl_ChgA,Te_SSSS,Cd_MPP,Cd_PMP,Cd_CCC,Cd_MMP,Sl_FtoL,Te_LSSL,Cd_PPP,Cd_PMP,Cd_CCC,Cd_MPP,
+
+		// [Program 1] code for NEIGHBOUR 4 enumerated face of same size, note that the coordinate compaction (code Sl_FtoL) comes in seamlessly
+		// from neighbour 2 if the two programs are executed in order
+		FLG_XMX,
+/*892*/	11,Sl_Ch01|Te_M,Te_SLSL, Cd_MPP,Cd_CCCn,Cd_CCC,Cd_PPP, Sl_Hld2,Te_SLSS,Cd_CPP,Cd_CCCn,Cd_CCC,Cd_PPP,Sl_FtoL,Te_SLSS,Cd_MPP,Cd_CCCn,Cd_CCC,Cd_CPP,
+/*911*/	6, Sl_FtoL,     Te_SLSL, Cd_MPM,Cd_CCCn,Cd_CCC,Cd_MPP, Sl_FtoL,Te_SLSS,Cd_MPC,Cd_CCCn,Cd_CCC,Cd_MPP,Sl_FtoL,Te_SLSS,Cd_MPM,Cd_CCCn,Cd_CCC,Cd_MPC,
+/*930*/	3, Sl_FtoL|Te_M,Te_SLSL, Cd_PPM,Cd_CCCn,Cd_CCC,Cd_MPM, Sl_FtoL,Te_SLSS,Cd_CPM,Cd_CCCn,Cd_CCC,Cd_MPM,Sl_FtoL,Te_SLSS,Cd_PPM,Cd_CCCn,Cd_CCC,Cd_CPM,
+/*949*/	7, Sl_FtoL,     Te_SLSL, Cd_PPP,Cd_CCCn,Cd_CCC,Cd_PPM, Sl_FtoL,Te_SLSS,Cd_PPC,Cd_CCCn,Cd_CCC,Cd_PPM,Sl_FtoL,Te_SLSS,Cd_PPP,Cd_CCCn,Cd_CCC,Cd_CPP,
+		// [Program 2] code for neighbour 4 enumerated face with facing children
+/*968*/	11,Sl_Ch01|Te_M,Te_SSSS, Cd_MPP,Cd_CPC,Cd_CCC,Cd_PPP, Sl_Hld2,Te_SSSS,Cd_CPP,Cd_CPC,Cd_CCC,Cd_PPP,Sl_FtoL,Te_SSSS,Cd_MPP,Cd_CPC,Cd_CCC,Cd_CPP,
+/*987*/	6, Sl_FtoL,		Te_SSSS, Cd_MPM,Cd_CPC,Cd_CCC,Cd_MPP, Sl_FtoL,Te_SSSS,Cd_MPC,Cd_CPC,Cd_CCC,Cd_MPP,Sl_FtoL,Te_SSSS,Cd_MPM,Cd_CPC,Cd_CCC,Cd_MPC,
+/*1006*/3, Sl_FtoL|Te_M,Te_SSSS, Cd_PPM,Cd_CPC,Cd_CCC,Cd_MPM, Sl_FtoL,Te_SSSS,Cd_CPM,Cd_CPC,Cd_CCC,Cd_MPM,Sl_FtoL,Te_SSSS,Cd_PPM,Cd_CPC,Cd_CCC,Cd_CPM,
+/*1025*/7, Sl_FtoL,		Te_SSSS, Cd_PPP,Cd_CPC,Cd_CCC,Cd_PPM, Sl_FtoL,Te_SSSS,Cd_PPC,Cd_CPC,Cd_CCC,Cd_PPM,Sl_FtoL,Te_SSSS,Cd_PPP,Cd_CPC,Cd_CCC,Cd_CPP,
+		// [Program 3] code for neighbour 4 enumerated face of double size
+/*1044*/Sl_ChgA,Te_SSSS,Cd_PPP,Cd_MPM,Cd_CCC,Cd_PPM,Sl_FtoL,Te_LSSL,Cd_MPP,Cd_MPM,Cd_CCC,Cd_PPP,
+		Sl_ChgA,Te_SSSS,Cd_PPM,Cd_MPP,Cd_CCC,Cd_MPM,Sl_FtoL,Te_LSSL,Cd_PPP,Cd_MPP,Cd_CCC,Cd_PPM,
+	};
