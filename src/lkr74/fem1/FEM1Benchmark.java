@@ -65,7 +65,7 @@ public class FEM1Benchmark extends ApplicationFrame {
 		FEM1 fem = null;
 		// OBJ data loading block
 		try {	BufferedReader br = new BufferedReader(new FileReader(dataFile));
-				fem = new FEM1(br, FEM1.MESH_PSC); br.close();
+				fem = new FEM1("benchmark", br, FEM1.MESH_PSC); br.close();
 		} catch (FileNotFoundException e) { e.printStackTrace(); } catch (IOException e) { e.printStackTrace(); }
 			
 		// test what size of maximal node clustering per octant leaf gives fastest search of two closest nodes
@@ -124,7 +124,7 @@ public class FEM1Benchmark extends ApplicationFrame {
 		FEM1 fem = null;
 		// OBJ data loading block
 		try {	BufferedReader br = new BufferedReader(new FileReader(dataFile));
-				fem = new FEM1(br, FEM1.MESH_PSC); br.close();
+				fem = new FEM1("benchmark", br, FEM1.MESH_PSC); br.close();
 		} catch (FileNotFoundException e) { e.printStackTrace(); } catch (IOException e) { e.printStackTrace(); }
 
 		double time_thread=0, time_no_thread=0;

@@ -36,7 +36,7 @@ public class FEM1 {
 	String name;
 	// node, element, freed element, polygon & smooth patch counts for this FEM1 object
 	public int nodes=0, nodesWork=0, deletedNodes=0, elements=0, elementsWork=0;
-	public int elements2=0, elements2Work=0, elements2Free=0, polygons=0, patches=0, maxNodesInPoly = 3;
+	public int elements2=0, elements2Work=0, elements2Free=0, polygons=0, patches=16, maxNodesInPoly = 3;
 	int precision_OBJ = 5;							// decimal places of the input OBJ file
 	
 	public double[] node = null;					// node coordinates come in (x,y,z)-triples within this 1D-array
@@ -53,13 +53,16 @@ public class FEM1 {
 	float[] polygonNormal = null;					// polygon normals come in triplets (for now assumed flat so only 3 nodes used for calculation)
 	int[] polygonOffset = null;						// polygon node offsets work both as specifiers of poly node count and give position of polygon in array
 	VisitBitArray polygonCheck = null;
+	int[] polygonOriginalIdx = null;				// save orignal OBJ-file polygon indexes here
 	
 	int[] edgeIndex = null;							// indexes matching each shared edge to particular polygons
 	double[] edge = null;							// array specifying edge length of every polygonal edge
 	int[] edgeNode = null;							// convenient back-reference from (edge index * 2) to the underlying nodes
+	byte[] edgeAngle = null;						// holds low precision (-180/2 to 180/2) angles between facets
 	int edges;										// total nonredundant count of polygon edges
 
-	int[] patch = null;								// the patch/smoothing group array holds offsets into face array for the start of every patch's faces
+	int[] patch = new int[patches];					// the patch/smoothing group array holds offsets into face array for the start of every patch's faces
+	int[] patchIdx = new int[patches];				// in-file patch index held here
 	
 	FEM1Element[] element2 = null;					// object-oriented element types go into this structure
 	FEM1Element[] element2Work = null;				// the work array for newly added elements is also processed, and is merged after reaching some length
@@ -87,6 +90,8 @@ public class FEM1 {
 	double avgEdgeLength = 0, minEdgeLength = 0, maxEdgeLength = 0;	// the average and min/max edge lengths found are stored here
 	SpreadBin edgeSpread = null;
 	static int DEBUG_LEVEL = 1;
+	
+	public static final double ROUNDOFF_ERROR = 1e-8;
 	
 	// the datatype requested from the object instancer
 	public static final int MESH_HANDMADE = 0, MESH_HANDMADE_OBJECTIFIED = 1, MESH_PSC = 2;
@@ -124,9 +129,7 @@ public class FEM1 {
 			public void run() {
 				FEM1.getExecutor(0).shutdown();
 				try { while (!FEM1.getExecutor(0).awaitTermination(10, TimeUnit.SECONDS));
-				} catch (InterruptedException e) { e.printStackTrace(); }				
-			}
-		});		
+				} catch (InterruptedException e) { e.printStackTrace(); } } });		
 		return executor;
 	}
 
@@ -139,10 +142,8 @@ public class FEM1 {
 	}
 
 	public static void finishTaskList() {
-		for (Thread task: taskList) {
-			if (task == null) continue;
-			try { task.join(); } catch (InterruptedException e) { e.printStackTrace(); }
-		}
+		for (Thread task: taskList) {	if (task == null) continue;
+										try { task.join(); } catch (InterruptedException e) { e.printStackTrace(); } }
 		taskNum = 0;
 	}
 
@@ -159,9 +160,12 @@ public class FEM1 {
 	// if OBJ file is exported from a 3D program, this means that the object in the program must consist of individual tetrahedrons,
 	// each tetrahedral having it's own four unique vertexes (meaning, each tetrahedron is a distinct, detached element within the object)
 	// since this means most vertexes will be duplicates, a post-optimisation has to be performed to make the tetrahedra share nodes
-	public FEM1(BufferedReader br, int dataType) {
+	public FEM1(String name, BufferedReader br, int dataType) {
 				
-		int state = 1, tetraCnt = 0, polyNodes = 0;
+		this.name = name;
+		int state = 1, tetraCnt = 0, polyNodes = 0, pUniques = 1, sGroupI = 0;
+		int[] patch1 = null, patch3 = null;						// holder of patch indexes (initial allocation)
+		for (int p = 0; p < patchIdx.length; p++) patchIdx[p] = -1;
 		boolean keepReading = true, gotNormals = false;
 		String s = "";
 		String[] dataRow = null;
@@ -184,26 +188,26 @@ public class FEM1 {
 						int integrals = 1;
 						while (vD >= 10.0 || vD <= -10) { vD /= 10.0; integrals++; }
 						precision_OBJ = vS.length() - (vD < 0 ? 1 : 0) - integrals - 1;
+						if (DEBUG_LEVEL > 1) System.out.println("FEM1(): " + name + ".obj has " + precision_OBJ + " decimals precision.");
 						state = 3; break; }	// if first vertex found, progress to vertex counter
 					break;
 					
 				// state 3 counts the incoming vertexes
 				case 3:
 					if (br.readLine().startsWith("v ")) nodes++;
-					else { state = 4; break; }	// if non-vertex row found, progress
+					else { 	if (DEBUG_LEVEL > 1) System.out.println("    " + nodes + " nodes in file.");
+							state = 4; break; }	// if non-vertex row found, progress
 					break;
 					
 				// state 4 skips the gap between vertexes & polygons
 				case 4:
 					//if ((s = br.readLine()) == null) { state = 0; break; }
 					s = br.readLine();
-					if (s.startsWith("s ")) {
-						int patchNr = Integer.valueOf(s.split(" ")[1]);						// find out the highest patch/smooth group index
-						if (patchNr > patches) patches = patchNr;
-					}
-					else if (s.startsWith("vn ")) gotNormals = true;
+					sGroupI = catchSmoothingGroup(s, patchIdx); 							// register first patch index
+					if (s.startsWith("vn ")) gotNormals = true;
 					else if (s.startsWith("f ")) {
-						tetraCnt++; polygons++;
+						tetraCnt++; polygons++; patch[1]++;
+						if (sGroupI < 0) sGroupI = 1;
 						int[] poly = decodePolygon(s, gotNormals);
 						if (maxNodesInPoly < poly.length) maxNodesInPoly = poly.length;
 						polyNodes += poly.length;
@@ -215,40 +219,51 @@ public class FEM1 {
 					// note: if element count was zero, do not progress to proper reading in of the data
 					//if ((s = br.readLine()) == null) { state = elements > 0 ? 10 : 0; break; }
 					s = br.readLine();
-					if (s.startsWith("s ")) {
-						int patchNr = Integer.valueOf(s.split(" ")[1]);						// find out the highest patch/smooth group index
-						if (patchNr > patches) patches = patchNr;
-					}
-					else if (s.startsWith("f ")) {
-						tetraCnt++; polygons++;
+					int sGroupGetI = catchSmoothingGroup(s, patchIdx); 						// if caught a unique smoothgroup separator, register it
+					if (sGroupGetI >= 0) {													// TODO: DEBUG: the patch index from OBJ file is not utilised
+						if (sGroupGetI >= patchIdx.length-1) {								// check if patch arrays need doubling
+							int[] patchIdxnew = new int[patchIdx.length*2], patchNew = new int[patchIdx.length*2];
+							for (int p=0; p < pUniques; p++) { patchIdxnew[p] = patchIdx[p]; patchNew[p] = patch[p]; }
+							patchIdx = patchIdxnew; patch = patchNew; }
+						sGroupI = ++sGroupGetI;
+						if (pUniques < sGroupI) pUniques = sGroupI;
+						
+					} else if (s.startsWith("f ")) {										// if it was a polygon
+						tetraCnt++; polygons++; patch[sGroupI]++;
 						int[] poly = decodePolygon(s, gotNormals);
+						if (maxNodesInPoly < poly.length) maxNodesInPoly = poly.length;
 						polyNodes += poly.length; }
-					else { state = 10; break; }
+					else {
+						patches = pUniques;
+						patch3 = new int[pUniques];
+						for (int p=1; p<pUniques; p++) { patch[p+1]+=patch[p]; patch3[p] = patch[p]*3; }	// turn patch[] into offsets to the polygons
+						patch1 = patch.clone();
+						state = 10; break; }
 					if ((dataType == MESH_HANDMADE || dataType == MESH_HANDMADE_OBJECTIFIED) && tetraCnt >= 4) { elements++; tetraCnt = 0; }
 					break;
 					
 				// state 10 restarts file reading, initialises data arrays, reads in all data in one state
 				case 10:
+					if (DEBUG_LEVEL > 1) {	System.out.println("    " + polygons + " polygons in file.");
+											System.out.println("    " + pUniques + " PSC patches found."); }
 					br.reset();
 					
-					node = new double[nodes * 3];
+					node = new double[nodes * NCOORD];
 					byte[] nodeCheck = new byte[nodes];
-					if (dataType != MESH_PSC) {									// for PSC meshes, elements are created in separate method
+					if (dataType != MESH_PSC) {													// for PSC meshes, elements are created in separate method
 						element = new int[elements * 4];
 						nodeCount = new byte[elements];
 					}
 					polygon = new int[polyNodes];
+					polygonOriginalIdx = new int[polygons];
 					polygonOffset = new int[polygons + 1];
 					//polygonPatch = new int[polygons];
-					patch = new int[patches == 0 ? 2 : patches + 1];
 					int[] polyUnmatched = new int[polygons];
 					
 					do { s = br.readLine();	} while (!s.startsWith("v "));
 					dataRow = s.split(" ");
 					int n3 = 0;
-					node[n3++] = Double.valueOf(dataRow[2]);
-					node[n3++] = Double.valueOf(dataRow[3]);
-					node[n3++] = Double.valueOf(dataRow[4]);
+					node[n3++] = Double.valueOf(dataRow[2]); node[n3++] = Double.valueOf(dataRow[3]); node[n3++] = Double.valueOf(dataRow[4]);
 					
 					for (int n = 1; n < nodes; n++) {
 						dataRow = br.readLine().split(" ");
@@ -257,17 +272,17 @@ public class FEM1 {
 					// find out the name of the 3D-object and acquire it
 					do { s = br.readLine();	} while (!s.startsWith("g"));
 					name = s.split(" ")[1];
+					if (DEBUG_LEVEL > 1) System.out.print("    Reading in " + name + "\n    Reading patches:");
 					
-					if (dataType == MESH_PSC) {
-						int pch = 0, pC = 0;
-						for (int f = 0, sGroup = 0; f < polygons;) {
+					if (dataType == MESH_PSC) {						
+						for (int p=0, pch=0, pIdx=1; p < polygons;) {		// pch = current patch's index, pC = current polygon's nodecount
 							
 							s = br.readLine();
 							if (s.startsWith("usemtl")) continue;
-							int new_sGroup = catchSmoothingGroup(s); 		// if caught a smoothgroup separator, register facecount for that patch
-							if (new_sGroup >= 0) {							// TODO: DEBUG: the patch index from OBJ file is not utilised
-								sGroup = new_sGroup;						// update smooth group
-								patch[pch + 1] = patch[pch++];				// move on polygon offset
+							sGroupI = catchSmoothingGroup(s,patchIdx); 		// if caught a smoothgroup separator, register facecount for that patch
+							if (sGroupI >= 0) {								// TODO: DEBUG: the patch index from OBJ file is not utilised
+								pch = sGroupI;
+								if (DEBUG_LEVEL > 1) System.out.print(" P" + patchIdx[sGroupI]);
 								continue;
 							}
 							int[] poly = decodePolygon(s, gotNormals);
@@ -276,21 +291,28 @@ public class FEM1 {
 								for (int n2 = n+1; n2 < poly.length; n2++)
 									if (poly[n]==poly[n2]) {
 										if (found1stIdentical)
-												System.out.print("FEM1.FEM1(): polygon " + f + "contains duplicate node indexes " + n2);
+												System.out.print("\nFEM1(): polygon " + p + "contains duplicate node indexes " + n2);
 										else	System.out.print(", " + n2);
 										found1stIdentical = true;
 									}
 								if (found1stIdentical) System.out.println();
 							}
-							
-							polygonOffset[f++] = pC;						// note: polygonOffset[offset + 1] - polygonOffset[offset] = polyNodeCount
-							for (int ni1 = 0; ni1 < poly.length; ni1++) polygon[pC++] = poly[ni1];
-
+							// need to distribute polygons into their patch segments, since patches can come intermixed from file
+							int ppOfs = patch1[pch]++;						// each patch offset will keep incrementing up to next patch's offset
+							polygonOffset[ppOfs] = poly.length;				// store polygon offsets as polygon count for now
+							polygonOriginalIdx[ppOfs] = pIdx++;
+							ppOfs = patch3[pch]; patch3[pch] += poly.length;
+							for (int ni1 = 0; ni1 < poly.length; ni1++) polygon[ppOfs++] = poly[ni1];
+							p++;
 							//polygonPatch[f] = sGroup;						// record face's patch/smooth group
-							patch[pch]++;									// increment patch's polycount by incrementing offset
 						}
-						polygonOffset[polygons] = pC;						// not to forget the final polygon's node count
 						
+						// convert polygonOffset[] to true offsets, so that polygonOffset[p+1] - polygonOffset[p] = polyNodeCount						
+						int pCnt = polygonOffset[0];
+						for (int p = 0; p < polygons; p++) {
+							int pCnt2 = polygonOffset[p+1]; polygonOffset[p+1] += polygonOffset[p]; polygonOffset[p]-= pCnt; pCnt = pCnt2; }
+						
+						if (DEBUG_LEVEL > 1) System.out.println(); 
 						keepReading = false; break;							// current PSC object is read, we're done with the file
 					}
 					
@@ -308,7 +330,8 @@ public class FEM1 {
 							// take care of situation when a matching face for a tetrahedron can't be found
 							if (f >= polygons) throw new InvalidParameterException("FEM1(): Element " + e + " lacks faces.");
 							s = br.readLine();
-							if (s.startsWith("usemtl") || s.startsWith("s ")) s = br.readLine();		// we're not interested in smoothing groups for handmade meshes
+							if (s.startsWith("usemtl") || s.startsWith("s "))
+								s = br.readLine();							// we're not interested in smoothing groups for handmade meshes
 							poly = decodePolygon(s, gotNormals);	
 							polygonOffset[f++] = f3;
 							polygon[f3++] = a = poly[0];					// record the incoming face					
@@ -367,6 +390,7 @@ public class FEM1 {
 							polyUnmatched[fU++] = f - 1;			// a file-loaded facet was unmatched, put it in list of unmatched faces
 					}
 					polygonOffset[polygons] = polygonOffset[polygons - 1] + 3;	// not to forget the final polygon's node count
+					printWhat = PRINT_ELEMENTS;
 				
 				// state 0 reached when EOF was reached, quit while loop
 				case 0:
@@ -374,16 +398,14 @@ public class FEM1 {
 				}
 		} catch (IOException e) { e.printStackTrace(); }
 		
-		
 		// if object-oriented element allocation was requested, reconfigure dataset
 		if (dataType == MESH_HANDMADE_OBJECTIFIED) {
 			// collapse nodes that are identical or close enough (since every loaded tetrahedron touches others perfectly)
 			uniqueNodes(0.001);
-
 			element2 = new FEM1Element[elements2 = elements];
-			for (int e = 0, e4 = 0; e < elements; e++) {
+			for (int e = 0, e4 = 0; e < elements; e++)
 				element2[e] = new FEM1Element(this, element[e4++], element[e4++], element[e4++], element[e4++], null);
-			}
+			printWhat = PRINT_ELEMENTS2;
 			//element = null;
 			
 			// find datasharing neighbour sets of every tetrahedral element, face-to-face and edge-to-edge
@@ -393,11 +415,13 @@ public class FEM1 {
 		}
 		else if (dataType == MESH_PSC) {
 			polygonsNodeSupport();					// group the polygons supported by every node
-			facetNeighbours(false, false);			// find each face's neighbours, accept only facets, skip corner neighbours
-			facetEdgeLengths();						// calculate edge lengths, generate nonredundant edge identities
+			facetNeighbours(false, false);			// find each facet's neighbours
 			polygonNormals();						// calculate polygonal normals
+			reassignSmoothGroups(24);				// reassign PSC patch smoothing groups according to angle provided
+			polygonsNodeSupport();					// regroup the polygons supported by every node
+			facetNeighbours(false, false);			// find each facet's neighbours for the new smoothing groups
+			uniqueEdges(patches > 1);				// depending on patch count found, generate either ALL or just PSC feature edges, calculate edge lengths
 		}
-		
 		getExecutor(0);								// start executor service
 	}
 	
@@ -507,7 +531,7 @@ public class FEM1 {
 	
 	void mergeNodeWork() {
 		if (nodeWork == null) return;
-		int nodesTot3 = nodes * 3;
+		int nodesTot3 = nodes * NCOORD;
 		double[] nodeNew = new double[nodesTot3];
 		byte[] nodeFlagNew = nodeFlag != null ? new byte[nodes] : null;
 		int n = 0, nW = 0, n3 = 0, n3W = 0, nEnd = nodes - nodesWork;
@@ -530,7 +554,7 @@ public class FEM1 {
 	// note: method is for INITIALISATION, solely used to eliminate vertex duplicates in handcrafted tetrahedral OBJ files
 	private void uniqueNodes(double precision) {
 		
-		double[] node2 = new double[nodes * 3];				// node2[] contains node coordinates moved according to the remapping
+		double[] node2 = new double[nodes * NCOORD];		// node2[] contains node coordinates moved according to the remapping
 		int nodes2 = 0, nAcc2 = 0;
 		int[] nodeRef = new int[nodes];						// nodeRef[] refers every old node index to it's new node index
 		for (int n = 0; n < nodes; n++) nodeRef[n] = -1;
@@ -548,7 +572,7 @@ public class FEM1 {
 						continue;
 					}
 
-					int n = pIdx * 3;
+					int n = pIdx * NCOORD;
 					double x1 = node[n++], y1 = node[n++], z1 = node[n++];
 					boolean foundNode = false;
 					
@@ -586,7 +610,7 @@ public class FEM1 {
 					continue;
 				}
 				
-				int n = eIdx * 3;
+				int n = eIdx * NCOORD;
 				double x1 = node[n++], y1 = node[n++], z1 = node[n++];
 				boolean foundNode = false;
 				
@@ -616,19 +640,16 @@ public class FEM1 {
 		for (int p = 0, p3 = 0; p < polygons; p++) {
 			int pN = polygonOffset[p], pNo = polygonOffset[p + 1];
 			if (pNo - pN == 3) {												// facet case
-				polygon[p3] = nodeRef[polygon[p3++]];
-				polygon[p3] = nodeRef[polygon[p3++]];
-				polygon[p3] = nodeRef[polygon[p3++]];
+				polygon[p3] = nodeRef[polygon[p3++]]; polygon[p3] = nodeRef[polygon[p3++]]; polygon[p3] = nodeRef[polygon[p3++]];
 			} else
 				for (; pN < pNo; pN++) polygon[pN] = nodeRef[polygon[pN]];		// generic polygon case
 		}
 
 		if (nodes2 < nodes) {
-			node = new double[nodes2 * 3];				// rescale node array to the reduced array size
-			for (int n = 0, nEnd = nodes2 * 3; n < nEnd;) { node[n] = node2[n++]; node[n] = node2[n++]; node[n] = node2[n++]; }
+			node = new double[nodes2 * NCOORD];									// rescale node array to the reduced array size
+			for (int n = 0, nEnd = nodes2 * NCOORD; n < nEnd;) { node[n] = node2[n++]; node[n] = node2[n++]; node[n] = node2[n++]; }
 			nodes = nodes2;
-		} else
-			node = node2;
+		} else node = node2;
 	}
 	
 	
@@ -728,15 +749,15 @@ public class FEM1 {
 			int[] support = polygonSupports[n];
 			
 			if (support == null) {										// optimally, every node is shared by 6 faces or by 4 quartics (+ 1 array length integer)
-				support = polygonSupports[n] = new int[9];				// allocate by defaul for 8 (+1) polygons adjoining this node
+				support = polygonSupports[n] = new int[9];				// allocate by default for 8 (+1) polygons adjoining this node
 				support[0] = 1; support[1] = p;							// new support array started, insert it's first element
 			} else {			
 				int polys = support[0];
 				if (polys + 2 >= support.length) {						// check if support array needs resizing
-					int polys2 = polys + (polys >> 1);				// increase array 1.5 times
+					int polys2 = 2 * polys++;							// double array
 					int[] support2 = new int[polys2];
-					for (int n2 = 0; n2 < polys; n2++) support2[n2] = support[n2];
-					support = polygonSupports[n] = support2;
+					for (int n2 = 0; n2 <= polys; n2++) support2[n2] = support[n2];
+					support = polygonSupports[n] = support2; polys--;
 				}
 				
 				// for facetNeighbours() method to work properly, we must make sure the indexes are sorted
@@ -746,8 +767,7 @@ public class FEM1 {
 					for (int s = 1; s <= polys; s++) {					// otherwise insert polygon index in sorted order
 						if (p < support[s]) {
 							for (int s1 = polys + 1; s1 > s; s1++) support[s1] = support[s];
-							support[s] = p; break;
-						}
+							support[s] = p; break; }
 					}
 				}
 				support[0]++;
@@ -796,10 +816,12 @@ public class FEM1 {
 		int[] n123cb = new int[polygonSupportMaxArrayL*supportMult];		// n123cc[] carries only patch border corner neighbours
 		int pch = 0, pchStart = patch[pch], pchEnd = patch[pch];			// polygon indexes of current patch maintained by pchStart & pchEnd
 		int twfN = 0, twfE = 0;												// counts number of duplicate facets, number of them erased
+		printWhat = PRINT_BORDERPOLYS;
 			
 		// pB indexes current border facet, pBn indexes current patch count of border facets
 		for (int p=0, p3=0, pB=0, pBn=0; p < polygons; p++) {	
 			
+			startPrintEntry = pB-5 < 0 ? 0 : pB-5;
 			int ni = polygonOffset[p + 1] - polygonOffset[p];
 			if (ni > 3) {
 				if (onlyTrifaces) continue;											// if flagged to skip non-facets, jump over polygon
@@ -844,8 +866,8 @@ public class FEM1 {
 						else if (po12c > po3)	po3 = a3[++i3];											// if higher -> a3[] has an unique, skip second
 						else { 																			// if they equal -> non-unique -> store whichever
 							if (po12c < pchStart || po12c >= pchEnd) {									// if belonging to another patch, put in n123eb[]
-									{ n123eb[n12[++i12] + 1] = po12c; i123eb++; }						// (following edge code decides array position)
-							} else	{ n123e[n12[++i12] + 1] = po12c; i123e++; }							// else store as edge in n123e[]
+									{ n123eb[n12[++i12]==0?2:1] = po12c; i123eb++; }					// (following edge code decides array position)
+							} else	{ n123e[n12[++i12]==0?2:1] = po12c; i123e++; }						// else store as edge in n123e[]
 							po12 = n12[++i12]; po3 = a3[++i3];
 						}
 						continue;
@@ -892,7 +914,7 @@ public class FEM1 {
 					if (po12 < 0) {																		// if 1st comparison produced a unique
 						int po12c = po12 & FL_UN_CLR;
 						if (po12c < po3)		{														// if it's lower -> unique -> put as corners
-							if (po12c < pchStart || po12 >= pchEnd) n123cb[i123cb++] = po12c;			// if belonging to another patch, put in n123eb[]
+							if (po12c < pchStart || po12 >= pchEnd) n123cb[i123cb++] = po12c;			// if belonging to another patch, put in n123cb[]
 							else									n123c[i123c++] = po12c;
 							i12++; po12 = n12[++i12];
 						} else if (po12c > po3){														// if higher, a3[] has an unique -> put as corners
@@ -901,8 +923,8 @@ public class FEM1 {
 							po3 = a3[++i3];
 						} else {																		// if they equal -> non-unique -> put as edges
 							if (po12c < pchStart || po12c >= pchEnd)
-									{ n123eb[n12[++i12] + 1] = po12c; i123eb++; }						// if belonging to another patch, put in n123eb[]
-							else	{ n123e[n12[++i12] + 1] = po12c; i123e++; }
+									{ n123eb[n12[++i12]==0?2:1] = po12c; i123eb++; }						// if belonging to another patch, put in n123eb[]
+							else	{ n123e[n12[++i12]==0?2:1] = po12c; i123e++; }
 							po12 = n12[++i12]; po3 = a3[++i3];
 						}
 						continue;
@@ -917,7 +939,7 @@ public class FEM1 {
 						else									n123c[i123c++] = po3;
 						po3 = a3[++i3];
 					// following case is topologically illegal, since two facets can only have two nodes equal, unless they mirror each other
-						// following case is topologically illegal, since two facets can only have two nodes equal, unless they mirror each other
+					// the case of found twin facets is caretaken here
 					} else { 
 						boolean twinFacetStored = false;
 						for (int tw=0; tw<twfN; tw++)													// see if twin facet already been encountered
@@ -965,8 +987,8 @@ public class FEM1 {
 			int[] neighbours = polygonNeighbours[p] = new int[nTotal];
 			neighbours[0] = nTotal;
 			int p1 = 5;
-			neighbours[p1++] = n123e[0]; neighbours[p1++] = n123e[1]; neighbours[p1++] = n123e[2];
-			neighbours[p1++] = n123eb[0]; neighbours[p1++] = n123eb[1]; neighbours[p1++] = n123eb[2];
+			neighbours[p1++] = n123e[0]; neighbours[p1++] = n123e[1]; neighbours[p1++] = n123e[2];		// store edge neighbours
+			neighbours[p1++] = n123eb[0]; neighbours[p1++] = n123eb[1]; neighbours[p1++] = n123eb[2];	// store patch border edge neighbours
 			if (!skipCornerNeighbours) {
 				for (int p2 = 0; p2 < i123c; p1++, p2++) neighbours[p1] = n123c[p2];
 				for (int p2 = 0; p2 < i123cb; p1++, p2++) neighbours[p1] = n123cb[p2];
@@ -977,82 +999,167 @@ public class FEM1 {
 //				if (neighbours[pN] >= 0) System.out.print(neighbours[pN] + (pN == nTotal - 1 ? "\n" : (pN == 4 ? ": " : ",")));
 //				else if (pN == nTotal - 1) System.out.print("\n");
 		}
+		startPrintEntry = 50;
 		if (DEBUG_LEVEL > 1 && twfN > 0) System.out.println("Duplicate facets found: " + twfN + ", erased: " + twfE);
 	}
 	
 	
-	// method generates nonredundant mapping of every facet edge to it's length, where facet edges can share a length
+	
+	// method does DFS walkthrough & investigation of dihedral angles between facets of mesh, the patch inclusion criterion being "maxAngle"
+	// the patch[], polygonNeighbours[], polygonNormal[], polygonOriginalIdx[] & polygon[] arrays are reassigned according to the angle criterion
+	void reassignSmoothGroups(double maxAngle) {
+		int[] facetStack = new int[polygons*2];									// worst-case length of stack = polygon count * (old index,new index)
+		int[] polygonNew = new int[polygonOffset[polygons]];					// polygon node series reassigned here
+		//int[][] polygonNeighboursNew = new int[polygons][];						// method will ONLY generate edge neighbourhoods (enough for PSC edge search)
+		int[] polygonOriginalIdxNew = new int[polygons];
+		float[] polygonNormalNew = new float[polygons * NCOORD];
+//		borderPolygons = new int[polygons+((polygons>>3)==0?4:(polygons>>3))];	// NOT worst-case
+		patch = new int[8];														// NOT worst-case (allocate for 16 patches initially)
+		int[] testFacets = new int[128];										// NOT worst-case (facets failing criterion put here as patch seeds)
+		int i = 0, t = 0, f = 0, fNew = 0, p = 0, pB = 1, pBC = 0, pch = 1, fCheck = 0, patchC = 0;
+		while (f < polygons && polygon[polygonOffset[f]] == -1) polygonCheck.visit(f++);
+		if (f >= polygons) throw new RuntimeException("FEM1.reassignSmoothGroups(): all facets were marked as deleted.");
+		facetStack[0] = f; facetStack[1] = fNew;
+		int[] fNbrs = null; int eNo = 0;
+		boolean store = true;
+		
+		while (i >= 0 && t >= 0) {
+			f = facetStack[i++]; int fPrev = facetStack[i--]; eNo = f>>30&3;
+			fNbrs = polygonNeighbours[f&=0x3FFFFFFF];							// get neighbours of utmost facet on stack
+			if (store) {
+				//int[] fNbrsNew = {11,0,0,0,0,-1,-1,-1,-1,-1,-1};				// generate a new edge neighbourhood
+				//polygonNeighboursNew[fPrev] = fNbrsNew;
+				int pOfs = polygonOffset[f];									// shift around all data pertinent to this polygon to new positions
+				polygonNew[p++] = polygon[pOfs++]; polygonNew[p++] = polygon[pOfs++]; polygonNew[p--] = polygon[pOfs--];
+				polygonNormalNew[--p]=polygonNormal[--pOfs]; polygonNormalNew[++p]=polygonNormal[++pOfs]; polygonNormalNew[++p]=polygonNormal[++pOfs];
+				p++; pOfs++;
+				polygonOriginalIdxNew[fPrev] = polygonOriginalIdx[f];
+				polygonCheck.visit(f); patchC++; store = false;
+			}
+			if (eNo < 3) {
+				int fN = fNbrs[5+eNo]>=0 ? fNbrs[5+eNo] : fNbrs[8+eNo];
+				facetStack[i] = ++eNo<<30|f;
+				if (fN>=0) {
+					if (!polygonCheck.visited(fN)) {
+						if (dihedralAngle(f, fN) <= maxAngle) {						// if neighbour is part of this patch (fulfills criterion)
+							facetStack[i+=2] = fN; facetStack[i+1] = ++fNew;
+							//polygonNeighboursNew[fPrev][1]++; polygonNeighboursNew[fPrev][4+eNo] = fN;	// store facet as regular in-patch neighbour
+							store = true;
+						} else {													// if neighbour forms a sharp edge 
+							if (t >= testFacets.length) {							// check if testFacets or borderPolygons need reallocation
+								int[] testFacetsNew = new int[t * 2];
+								for (int c = 0; c < t; c++) testFacetsNew[c] = testFacets[c]; testFacets = testFacetsNew; }
+							testFacets[t++] = fN;
+	//						if (pB >= borderPolygons.length) {
+	//							int[] borderPolygonsNew = new int[borderPolygons.length + (borderPolygons.length>>3)];
+	//							for (int c = 0; c < t; c++) borderPolygonsNew[c] = borderPolygons[c]; borderPolygons = borderPolygonsNew; }
+	//						borderPolygons[pB++] = f; borderPolygons[pBC]++;
+							//polygonNeighboursNew[fPrev][2]++; polygonNeighboursNew[fPrev][7+eNo] = fN;	// store neighbour facet as cross-border neighbour
+						}
+					}
+				}
+				continue;
+			}
+			if (i == 0) {														// if no more patch area expansion possible
+				if (pch >= patch.length) {
+					int[] patchNew = new int[pch*2]; for (int c = 0; c < pch; c++) patchNew[c] = patch[c]; patch = patchNew; }
+				patch[pch++] = patchC;
+//				pB++; pBC += borderPolygons[pBC] + 1;							// progress in borderPolygons[] to next patch
+				t--;
+				while (t >= 0 && polygonCheck.visited(testFacets[t])) t--;		// locate a nonvisited failed-criterion facet
+				if (t < 0) {													// testFacets[] empty, try locating detached mesh elements
+					while (fCheck < polygons && (polygonCheck.visited(fCheck) || polygon[polygonOffset[fCheck]] == -1)) fCheck++;
+					if (fCheck >= polygons) break;								// all polygons have been visited, we're done
+					else { facetStack[i=0] = fCheck; facetStack[i+1] = ++fNew; }
+					t = 0;
+				// put one of criterion-failed facets as a new patch seed on stack
+				} else { facetStack[i=0] = testFacets[t--];	facetStack[i+1] = ++fNew; }	
+				store = true;													// enforce storage of this first entry of new patch
+			} else i-=2;															// backtrack stack
+		}
+		patches = pch - 1;
+		polygon = polygonNew;
+		//polygonNeighbours = polygonNeighboursNew;
+		polygonNormal = polygonNormalNew;
+		polygonOriginalIdx = polygonOriginalIdxNew;
+	}
+	
+	public float dihedralAngle(int fa, int fb) {
+		fa *= 3; fb *= 3;
+		float a = (float)(Math.acos(polygonNormal[fa++]*polygonNormal[fb++]+polygonNormal[fa++]*polygonNormal[fb++]+polygonNormal[fa]*polygonNormal[fb])*TO_DEG);
+		return a < 0 ? -a : a;
+	}
+	
+	
+	
+	// method generates nonredundant mapping of every FACET edge to it's length field, where facet edges can share a length
 	// the mapping is from a circular definition of an edge as point(n) to point(n+1), it index-mirrors the polygon nodes array polygon[] exactly,
 	// and points to an array of edge lengths edge[] and an array of node index duplets edgeNode[] (for back-reference to underlying edge data)
-	void facetEdgeLengths() {
+	void uniqueEdges(boolean borderEdgesOnly) {
 		int polyNodes = polygonOffset[polygons];
-		edgeIndex = new int[polyNodes];									// edgeIndex[] is the mapper to the edge lengths
-		for (int i = 0; i < polyNodes; i++) edgeIndex[i] = -1;			// set all entries to unmapped, -1
-		double[] edgeT = new double[polyNodes];							// worst-case allocation
-		int[] edgeNT = new int[polyNodes * 2];							// worst-case allocation
-		int eC = 0, eNP = 0;											// the edge counter & the node pair counter
+		int[] edgeIndex1 = new int[polyNodes];									// worst-case allocation, the mapper to the edge lengths
+		for (int i = 0; i < polyNodes; i++) edgeIndex1[i] = -1;					// set all entries to unmapped, -1
+		double[] edgeT = new double[polyNodes];									// worst-case allocation, all edges
+		double[] edgeBT = new double[polyNodes];								// worst-case allocation, patch border edges
+		byte[] edgeA = new byte[polyNodes];										// the facet-facet (low precision) angle of edges is stored here
+		int[] edgeNT = new int[polyNodes * 2], fNNbrs = null;					// worst-case allocation
+		int eC = 0, eBC = 0, eNP = 0, na = 0, nb = 0;							// edge counter, border edge counter, edgenode counter, the 2 edge nodes
+		avgEdgeLength = 0;
+		minEdgeLength = Double.MAX_VALUE; maxEdgeLength = 0;
 		
 		// every consecutive facet is checked if it's edges are already remapped by a previously checked neighbour
 		// a new edge length is generated in case an edge hasn't been mapped yet
 		for (int f = 0; f < polygons; f++) {
-			int n = polygonOffset[f];
-			if (polygon[n] == -1) continue;								// skip over erased polygons
-			if (edgeIndex[n] == -1) {									// check if current facet edge n0-n1 hasn't been mapped yet
-				edgeT[eC] = distance(edgeNT[eNP++] = polygon[n++], edgeNT[eNP++] = polygon[n--], true);
-				edgeIndex[n] = eC++; } n++;								// map to unique position in polygonEdge[]		
-			if (edgeIndex[n] == -1) {									// check if current facet edge n1-n2 hasn't been mapped yet
-				edgeT[eC] = distance(edgeNT[eNP++] = polygon[n++], edgeNT[eNP++] = polygon[n--], true);
-				edgeIndex[n] = eC++; } n++;								// map to unique position in polygonEdge[]				
-			if (edgeIndex[n] == -1) {									// check if current facet edge n2-n0 hasn't been mapped yet
-				edgeT[eC] = distance(edgeNT[eNP++] = polygon[n], edgeNT[eNP++] = polygon[n-2], true);
-				edgeIndex[n] = eC++; }									// map to unique position in polygonEdge[]
-			
-
-			// check neighbours and remap them to the same indexes as current facet in polygonEdgeT[]
-			int[] facetNgb = polygonNeighbours[f];
-			// collect indexes of neighbour facets, from both normal & border edges
-			int fN01 = facetNgb[5] == -1 ? facetNgb[8] : facetNgb[5], fN12 = facetNgb[6] == -1 ? facetNgb[9] : facetNgb[6];
-			int fN20 = facetNgb[7] == -1 ? facetNgb[10] : facetNgb[7];
-			n = polygonOffset[f];
-			
-			if (fN01 > f) {		// neighbours of lower index than current facet have already been fully mapped
-				int[] ngb01 = polygonNeighbours[fN01];
-				if		(ngb01[5] == f || ngb01[8] == f)	edgeIndex[polygonOffset[fN01]] = edgeIndex[n];
-				else if (ngb01[6] == f || ngb01[9] == f)	edgeIndex[polygonOffset[fN01] + 1] = edgeIndex[n];
-				else if (ngb01[7] == f || ngb01[10] == f)	edgeIndex[polygonOffset[fN01] + 2] = edgeIndex[n];
-			}	n++;
-			if (fN12 > f) {
-				int[] ngb12 = polygonNeighbours[fN12];
-				if		(ngb12[5] == f || ngb12[8] == f)	edgeIndex[polygonOffset[fN12]] = edgeIndex[n];
-				else if (ngb12[6] == f || ngb12[9] == f)	edgeIndex[polygonOffset[fN12] + 1] = edgeIndex[n];
-				else if (ngb12[7] == f || ngb12[10] == f)	edgeIndex[polygonOffset[fN12] + 2] = edgeIndex[n];
-			}	n++;
-			if (fN20 > f) {
-				int[] ngb20 = polygonNeighbours[fN20];
-				if		(ngb20[5] == f || ngb20[8] == f)	edgeIndex[polygonOffset[fN20]] = edgeIndex[n];
-				else if (ngb20[6] == f || ngb20[9] == f)	edgeIndex[polygonOffset[fN20] + 1] = edgeIndex[n];
-				else if (ngb20[7] == f || ngb20[10] == f)	edgeIndex[polygonOffset[fN20] + 2] = edgeIndex[n];
+			int fO = polygonOffset[f], fO2 = fO;
+			if (polygon[fO] == -1 || polygonOffset[f+1]-fO > 3) continue;		// skip over erased and non-facet polygons
+			int[] fNbrs = polygonNeighbours[f];
+			for (int bN = 5; bN <= 7; bN++) {									// for each edge entry e01/e12/e20...
+				int fo = fNbrs[bN] != -1 ? 0 : 3;								// pick either boundary or in-patch edge, whichever exists
+				int fN = fNbrs[bN+fo];
+				if (fN >= 0 && edgeIndex1[fO] == -1) {							// if edge hasn't been mapped yet
+					int fNo = -1;
+					if (fN >= 0) {												// find neighbourhood if facet neighbour exists
+						fNNbrs = polygonNeighbours[fN];
+						if (fo==0)	{	if (fNNbrs[5]==f) fNo=0; else if (fNNbrs[6]==f) fNo=1; else if (fNNbrs[7]==f) fNo=2; }
+						else		{	if (fNNbrs[8]==f) fNo=0; else if (fNNbrs[9]==f) fNo=1; else if (fNNbrs[10]==f) fNo=2; }
+					}
+					double l = distance(na=polygon[fO++], nb=polygon[fO>=fO2+3 ? fO - 3 : fO], true);
+					if (l < minEdgeLength) minEdgeLength = l; else if (l > maxEdgeLength) maxEdgeLength = l;
+					avgEdgeLength += l;
+					edgeT[eC++] = l;											// edgeT[] collects ALL edge lengths
+					if (borderEdgesOnly && fo==0) continue;						// if edge is in-patch & we're flagged only for boundary edges, no store
+					edgeNT[eNP++] = na; edgeNT[eNP++] = nb; edgeBT[eBC] = l;	// edgeBT[] collects only boundary edge lengths
+					// map both this element & border neighbour (if it existed, for a closed volume it should) to this new edge
+					if (fNo >= 0) {
+						// find out 3rd node of neighbour facet & calculate angle between the two boundary facets
+						edgeA[eBC] = facetFacetAngle(node, na, nb, polygon[fO2+(fO+1-fO2)%3], polygon[polygonOffset[fN]+(fNo+2)%3]);
+						edgeIndex1[fO] = edgeIndex1[polygonOffset[fN]+fNo] = eBC++;
+					}
+					else edgeIndex1[fO] = eBC++;
+				}
 			}
 		}
 		
-		// time to rescale edge[] & edgeNode[] to their final size
-		avgEdgeLength = 0;
-		minEdgeLength = Double.MAX_VALUE; maxEdgeLength = 0;
-		edge = new double[edges = eC];
+		edges = borderEdgesOnly ? eBC : eC;
+		if (edges == 0) throw new RuntimeException("FEM1.uniqueEdges(): no edges found.");
+		edge = new double[edges];
+		edgeAngle = new byte[edges];
+		edgeIndex = new int[edges];
 		edgeNode = new int[edges * 2];
-		for (int e = 0, e2 = 0; e < edges; e++) {
-			edge[e] = edgeT[e];
-			if (edgeT[e] < minEdgeLength) minEdgeLength = edgeT[e];
-			if (edgeT[e] > maxEdgeLength) maxEdgeLength = edgeT[e];
-			avgEdgeLength += edgeT[e];
-			edgeNode[e2] = edgeNT[e2++]; edgeNode[e2] = edgeNT[e2++];
-		}
-		avgEdgeLength /= (double)edges;
+		for (int e = 0, e2 = 0; e < edges; e++) {							// rescale edge[] & edgeNode[] to their final size
+			edge[e] = edgeT[e]; edgeIndex[e] = edgeIndex1[e]; edgeAngle[e] = edgeA[e];
+			edgeNode[e2] = edgeNT[e2++]; edgeNode[e2] = edgeNT[e2++]; }
+		avgEdgeLength /= (double)eC;
 		// separate edges into 8 classes for simple heuristic choice of eventual tetrahedral sizing field
 		edgeSpread = new SpreadBin(8, minEdgeLength, maxEdgeLength, 90);
-		for (int e = 0; e < edges; e++) edgeSpread.add(edge[e]);
-		if (DEBUG_LEVEL > 1) System.out.println("FEM1.facetEdgeLengths() edge lengths spread:\n" + edgeSpread.toString());
+		for (int e = 0; e < eC; e++) edgeSpread.add(edgeT[e]);
+		
+		if (DEBUG_LEVEL > 1) {
+			System.out.println("FEM1.uniqueEdges(): " + patches + " patches found.");
+			System.out.println("FEM1.uniqueEdges(): "+eC+" total unique edges"+(borderEdgesOnly ? ", "+eBC+" patch border edges":"")+" found.");
+			System.out.println("FEM1.uniqueEdges(): total edge lengths distribution:\n" + edgeSpread.toString()); }
 	}
+
 	
 	
 	
@@ -1405,7 +1512,7 @@ public class FEM1 {
 	// returns false if triangle area was zero
 	// float precision is more than enough for defining a normal, and takes less space
 	boolean triangleNormal(int n1, int n2, int n3, float[] normal, int offs) {
-		int n1_3 = n1 * 3, n2_3 = n2 * 3, n3_3 = n3 * 3;
+		int n1_3 = n1 * NCOORD, n2_3 = n2 * NCOORD, n3_3 = n3 * NCOORD;
 		double[] node1, node2, node3;
 		if (nodeWork == null) {
 					node1 = node2 = node3 = node;
@@ -1430,9 +1537,12 @@ public class FEM1 {
 	// if isect[] = null, does not calculate intersection point
 	int facetSegmentIntersection(int f, double xa, double ya, double za, double xb, double yb, double zb, double[] isect) {
 		
+		// DEBUG: bit 31 flags whether parameterised triangle area should be somewhat expanded
+		double para0 = 0, para1 = 1;
+		//if ((f&SET31)!=0) { para0 = -FACET_MARGIN; para1 = FACET_MARGIN; f&=CLR31; }
 		int fN = f * 3, status = 0;
 		f = polygonOffset[f];
-		int n0_3 = polygon[f++] * 3, n1_3 = polygon[f++] * 3, n2_3 = polygon[f] * 3;
+		int n0_3 = polygon[f++] * NCOORD, n1_3 = polygon[f++] * NCOORD, n2_3 = polygon[f] * NCOORD;
 		double x0 = node[n0_3++], y0 = node[n0_3++], z0 = node[n0_3];
 		double x0a = x0 - xa, y0a = y0 - ya, z0a = z0 - za, xba = xb-xa, yba = yb-ya, zba = zb-za, rI012;
 		double xN = polygonNormal[fN++], yN = polygonNormal[fN++], zN = polygonNormal[fN];
@@ -1450,29 +1560,30 @@ public class FEM1 {
 			double v10v20 =	x10*x20 + y10*y20 + z10*z20;
 			double v012v20 = xv012*x20 + yv012*y20 + zv012*z20, v20v20 = x20*x20 + y20*y20 + z20*z20, v012v10 = xv012*x10 + yv012*y10 + zv012*z10;
 			double v10v10 = x10*x10 + y10*y10 + z10*z10, st012D = 1. / (v10v20*v10v20 - v10v10*v20v20);
-			double sI012 = (v10v20 * v012v20 - v20v20 * v012v10) * st012D, tI012 = (v10v20 * v012v10 - v10v10 * v012v20) * st012D;
-			//if (sI012 >= 0 && tI012 >= 0 && sI012 + tI012 <= 1) {	// if intersection point is inside parameterised triangle
-			// DEBUG: parameterised triangle area somewhat expanded
-			if (sI012 >= -FACET_MARGIN && tI012 >= -FACET_MARGIN && sI012 + tI012 <= 1+FACET_MARGIN) {
-				if (isect != null) { isect[0] = x0+sI012*x10+tI012*x20; isect[1] = y0+sI012*y10+tI012*y20; isect[2] = z0+sI012*z10+tI012*z20; }
-				return status;
-			} 
+			double sI012 = (v10v20 * v012v20 - v20v20 * v012v10) * st012D;
+			if (sI012 >= para0 && sI012 <= para1) {
+				double tI012 = (v10v20 * v012v10 - v10v10 * v012v20) * st012D;
+				if (tI012 >= para0 && sI012 + tI012 <= para1) {	// if intersection point is inside parameterised triangle
+					if (isect != null) { isect[0] = xv012+x0; isect[1] = yv012+y0; isect[2] = zv012+z0; }
+					return status;
+				}
+			}
 		}
 		return 0;
 	}
-
+	
 	
 	// method generates normals for all the FEM1-constituent polygons (failed/zero-area polygons return zeroed normals)
 	public float[] polygonNormals() {
-		polygonNormal = new float[polygons * 3];
-		for (int p = 0, pN3 = 0; p < polygons; p++, pN3 += 3) {
+		polygonNormal = new float[polygons * NCOORD];
+		for (int p = 0, pN3 = 0; p < polygons; p++, pN3 += NCOORD) {
 			// if the three chosen nodes form a zero area, try next node as third coordinate
 			int pS = polygonOffset[p];
 			if (polygon[pS] == -1) continue;
 			for (int pE = pS + 2, p2End = polygonOffset[p + 1]; pE < p2End; pE++)
 				if (triangleNormal(polygon[pS], polygon[pS + 1], polygon[pE], polygonNormal, pN3)) break;
 		}
-		// since normals are maent for fast checking of interferences with polygons,
+		// since normals are meant for fast checking of interferences with polygons,
 		// this is a fitting place to instantiate a checklist for visited polygons
 		if (polygonCheck == null) polygonCheck = new VisitBitArray(polygons);
 		return polygonNormal;
@@ -1665,11 +1776,11 @@ public class FEM1 {
 	// reallocation will happen if extraneous space isn't large enough
 	double[] addMediansOfClosestNodes(FEM1Octree octree, int nPairs, int[] closest, FEM1Octant[] closestOctants, FEM1Octant[] medianOctants) {
 		
-		double[] median = new double[nPairs * 3];
+		double[] median = new double[nPairs * NCOORD];
 		
 		// nP2 = node's neighbour index, np1_3 & npo2_3 = node's & neighbour node's indexes into coord.array, nM3 = the running coord.index of added medians
 		for (int nP = 0, nP2 = 1, nP1_3 = 0, nM3 = 0; nP < nPairs; nP++, nP2 += 2, nP1_3 += 3) {
-			int nP2_3 = closest[nP2] * 3;
+			int nP2_3 = closest[nP2] * NCOORD;
 			double xm, ym, zm;												// the median coordinate
 			if (nP2_3 >= node.length) { nP2_3 -= node.length; xm = nodeWork[nP2_3++]; ym = nodeWork[nP2_3++]; zm = nodeWork[nP2_3]; }
 			else { xm = node[nP2_3++]; ym = node[nP2_3++]; zm = node[nP2_3]; }
@@ -1720,7 +1831,7 @@ public class FEM1 {
 		double[] node2;
 		double dClosest = Double.MAX_VALUE;
 		for (int n2 = 0, n2_3 = 0; n2 < nL.length; n2++) {
-			n2_3 = nL[n2] * 3;
+			n2_3 = nL[n2] * NCOORD;
 			if (n2_3 >= node.length) { node2 = nodeWork; n2_3 -= node.length; } else node2 = node;
 			double d12x = n1x - node2[n2_3++], d12y = n1y - node2[n2_3++], d12z = n1z - node2[n2_3++];
 			double d12 = d12x*d12x + d12y*d12y + d12z*d12z;
@@ -1733,19 +1844,23 @@ public class FEM1 {
 
 	
 	// methof calculates distance between nodes, utilising the possible existence of additional nodes in nodeWork[]
-	double distance(int n1, int n2, boolean root) {
+	public double distance(int n1, int n2, boolean root) {
 		double[] node1, node2;
 		if (n1 >= node.length) { node1 = nodeWork; n1 -= node.length; } else node1 = node;
 		if (n2 >= node.length) { node2 = nodeWork; n2 -= node.length; } else node2 = node;
-		int n3_1 = n1 * 3, n3_2 = n2 * 3;
-		double d12x, d12y, d12z;
-		if (n3_1 < n3_2) {	d12x = node1[n3_1++]; d12y = node1[n3_1++]; d12z = node1[n3_1];
-							d12x -= node2[n3_2++]; d12y -= node2[n3_2++]; d12z -= node2[n3_2]; }
-		else {				d12x = node2[n3_2++]; d12y = node2[n3_2++]; d12z = node2[n3_2];
-							d12x -= node1[n3_1++]; d12y -= node1[n3_1++]; d12z -= node1[n3_1]; }	
+		double d12x = node1[n1*=NCOORD]-node2[n2*=NCOORD], d12y = node1[++n1]-node2[++n2], d12z = node1[++n1]-node2[++n2];
 		if (root)	return Math.sqrt(d12x * d12x + d12y * d12y + d12z * d12z);
 		else		return d12x * d12x + d12y * d12y + d12z * d12z;
 	}
+
+	public static double distance(double[] node, int n1, int n2, boolean root) {
+		double d12x = node[n1*=NCOORD]-node[n2*=NCOORD], d12y = node[++n1]-node[++n2], d12z = node[++n1]-node[++n2];
+		if (root)	return Math.sqrt(d12x * d12x + d12y * d12y + d12z * d12z);
+		else		return d12x * d12x + d12y * d12y + d12z * d12z;
+	}
+
+	public static double distance(double d12x, double d12y, double d12z, boolean root) {
+		return root ? Math.sqrt(d12x * d12x + d12y * d12y + d12z * d12z) : d12x * d12x + d12y * d12y + d12z * d12z; }
 
 	
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1757,16 +1872,24 @@ public class FEM1 {
 	double latticeStep = 0;							// the cube width of boundary lattice
 	double minElemQuality = 0.2;					// minimum defectivity allowed for an element to pass final quality check
 	double minUnsnapQuality = 0.4;					// minimum quality to attain when unsnapping a bad quality element
-	double minSliverQuality = 0.2;					// minimum defectivity allowed for a sliver (element with all nodes snapped to surface)
-	double alphaS = 0.25, alphaL = /*0.412*/.35;	// these factors tell whether a node is "violated" by a cut node and a node snap is merited
+	double minSliverQuality = 0.25;					// minimum defectivity allowed for a sliver (element with all nodes snapped to surface)
+	double alphaS = 0.25, alphaL = 0.412/*.35*/;	// these factors tell whether a node is "violated" by a cut node and a node snap is merited
 	double maxZordinDev = 1e-8;						// max deviation of an edge from Z-ordinate to consider using the Z-intersection data for the edge
-
+	double featureSnapFMult = 0.3;					// this multiplied with a lattice tree leaf's size produces featureSnapFactor
+	double featureSnapF=0, featureSnapFSq=0;		// the min. distance (a factor of a leaf octant's size) needed to snap a node to a PSC feature edge
+	double featureFlatnessF = 0;
+	// these parameters allow an optimisation of proximity snapping check versus feature edges
+	double fillSubdivsIST=5;						// fillSubdivsIST decides how many closeness approx.subdivs of a feature edge to do for fill-in method
+	double fillSubProximErrIST=0, fillSubProximErrSqIST=0;
+	
 	boolean discardAllSliversIST = false;			// discards any sliver found (can help remove SOME straddling elements)
 	// note: following switches are a test-only attempt to improve volume fit for low-res, and will never give a 100% satisfactory solution,
 	// complex heuristics would have to be applied to nearly all elements, the computations would be costlier than generating a higher resolution mesh,
 	// therefore: the only thing that will give a guaranteedly satisfactory solution is to increase resolution!
 	boolean discardStraddlers = false;				// discards elements straddling gaps in the mesh (note: will leave holes & increase computation)
 	boolean discardBadSliversIST = true;			// flags for discarding elements fully snapped onto surface that are bad
+	boolean featureEdgeFillIST = false;				// flags for tetrahedral fill-in versus PSC feature/patch-border edges
+	boolean featureSnapOnlyIST = false;				// flags for only snapping towards feature edges
 	// debug switches
 	boolean skipVolumeInternalsIST = false;			// DEBUG: skips elements inside of the hull (good for surface quality previews)
 	int maxOutputElementsIST = 0;					// DEBUG: write out up to this number number of elements (set = 0 to ignore)
@@ -1778,11 +1901,13 @@ public class FEM1 {
 	int[][] fStatusGrid = null;						// holds encounter counts and polarities of the abovementioned
 	double[] bLatticeNode = null;					// holds coordinates of the boundary lattice, to be formed into an octree
 	short[] bLatticeStatus = null;					// holds inside/outside flags for every boundary lattice cube, the array index-matches bLatticeNode[]
+	FEM1Octant[] neighbourhoodIST;					// holds the face neighbourhoods of every IST-constituent octant, including octant itself
 	
 	// datastructures
 	int tetIST0, tetIST1, tetIST2, tetIST3;			// the 4 current/running node indexes for a tetrahedron element	
 	int tetRef0, tetRef1, tetRef2, tetRef3;			// the 4 current/running node's element origins for a tetrahedron element
 	int slotcodeIST=0, edgeCodeIST=0, mirrorFlagIST=0;	// the data held for an element writedown in processISTnode()
+	int octantNoIST = 0, octNbrNoIST = 0;			// last element-spawning octant's & neighbour's indexes held for element writedown
 
 	int nodesIST = 0, streamNodesIST = 0;			// how many unique nodes were accumulated, how many nodes expected in a node stream
 	double[] nodeIST = null;						// final array for unique IST solution nodes
@@ -1792,19 +1917,24 @@ public class FEM1 {
 	
 	int elementsIST = 0, elementsIntIST = 0;		// counter for total number of IST internal and boundary elements & number of internal elements
 	int cutEdgesIST = 0;							// counter for total number of unique cutedges
-	final int elementPgSize=1000*6;					// page sizes of elementPg[] (must be evenly dividable by 5 and 6)
+	final int elementPgSize=7*8*100;				// page sizes of elementPg[] (must be evenly dividable by 7 & 8(E_SIZE))
 	int ePg = 0;									// page accumulation counters
 	int elementPgI = 0, elementPgN=400;				// page counter for elementPg[] & total pages count
 	int[][] elementPg = null;						// paging structure for element array
 	int[] elementIST = null;						// paged boundary elements are regathered into this array
 	short[] edgeOctFlags = null;					// holds child flags for every edge neighbour of an IST octant (bit set if children exist on that edge)
 	int[][] elementNhoodIST = null;
+	int ePrg = 0;									// counts nodes within elementPurger[]
+	int[] elementPurger = null;						// holds 4-tuplets of nodes of unlocated elements that need to be identified for deletion
 	
 	double[] elementStream = null;					// final element stream
 	long[] elementStreamCode = null;				// final element bitpacked compaction code stream
 	
 	// arrays used for neighbourhood comparison during nonthreaded stage 4 boundary slivers analysis
 	int[] nbrComp12=null, nbrComp34=null, nbrComp1234F=null, nbrComp1234e=null;
+	
+	VisitBitArray visitFillNodeIST = null;			// used by PSC edge element fill-in routine to flag off nodes
+	int fillNodesIST = 0;							// fill-in nodes counter
 	
 	// IST debugging counters
 	private int debugIST_nonsharedEdge = 0, debugIST_nonsharedEdge2 = 0, debugIST_locallyUnique = 0;
@@ -1813,6 +1943,7 @@ public class FEM1 {
 	private long debugIST_phase1time=0, debugIST_phase2time=0, debugIST_phase3time=0, debugIST_phase4time=0, debugIST_phase5time=0;
 	private long debugIST_pISTe_time1 = 0, debugIST_pISTe_time2 = 0, debugIST_pISTn_time = 0;
 	private long debugIST_bLatt_time = 0, debugIST_aBOIST_time = 0, debugIST_analysisTime = 0;
+	private long debugIST_lTree_time = 0;
 	
 	public FEM1Octree latticeTree(FEM1Octree geocTree, int minSubdivs, boolean multitask) {
 		boundaryLattice(geocTree, minSubdivs, true, true);					// lattice data with centroid encounters and inner volume cubes generated
@@ -1848,22 +1979,38 @@ public class FEM1 {
 				System.out.println("FEM1.volumeMeshIST(): subdivision of "+subdivisions+" too low, setting to minimum value: "+minLatticeSubdivs);
 			subdivisions = minLatticeSubdivs; }
 		latticeSubdivs = subdivisions;
+		
 		boundaryLattice(geocTree, subdivisions, true, true);					// create the marching cubes Z-ordinate intersection data
+		
+		// build lattice Tree
+		debugIST_lTree_time = System.nanoTime();
 		latticeTree = new FEM1Octree(geocTree, 4);
 		bBox[0] = latticeTree.root.xM; bBox[1] = latticeTree.root.yM; bBox[2] = latticeTree.root.zM;
 		bBox[3] = latticeTree.root.xP; bBox[4] = latticeTree.root.yP; bBox[5] = latticeTree.root.zP;
-		double granularity = (bBox[3] - bBox[0]) / latticeSubdivs;
-		divFactor = geocTree.maxLevelFromGranularity(granularity);
+		// PSC features snap factor decides how close an element's node has to be to a PSC edge to be snapped onto it
+		double granularity = (bBox[3] - bBox[0]) / latticeTree.latticeSubdivs;
+		featureSnapF = featureSnapFMult * granularity; featureSnapFSq = featureSnapF*featureSnapF;
+		featureFlatnessF = featureSnapF * .2;
+		double fsDiv = 1; for (int f=0; f < fillSubdivsIST; f++) fsDiv *= 2;
+		fillSubProximErrIST = 1.73205 * granularity / fsDiv;
+		if (fillSubProximErrIST >= featureSnapF) {
+			if (DEBUG_LEVEL > 1) System.out.println("FEM1.volumeMeshIST(): fillSubProximErrIST has no practical value being larger or equal to featureSnapF.");
+			fillSubProximErrIST = featureSnapF*.1; }
+		fillSubProximErrSqIST = fillSubProximErrIST*fillSubProximErrIST;
+		divFactor = latticeTree.maxLevelFromGranularity(granularity);
 		latticeTree.gradations = gradations<=0 || gradations >= divFactor ? 4 : gradations;
 		maxZordinDev = granularity / 20.0;										// how far an edge can deviate from Z-ordinate to be considered to be on it
 		latticeTree.root.build(latticeTree, 0, multitask);						// build the lattice tree
 		bLatticeNode = null; bLatticeStatus = null; 							// these arrays are not needed anymore
+		debugIST_lTree_time = System.nanoTime() - debugIST_lTree_time;
+		
 		// this call makes extra octant leaves according to the corners vs. centroid int/ext criterion
 		// and also forms the face neighbourhoods and bitfields for fast checking of children at edges
-		FEM1Octant[] nhoodIST = extendBCCdoNhoodsIST(latticeTree);				// extra leaf octants made, ensuring only BCC tets intersect isosurface
-		sortStencilPermCode();
+		extendBCCdoNhoodsIST(latticeTree);										// extra leaf octants made, ensuring only BCC tets intersect isosurface
 		//FEM1Octant testOctant = latticeTree.root.locateCoordinate(0.398, 0.407, -0.757);			// DEBUG: finds an erroneous BCC octant
-		elementGeneratorIST(latticeTree, geocTree, nhoodIST, 0, 0);	
+
+		sortStencilPermCode();
+		elementGeneratorIST(latticeTree, geocTree, 0, 0);	
 		newSolution = false;
 		//int errorElement = findElementIndex(element, nodeIST, 2.0373, -0.6068, -1.6933, 0, 3);	// DEBUG: finds an erroneous final element
 		return latticeTree;
@@ -1905,14 +2052,14 @@ public class FEM1 {
 			latticeTree = new FEM1Octree(geocTree, 4);
 			bBox[0] = latticeTree.root.xM; bBox[1] = latticeTree.root.yM; bBox[2] = latticeTree.root.zM;
 			bBox[3] = latticeTree.root.xP; bBox[4] = latticeTree.root.yP; bBox[5] = latticeTree.root.zP;
-			maxZordinDev = (bBox[3] - bBox[0]) / (latticeSubdivs * 20);				// how far an edge can deviate from Z-ordinate to be considered to be on it
+			maxZordinDev = (bBox[3]-bBox[0])/(latticeTree.latticeSubdivs*20);		// how far an edge can deviate from Z-ordinate to be considered to be on it
 			latticeTree.root.build(latticeTree, 0, multitask);
 			bLatticeNode = null; bLatticeStatus = null; 							// these arrays are not needed anymore
 			// this call makes extra octant leaves according to the corners vs. centroid int/ext criterion
 			// and also forms the face neighbourhoods and bitfields for fast checking of children at edges
-			FEM1Octant[] arrayIST = extendBCCdoNhoodsIST(latticeTree);				// extra leaf octants made, ensuring only BCC tetrahedra intersect isosurface
+			extendBCCdoNhoodsIST(latticeTree);										// extra leaf octants made, so only BCC tetrahedra intersect isosurface
 			sortStencilPermCode();
-			enReturn = elementGeneratorIST(latticeTree, geocTree, arrayIST, elementTarget, nodeTarget);
+			enReturn = elementGeneratorIST(latticeTree, geocTree, elementTarget, nodeTarget);
 			newSolution = false;
 			if (enReturn[0] == 0) {
 				if (!approximateTargets) break;
@@ -1937,7 +2084,7 @@ public class FEM1 {
 		latticeStep = subsPerSize = 0;
 		latticeSubdivs = 0; minLatticeSubdivs=16;
 		fEncounterGrid = null; fStatusGrid = null;
-		bLatticeNode = null; bLatticeStatus = null; elementNhoodIST = null;
+		bLatticeNode = null; bLatticeStatus = null; elementNhoodIST = null; neighbourhoodIST = null;
 		
 		tetIST0 = tetIST1 = tetIST2 = tetIST3 = tetRef0 = tetRef1 = tetRef2 = tetRef3 = slotcodeIST = nodesIST = streamNodesIST = 0;
 		nodeHTableIST = null;
@@ -1945,10 +2092,11 @@ public class FEM1 {
 		elementsIST = elementsIntIST = cutEdgesIST = ePg = elementPgI = 0;
 		elementPg = null; cutNodes = elementIST = null; elementPgN=400;
 		edgeOctFlags = null;	
-		nodeIST = elementStream = null; elementStreamCode = null;		
+		nodeIST = elementStream = null; elementStreamCode = null;
+		fillNodesIST = 0;
 		debugIST_nonsharedEdge = debugIST_nonsharedEdge2 = debugIST_locallyUnique = 0;
-		debugIST_pISTe_visits = debugIST_pISTe_vainSnaps = 0;
-		debugIST_phase1time = debugIST_phase2time = debugIST_phase3time = debugIST_phase4time = debugIST_phase5time = 0;
+		debugIST_pISTe_visits = debugIST_pISTe_vainSnaps = 0; 
+		debugIST_phase1time = debugIST_phase2time = debugIST_phase3time = debugIST_phase4time = debugIST_phase5time = debugIST_lTree_time = 0;
 		debugIST_pISTe_time1=debugIST_pISTe_time2=debugIST_pISTn_time=debugIST_bLatt_time=debugIST_pISTe_fastVisits=debugIST_pISTe_fastFacetVisits=0;
 		debugIST_aBOIST_time = debugIST_analysisTime = 0; debugIST_pISTe_skipVisits = 0;
 		readElementPg = true; finalArrayPg = false; printSlotcodes1 = false; printSlotcodes2 = false; printSnapNodes = false;
@@ -1986,27 +2134,30 @@ public class FEM1 {
 			else {	fEncounterC = fEncounterGrid[dataEndXY + i];				// assign for centroidal encounter if not on last row
 					fStatusC = fStatusGrid[dataEndXY + i]; }
 			double yStep = geocRoot.yM + (double)i * bLw, xStep = geocRoot.xM;
+			if (nearZero(yStep)||nearZero(yStep+bLwD2)) yStep+=ROUNDOFF_ERROR;	// DEBUG: facetSegmentIntersection() has numerical problem at origo
 			
 			for (int j = 0; j < division; j++) {								// j is the X-ordinate lattice step
-				fEncounterGrid[i][j] = geocRoot.facetEncounters(geocTree, xStep, yStep, baseZ, 0, 0, 0, 2, status);
+				if (nearZero(xStep)) xStep += ROUNDOFF_ERROR;					// DEBUG: facetSegmentIntersection() has numerical problem at origo
+				fEncounterGrid[i][j] = geocRoot.facetEncounters(geocTree, null, xStep, yStep, baseZ, 0, 0, 0, 2, status);
 				if ((status[1] & 1) != 0) {										// if there was a hole (odd no. of intersections), try sampling around area
 					if (DEBUG_LEVEL > 1) System.out.println("FEM1.boundaryLattice(): mesh hole at ray: x: "+xStep+"y: "+yStep+", salvaging.");
-					fEncounterGrid[i][j] = geocRoot.facetEncounters(geocTree,xStep+salvF,yStep,baseZ,0,0,0,2,status);
-					if ((status[1] & 1) != 0) fEncounterGrid[i][j] = geocRoot.facetEncounters(geocTree,xStep-salvF,yStep,baseZ,0,0,0,2,status);
-					if ((status[1] & 1) != 0) fEncounterGrid[i][j] = geocRoot.facetEncounters(geocTree,xStep,yStep+salvF,baseZ,0,0,0,2,status);
-					if ((status[1] & 1) != 0) fEncounterGrid[i][j] = geocRoot.facetEncounters(geocTree,xStep,yStep-salvF,baseZ,0,0,0,2,status);
+					fEncounterGrid[i][j] = geocRoot.facetEncounters(geocTree, null, xStep+salvF, yStep, baseZ, 0, 0, 0, 2, status);
+					if ((status[1] & 1) != 0) fEncounterGrid[i][j] = geocRoot.facetEncounters(geocTree, null, xStep-salvF,yStep,baseZ,0,0,0,2,status);
+					if ((status[1] & 1) != 0) fEncounterGrid[i][j] = geocRoot.facetEncounters(geocTree, null, xStep,yStep+salvF,baseZ,0,0,0,2,status);
+					if ((status[1] & 1) != 0) fEncounterGrid[i][j] = geocRoot.facetEncounters(geocTree, null, xStep,yStep-salvF,baseZ,0,0,0,2,status);
 					if ((status[1] & 1) != 0) if (DEBUG_LEVEL > 1) System.out.println("FEM1.boundaryLattice(): salvage failed."); }
 				fStatusGrid[i][j] = status[1];
 				
 				if (centroidStatus && !iLast && j < division - 1) {
-					fEncounterC[j] = geocRoot.facetEncounters(geocTree, xStep + bLwD2, yStep + bLwD2, baseZ, 0, 0, 0, 2, status);
+					if (nearZero(xStep+bLwD2)) xStep += ROUNDOFF_ERROR;
+					fEncounterC[j] = geocRoot.facetEncounters(geocTree, null, xStep + bLwD2, yStep + bLwD2, baseZ, 0, 0, 0, 2, status);
 					if ((status[1] & 1) != 0) {									// if there was a hole in the mesh, try sampling around the area
 						if (DEBUG_LEVEL > 1)
 							System.out.println("FEM1.boundaryLattice(): mesh hole at ray: x: "+(xStep+bLwD2)+" y: "+(yStep+bLwD2)+", salvaging.");
-						fEncounterC[j] = geocRoot.facetEncounters(geocTree,xStep+bLwD2+salvF,yStep+bLwD2,baseZ,0,0,0,2,status);
-						if ((status[1]&1)!=0) fEncounterC[j]=geocRoot.facetEncounters(geocTree,xStep+bLwD2-salvF,yStep+bLwD2,baseZ,0,0,0,2,status);
-						if ((status[1]&1)!=0) fEncounterC[j]=geocRoot.facetEncounters(geocTree,xStep+bLwD2,yStep+bLwD2+salvF,baseZ,0,0,0,2,status);
-						if ((status[1]&1)!=0) fEncounterC[j]=geocRoot.facetEncounters(geocTree,xStep+bLwD2,yStep+bLwD2-salvF,baseZ,0,0,0,2,status);
+						fEncounterC[j] = geocRoot.facetEncounters(geocTree,null,xStep+bLwD2+salvF,yStep+bLwD2,baseZ,0,0,0,2,status);
+						if ((status[1]&1)!=0) fEncounterC[j]=geocRoot.facetEncounters(geocTree,null,xStep+bLwD2-salvF,yStep+bLwD2,baseZ,0,0,0,2,status);
+						if ((status[1]&1)!=0) fEncounterC[j]=geocRoot.facetEncounters(geocTree,null,xStep+bLwD2,yStep+bLwD2+salvF,baseZ,0,0,0,2,status);
+						if ((status[1]&1)!=0) fEncounterC[j]=geocRoot.facetEncounters(geocTree,null,xStep+bLwD2,yStep+bLwD2-salvF,baseZ,0,0,0,2,status);
 						if ((status[1]&1)!=0) if (DEBUG_LEVEL > 1) System.out.println("FEM1.boundaryLattice(): salvage failed."); }
 					fStatusC[j] = status[1];
 				}
@@ -2119,9 +2270,10 @@ public class FEM1 {
 		// get ALL octants pertaining to Isosurface Stuffing solution, but we'll only iterate over highest level
 		int[] countO = {0};											// gets true count of array, since leafOctantArray[] does worst-case allocation
 		FEM1Octant[] octantIST = latticeTree.root.octantArray(latticeTree, latticeTree.maxLevel, countO, true);	
-		FEM1Octant[] neighbourhoodIST = new FEM1Octant[octantIST.length * 7];
-		int oLast=countO[0], oNonLeafC=0, maxLevel=latticeTree.maxLevel, firstLevel=maxLevel-latticeTree.gradations+1, leafCnt=0;
+		neighbourhoodIST = new FEM1Octant[octantIST.length * 7];
+		int oPrev=countO[0], oLast=oPrev, oNonLeafC=0, maxLevel=latticeTree.maxLevel, firstLevel=maxLevel-latticeTree.gradations+1, leafCnt=0;
 		int[] gradCount = new int[latticeTree.gradations];
+		int cornerPSCcount = 0;
 
 		// iteration creates leaf octants according to Continuation Criterion and generates neighbourhoods both for existing and new leaves
 		// neighbourhood backreferences are written and the internal/external status is resolved from the parents
@@ -2167,7 +2319,7 @@ public class FEM1 {
 						octN.nodes = oLast++;							// continue the octant enumeration						
 						octN.int_extFromParent(false);					// resolve int/ext status from parent's int. status (some int. leaves removed earlier)
 						if (octN.internal()) octN.int_ext |= FEM1Octant.CENTROID_INTERNAL;		// an internal leaf has internal centroid by default
-						// process() will halt on unfinished nodes, so clear in_progress flag for the entire new octant chain
+						// clear in_progress flag for the entire new octant chain
 						FEM1Octant octN1 = octN;
 						while (octN1.in_progress()) { octN1.finish(); octN1 = octN1.parent; }
 					}
@@ -2231,7 +2383,7 @@ public class FEM1 {
 			System.out.println("Gradation levels:");
 			for (int g=0; g < latticeTree.gradations; g++) System.out.println("Gradation " + g + ": " + gradCount[g] + " octants.");
 			System.out.println("Gradation culls:");
-			for (int g=0; g < latticeTree.gradations; g++) System.out.println("Gradation " + g + ": " + culledCount[g] + " culled octants.");
+			for (int g=0; g < latticeTree.gradations-1; g++) System.out.println("Gradation " + g + ": " + culledCount[g] + " culled octants.");
 			System.out.print("\n\n"); }
 		gradCount = new int[latticeTree.gradations];
 		
@@ -2242,7 +2394,55 @@ public class FEM1 {
 			FEM1Octant oct = neighbourhoodIST[n7];
 			if (oct.nodes == -1) { neighbourhoodIST[n7] = null; n7+=7; continue; }		// skip neighbourhoods of culled octants
 			gradCount[oct.level - firstLevel]++;
-			if (oct.level == latticeTree.maxLevel) { n7+=7; continue; }					// maxLevel octants can't find any children
+			if (oct.level == latticeTree.maxLevel) {
+				// create an array of facet-holding octants for new leaves to avoid doing search for them when processing edges,
+				// the octant[] will be used as placeholder for the array
+//				if (o >= oPrev) {
+//					FEM1Octant[] octArray = {	neighbourhoodIST[++n7],neighbourhoodIST[++n7],neighbourhoodIST[++n7],
+//												neighbourhoodIST[++n7],neighbourhoodIST[++n7],neighbourhoodIST[++n7]};
+//					oct.octant = octArray; n7++;
+//				} else n7+=7;															// maxLevel octants can't find any children
+				
+				// if we're processing a multipatched mesh & octant holds at least 3 PSC feature edges, try locating & storing PSC feature corners
+				if (patches > 1 && oct.edges >= 3) {
+					int[] edgeI = oct.edgeI;
+					int edges1 = oct.edges;											// note: oct.edges counter will NOT count the corner nodes
+					for (int e = 0, eNum = oct.edges, eNumM2 = eNum-2; e < eNumM2; e++) {
+						if (edgeI[e] < 0) break;									// stop if we reached the stored corner data
+						boolean matchedTwoA = false, matchedTwoB = false;
+						int eI = edgeI[e]<<1, na = edgeNode[eI++], nb = edgeNode[eI], ea2nd=e, ea3rd=-1, eb2nd=e, eb3rd=-1;
+						for (int e2 = e+1; e2 < eNum; e2++) {
+							if (edgeI[e2] < 0) break;								// stop if we reached the stored corner data
+							int eI2 = edgeI[e2]<<1, na2 = edgeNode[eI2++], nb2 = edgeNode[eI2];
+							// MatchedTwo* is set on 1st match, then if set and 3rd match appears, the match is added as a corner
+							// note: if more than 3 edges meet up, then duplicates of same corner might be added, which isn't critical though
+							if (na==na2||na==nb2) {
+								ea3rd = ea2nd; ea2nd = e2;
+								if (matchedTwoA) {
+									if (edgeI.length <= edges1+4) {					// extend edge array if necessary
+										int[] edgeI1 = new int[edges1*2+4];
+										for (int eC=0; eC<edges1; eC++) edgeI1[eC]=edgeI[eC]; oct.edgeI = edgeI = edgeI1; }
+									edgeI[edges1++] = SET31|na;						// corners are: node w. 31st bit set + 3 edge indexes
+									edgeI[edges1++] = edgeI[e]; edgeI[edges1++] = edgeI[ea2nd]; edgeI[edges1++] = edgeI[ea3rd];
+									if (DEBUG_LEVEL > 2) System.out.println("PSC corner node "+na+", edges: "+edgeI[e]+","+edgeI[ea2nd]+","+edgeI[ea3rd]);
+									cornerPSCcount++;
+								} else matchedTwoA = true; }
+							if (nb==na2||nb==nb2) {
+								eb3rd = eb2nd; eb2nd = e2;
+								if (matchedTwoB) {
+									if (edgeI.length <= edges1+4) {					// extend edge array if necessary
+										int[] edgeI1 = new int[edges1*2+4];
+										for (int eC=0; eC<edges1; eC++) edgeI1[eC]=edgeI[eC]; oct.edgeI = edgeI = edgeI1; }
+									edgeI[edges1++] = SET31|nb;						// corners are: node w. 31st bit set + 3 edge indexes
+									edgeI[edges1++] = edgeI[e]; edgeI[edges1++] = edgeI[eb2nd]; edgeI[edges1++] = edgeI[eb3rd];
+									cornerPSCcount++;
+									if (DEBUG_LEVEL > 2) System.out.println("PSC corner node "+nb+", edges: "+edgeI[e]+","+edgeI[eb2nd]+","+edgeI[eb3rd]);
+								} else matchedTwoB = true; }
+						}
+					}
+				}
+				n7+=7; continue;
+			}
 			octantIST[oNonLeafC++] = oct;												// recollect non-leaves into octantIST[]
 			int n7end = ++n7 + 6, n7b = n7;
 			short level = oct.level;
@@ -2263,10 +2463,11 @@ public class FEM1 {
 			}
 		}
 
-		if (DEBUG_LEVEL > 2) {
-			System.out.println("Gradation levels, post-2:1-culling:");
-			for (int g=0; g < latticeTree.gradations; g++) System.out.println("Gradation " + g + ": " + gradCount[g] + " octants.");
-			System.out.print("\n\n"); }
+		if (DEBUG_LEVEL > 1) {
+			System.out.println("Gradation levels, after 2:1 shaving:");
+			for (int g=0; g < latticeTree.gradations; g++) System.out.println("    Gradation " + g + ": " + gradCount[g] + " octants.");
+			System.out.print("PSC corner features located (+ possible duplicates): " + cornerPSCcount + "\n\n");
+		}
 		
 		int[] edgeOctCheck = new int[oLast];
 		// unflag face-neighbour search for the neighbourhood checks
@@ -2611,17 +2812,18 @@ public class FEM1 {
 	final static int edgeCut[] = { FLG_CUT01, FLG_CUT02, FLG_CUT03, FLG_CUT12, FLG_CUT13, FLG_CUT23 };
 	// the TETREFx bits lie in the status word and flag whether a node is a node index or a reference to another element's node index 
 	final static int TETREF0 = 1<<22, TETREF1 = 1<<23, TETREF2 = 1<<24, TETREF3 = 1<<25, TETREF_CLR = NINT - (1<<22|1<<23|1<<24|1<<25);
+	final static int E_SIZE = 8;
 	
 	// method generates the internal & external tetrahedra for adjustment towards the boundary from a supplied latticeTree
 	// tetrahedra are generated and separated into an internal paged array elementIntPg[] and a boundary page array elementBndPg[]
 	// unique nodes and edges are generated from octant coordinates, the boundary element array is further used to do the edge intersection tests
 	// to find cut and snap points: nodes close to boundary are snapped, the rest are stored as cut nodes for generating the boundary tetra stencils
 	// method finally assembles the nodes into a compact tetrahedron stream, minimising redundant coordinate loads
-	private int[] elementGeneratorIST(FEM1Octree latticeTree, FEM1Octree geocTree, FEM1Octant[] neighbourhoodIST, int elementTarget, int nodeTarget) {
+	private int[] elementGeneratorIST(FEM1Octree latticeTree, FEM1Octree geocTree, int elementTarget, int nodeTarget) {
 		
 		if (DEBUG_LEVEL > 1) System.out.println("**************** FEM1.elementGeneratorIST() stage 1 ****************");
 		debugIST_phase1time = System.nanoTime();
-		int lSubD1 = latticeTree.latticeSubdivs*2 + 1;				// note: since centroids also form nodes, the grid has to be  doubled for hashing
+		int lSubD1 = latticeTree.latticeSubdivs*2 + 1, octI=0, nbrI=0;
 		int[] enReturn = {0,0};
 		nodeHTableIST = new NodeHashTable(0, bBox[3] - bBox[0], lSubD1, bBox[0], bBox[1], bBox[2]);
 		// allocate first pages of paging structures for internal & boundary elements
@@ -2632,7 +2834,9 @@ public class FEM1 {
 				
 		// this block investigates every octant's facing neighbours according to the byte-program, generating tetrahedra depending on neighbourhood
 		// ----------------------------------------------------------------------------------------------------------------------------------------
+		printWhat = PRINT_IST_ELEMENTS;
 		for (int n7 = 0; n7 < neighbourhoodIST.length; n7+=6) {
+			octI = n7;
 			FEM1Octant oct = neighbourhoodIST[n7++];
 			if (oct == null) continue;
 			int octStatus = oct.status>>3&0xFF;
@@ -2647,8 +2851,8 @@ public class FEM1 {
 
 			for (int seq=0, i1=1; seq < 6; seq++) {									// for each face-neighbour of this octant
 
-				startPrintElement = elementsIST > 40 ? elementsIST - 40 : 0;		// tell toString() we want to print 40 elements in hindsight
-				FEM1Octant nbrF = neighbourhoodIST[n7 + faceSeq_IST[seq]];
+				startPrintEntry = elementsIST > 40 ? elementsIST - 40 : 0;		// tell toString() we want to print 40 elements in hindsight
+				FEM1Octant nbrF = neighbourhoodIST[nbrI = n7 + faceSeq_IST[seq]];
 				int seqP = 6 + seq * 177;											// choose particular code group depending on neighbour-enumerated face
 				byte facedFlg = faceSeq_IST[seqP++], facingFlg = (byte)(~facedFlg);
 
@@ -2675,16 +2879,16 @@ public class FEM1 {
 						int seq24 = seq<<24;
 
 						switch (slotcode&0x7F) {
-						case Sl_ChgA:	processISTnode(oct, nbrF, slotcode&0xFF|faceSeq_IST[seqP++]<<8|edgeCode|seq24);
-										processISTnode(oct, nbrF, Sl_Chg1|faceSeq_IST[seqP++]<<8|edgeCode|seq24);
-										processISTnode(oct, nbrF, Sl_Chg2|faceSeq_IST[seqP++]<<8|edgeCode|seq24);
-										processISTnode(oct, nbrF, Sl_Chg3|faceSeq_IST[seqP++]<<8|edgeCode|seq24);
+						case Sl_ChgA:	processISTnode(oct, octI, null, -1, slotcode&0xFF|faceSeq_IST[seqP++]<<8|edgeCode|seq24);
+										processISTnode(oct, octI, null, -1, Sl_Chg1|faceSeq_IST[seqP++]<<8|edgeCode|seq24);
+										processISTnode(oct, octI, null, -1, Sl_Chg2|faceSeq_IST[seqP++]<<8|edgeCode|seq24);
+										processISTnode(oct, octI, null, -1, Sl_Chg3|faceSeq_IST[seqP++]<<8|edgeCode|seq24);
 										forceChgA=false; count_ChgA++; break;
-						case Sl_FtoL:	processISTnode(oct, nbrF, slotcode&0xFF|faceSeq_IST[seqP]<<8|edgeCode|seq24);
+						case Sl_FtoL:	processISTnode(oct, octI, null, -1, slotcode&0xFF|faceSeq_IST[seqP]<<8|edgeCode|seq24);
 										seqP += 4; count_FtoL++; break;
-						case Sl_Hld2:	processISTnode(oct, nbrF, slotcode&0xFF|faceSeq_IST[seqP++]<<8|edgeCode|seq24);
-										processISTnode(oct, nbrF, Sl_Chg1|faceSeq_IST[seqP++]<<8|edgeCode|seq24); seqP++;
-										processISTnode(oct, nbrF, Sl_Chg3|faceSeq_IST[seqP++]<<8|edgeCode|seq24);
+						case Sl_Hld2:	processISTnode(oct, octI, null, -1, slotcode&0xFF|faceSeq_IST[seqP++]<<8|edgeCode|seq24);
+										processISTnode(oct, octI, null, -1, Sl_Chg1|faceSeq_IST[seqP++]<<8|edgeCode|seq24); seqP++;
+										processISTnode(oct, octI, null, -1, Sl_Chg3|faceSeq_IST[seqP++]<<8|edgeCode|seq24);
 										forceHld2 = false; count_Hld2++; break;
 						}
 					}
@@ -2742,26 +2946,26 @@ public class FEM1 {
 							int seq24 = seq>>24;
 							
 							switch (slotcode & 0x7F) {
-							case Sl_ChgA:	processISTnode(oct, nbrF, slotcode&0xFF|(faceSeq_IST[seqP++]<<8)|edgeCode|seq24);
-											processISTnode(oct, nbrF, Sl_Chg1|faceSeq_IST[seqP++]<<8|edgeCode|seq24);
-											processISTnode(oct, nbrF, Sl_Chg2|faceSeq_IST[seqP++]<<8|edgeCode|seq24);
-											processISTnode(oct, nbrF, Sl_Chg3|faceSeq_IST[seqP++]<<8|edgeCode|seq24);
+							case Sl_ChgA:	processISTnode(oct, octI, nbrF, nbrI, slotcode&0xFF|(faceSeq_IST[seqP++]<<8)|edgeCode|seq24);
+											processISTnode(oct, octI, nbrF, nbrI, Sl_Chg1|faceSeq_IST[seqP++]<<8|edgeCode|seq24);
+											processISTnode(oct, octI, nbrF, nbrI, Sl_Chg2|faceSeq_IST[seqP++]<<8|edgeCode|seq24);
+											processISTnode(oct, octI, nbrF, nbrI, Sl_Chg3|faceSeq_IST[seqP++]<<8|edgeCode|seq24);
 											forceChgA = false; if (!programB) seqP += 12;
 											count_ChgA++; break;
-							case Sl_FtoL:	processISTnode(oct, nbrF, slotcode&0xFF|faceSeq_IST[seqP]<<8|edgeCode|seq24);
+							case Sl_FtoL:	processISTnode(oct, octI, nbrF, nbrI, slotcode&0xFF|faceSeq_IST[seqP]<<8|edgeCode|seq24);
 											seqP += programB ? 4 : 16;
 											count_FtoL++; break;
-							case Sl_Hld2:	processISTnode(oct, nbrF, slotcode&0xFF|faceSeq_IST[seqP++]<<8|edgeCode|seq24);
-											processISTnode(oct, nbrF, Sl_Chg1|faceSeq_IST[seqP++]<<8|edgeCode|seq24); seqP++;
-											processISTnode(oct, nbrF, Sl_Chg3|faceSeq_IST[seqP++]<<8|edgeCode|seq24);
+							case Sl_Hld2:	processISTnode(oct, octI, nbrF, nbrI, slotcode&0xFF|faceSeq_IST[seqP++]<<8|edgeCode|seq24);
+											processISTnode(oct, octI, nbrF, nbrI, Sl_Chg1|faceSeq_IST[seqP++]<<8|edgeCode|seq24); seqP++;
+											processISTnode(oct, octI, nbrF, nbrI, Sl_Chg3|faceSeq_IST[seqP++]<<8|edgeCode|seq24);
 											forceHld2 = false; if (!programB) seqP += 12;
 											count_Hld2++; break;
-							case Sl_Ch01:	processISTnode(oct, nbrF, slotcode&0xFF|faceSeq_IST[seqP++]<<8|edgeCode|seq24);
-											processISTnode(oct, nbrF, Sl_Chg1|faceSeq_IST[seqP--]<<8|edgeCode|seq24);
+							case Sl_Ch01:	processISTnode(oct, octI, nbrF, nbrI, slotcode&0xFF|faceSeq_IST[seqP++]<<8|edgeCode|seq24);
+											processISTnode(oct, octI, nbrF, nbrI, Sl_Chg1|faceSeq_IST[seqP--]<<8|edgeCode|seq24);
 											seqP += programB ? 4 : 16;
 											count_Ch01++; break;
-							case Sl_Ch03:	processISTnode(oct, nbrF, slotcode&0xFF|faceSeq_IST[seqP]<<8|edgeCode|seq24); seqP+=3;
-											processISTnode(oct, nbrF, Sl_Chg3|faceSeq_IST[seqP++]<<8|edgeCode|seq24);
+							case Sl_Ch03:	processISTnode(oct, octI, nbrF, nbrI, slotcode&0xFF|faceSeq_IST[seqP]<<8|edgeCode|seq24); seqP+=3;
+											processISTnode(oct, octI, nbrF, nbrI, Sl_Chg3|faceSeq_IST[seqP++]<<8|edgeCode|seq24);
 											if (!programB) seqP += 12;
 											count_Ch03++;
 							}
@@ -2775,15 +2979,15 @@ public class FEM1 {
 			}
 			oct.nodeI = null;											// deallocate local node retriever
 		}
-		processISTnode(null, null, SET31);								// write out the last element
+		processISTnode(null, octI, null, nbrI, SET31);					// write out the last element
 
 		// gather paged boundary elements into elementIST[] array
-		elementIST = new int[elementsIST * 6];
-		for (int elemNo = 0, p = 0, elems = elementsIST * 6; p < elementPgN; p++, elems -= elementPgSize) {
+		elementIST = new int[elementsIST * E_SIZE];
+		for (int elemNo = 0, p = 0, elems = elementsIST * E_SIZE; p < elementPgN; p++, elems -= elementPgSize) {
 			int[] elemPage = elementPg[p];
 			if (elemPage == null) break;
-			for (int e6 = 0, eEnd = elems < elementPgSize ? elems: elementPgSize; e6 < eEnd; e6++, elemNo++)
-				elementIST[elemNo] = elemPage[e6];
+			for (int e8 = 0, eEnd = elems < elementPgSize ? elems: elementPgSize; e8 < eEnd; e8++, elemNo++)
+				elementIST[elemNo] = elemPage[e8];
 		}
 		readElementPg = false;											// DEBUG: stop toString() of elementPg structure
 		elementPg = null;												// kill the boundary elements paging array
@@ -2822,19 +3026,31 @@ public class FEM1 {
 		int count_internal=0, count_boundary=0, count_cyclic_finds=0, count_cyclic_misses=0;	// DEBUG counters
 		int[] count_edgetype = {0,0,0,0};								// DEBUG edge type counters
 		
-		for (int e6 = 0, e = 0; e < elementsIST; e++) {
-			startPrintElement = e > 6 ? e - 6 : 0;											// tell toString() we want to print from 9 elements back
-			int nX0 = elementIST[e6++], status = elementIST[e6+4];
-			if ((status & FLG_EBND) == 0) { e6+=5; count_internal++; continue; }			// skip internal elements
+		for (int e8 = 0, e = 0; e < elementsIST; e++) {
+			startPrintEntry = e > 6 ? e - 6 : 0;											// tell toString() we want to print from 6 elements back
+			int nX0 = elementIST[e8++], status = elementIST[e8+4];
+			if ((status & FLG_EBND) == 0) { e8+=E_SIZE-1; count_internal++; continue; }		// skip internal elements
 
-			int nX1 = elementIST[e6++], nX2 = elementIST[e6++], nX3 = elementIST[e6++], edgeGenFlags = status & 0xFFF;
+			int nX1 = elementIST[e8++], nX2 = elementIST[e8++], nX3 = elementIST[e8++], edgeGenFlags = status & 0xFFF;// oC = 0, oC2=0;
+			e8+=4;
+			// prepare octants holding the facets to test (spawning octant and it's spawning neighbour)
+//			FEM1Octant[] octArray = new FEM1Octant[12];
+//			FEM1Octant oct = neighbourhoodIST[elementIST[e8++]], nbr = neighbourhoodIST[elementIST[e8++]];
+//			if (oct.octant != null) {														// extended BCC leaves carry the octant array inside them
+//				while (oC2 < 6) { octArray[oC] = oct.octant[oC2++]; if (octArray[oC]!=null) oC++; }
+//			} else octArray[oC++] = oct;
+//			if (nbr != null) {
+//				if (nbr.octant != null) {														// extended BCC leaves carry the octant array inside them
+//					while (--oC2 >= 0) { octArray[oC] = oct.octant[oC2]; if (octArray[oC]!=null) oC++; }
+//				} else octArray[oC++] = nbr; }
+			
 			int edge = 0;
 			// nonunique nodes can/will be referred to be fetched from their origin element, the TETREFx flags tell which need to be retrieved
 			int n0, n1, n2, n3, eX0=-1, eX1=-1, eX2=-1, eX3=-1;
-			if ((status&TETREF0)!=0) { n0=elementIST[(eX0 = nX0&0x3FFFFFFF)*6 + (nX0=nX0>>30&3)]; } else n0=nX0;
-			if ((status&TETREF1)!=0) { n1=elementIST[(eX1 = nX1&0x3FFFFFFF)*6 + (nX1=nX1>>30&3)]; } else n1=nX1;
-			if ((status&TETREF2)!=0) { n2=elementIST[(eX2 = nX2&0x3FFFFFFF)*6 + (nX2=nX2>>30&3)]; } else n2=nX2;
-			if ((status&TETREF3)!=0) { n3=elementIST[(eX3 = nX3&0x3FFFFFFF)*6 + (nX3=nX3>>30&3)]; } else n3=nX3;
+			if ((status&TETREF0)!=0) { n0=elementIST[(eX0 = nX0&0x3FFFFFFF)*E_SIZE + (nX0=nX0>>30&3)]; } else n0=nX0;
+			if ((status&TETREF1)!=0) { n1=elementIST[(eX1 = nX1&0x3FFFFFFF)*E_SIZE + (nX1=nX1>>30&3)]; } else n1=nX1;
+			if ((status&TETREF2)!=0) { n2=elementIST[(eX2 = nX2&0x3FFFFFFF)*E_SIZE + (nX2=nX2>>30&3)]; } else n2=nX2;
+			if ((status&TETREF3)!=0) { n3=elementIST[(eX3 = nX3&0x3FFFFFFF)*E_SIZE + (nX3=nX3>>30&3)]; } else n3=nX3;
 			int n0F = n0&0x3FFFFFFF, n1F = n1&0x3FFFFFFF, n2F = n2&0x3FFFFFFF, n3F = n3&0x3FFFFFFF;
 
 			eStatus[1] = -1;																// specify fast facet nonexistent at start of edge processing
@@ -2884,22 +3100,21 @@ public class FEM1 {
 				if (doCutTest) {		// cut test also receives the long/short edge status bits deciding the proximity alpha
 					eStatus[0] = 0;
 					switch (edge) {
-					case 0:	processISTedge(geocTree, n0, n1, eStatus, (status&1<<16)!=0); break;		// edge 01
-					case 1:	processISTedge(geocTree, n0, n2, eStatus, (status&1<<17)!=0); break;		// edge 02
-					case 2:	processISTedge(geocTree, n0, n3, eStatus, (status&1<<18)!=0); break;		// edge 03
-					case 3:	processISTedge(geocTree, n1, n2, eStatus, (status&1<<19)!=0); break;		// edge 12
-					case 4:	processISTedge(geocTree, n1, n3, eStatus, (status&1<<20)!=0); break;		// edge 13
-					case 5:	processISTedge(geocTree, n2, n3, eStatus, (status&1<<21)!=0); }				// edge 23
+					case 0:	processISTedge(geocTree, null, n0, n1, eStatus, (status&1<<16)!=0); break;		// edge 01
+					case 1:	processISTedge(geocTree, null, n0, n2, eStatus, (status&1<<17)!=0); break;		// edge 02
+					case 2:	processISTedge(geocTree, null, n0, n3, eStatus, (status&1<<18)!=0); break;		// edge 03
+					case 3:	processISTedge(geocTree, null, n1, n2, eStatus, (status&1<<19)!=0); break;		// edge 12
+					case 4:	processISTedge(geocTree, null, n1, n3, eStatus, (status&1<<20)!=0); break;		// edge 13
+					case 5:	processISTedge(geocTree, null, n2, n3, eStatus, (status&1<<21)!=0); }			// edge 23
 				}
 				edge++; edgeGenFlags >>= 2;
 			}
 			// store down boundary elements in direct nodeindexed array for degeneracy check
 			testElemsIST[elemsBnd++]=n0; testElemsIST[elemsBnd++]=n1; testElemsIST[elemsBnd++]=n2; testElemsIST[elemsBnd++]=n3; testElemsIST[elemsBnd++]=e;
-			e6+=2;
 		}
 			
 		// DEBUG: finds an erroneous element whose centroid is closest to the supplied coordinate
-		//startPrintElement = testElemsIST[findElementIndex(testElemsIST, nodeIST, 2.402, 0.275, 1.813, 1, 6)*5+4];
+		//startPrintElement = testElemsIST[findElementIndex(testElemsIST, nodeIST, 2.402, 0.275, 1.813, 1, 8)*5+4];
 		
 		// do post-stage 2 degenerate element test
 		debugIST_analysisTime = System.nanoTime();
@@ -2910,7 +3125,7 @@ public class FEM1 {
 		for (int e5 = 0, e5S = 0; e5 < elemsBnd;) {
 			double Q = 0;
 			int n0 = testElemsIST[e5++], n1 = testElemsIST[e5++], n2 = testElemsIST[e5++], n3 = testElemsIST[e5++], eIdx = testElemsIST[e5++];
-			startPrintElement = eIdx;		
+			startPrintEntry = eIdx;		
 			int n0F = n0 & 0x3FFFFFFF, n1F = n1 & 0x3FFFFFFF, n2F = n2 & 0x3FFFFFFF, n3F = n3 & 0x3FFFFFFF;
 			byte snap0=snapNodeStatus[n0F], snap1=snapNodeStatus[n1F], snap2=snapNodeStatus[n2F], snap3=snapNodeStatus[n3F];
 			// flag boundary slivers, then flag them as degenerate or defective for discarding
@@ -2918,24 +3133,24 @@ public class FEM1 {
 				
 				if (discardAllSliversIST) {
 					// all slivers were requested for discarding
-					elementIST[eIdx*6+5] |= SET28|SET29;
+					elementIST[eIdx*E_SIZE+5] |= SET28|SET29;
 					
 				} else if (tetraVolumePositivityIST(n0F, n1F, n2F, n3F, snap0, snap1, snap2, snap3) < 0.000001) {
 					// find and discard degenerate/negative volume slivers (a normal case for externalised boundary elements at lor resolution)
 					if (DEBUG_LEVEL > 2) System.out.println("Boundary sliver element " + eIdx + " negative/zero-volume, deleted.");
-					elementIST[eIdx*6+5] |= SET28|SET29; count_degenerates++;
+					elementIST[eIdx*E_SIZE+5] |= SET28|SET29; count_degenerates++;
 				} else {
 					// quality sift according to 3*inner/circumradius criterion, stacked slivers cases will now note missing neighbours
 					if ((Q = tetraQualityIST(n0F, n1F, n2F, n3F, snap0, snap1, snap2, snap3)) < minSliverQuality) {
 						
 						if (DEBUG_LEVEL > 1) System.out.println("Boundary sliver element "+eIdx+" of too low quality: "+
 																	String.format("%.3f", Q)+(discardBadSliversIST ? ", deleted." : "."));
-						if (discardBadSliversIST) elementIST[eIdx*6+5] |= SET28;
+						if (discardBadSliversIST) elementIST[eIdx*E_SIZE+5] |= SET28;
 						count_defectives++;
 						
 					} else if (!sliverCentroidInternal(geocTree, n0F, n1F, n2F, n3F)) {
 						if (DEBUG_LEVEL > 2) System.out.println("Boundary sliver element "+eIdx+" a straddler, deleted.");
-						elementIST[eIdx*6+5] |= SET28; count_defectives++;
+						elementIST[eIdx*E_SIZE+5] |= SET28; count_defectives++;
 					} else {
 						// store found nondefective slivers in same array, we'll have to test them for stacking with defective ones
 						testElemsIST[e5S++]=n0F; testElemsIST[e5S++]=n1F; testElemsIST[e5S++]=n2F; testElemsIST[e5S++]=n3F; testElemsIST[e5S++]=eIdx;
@@ -2943,7 +3158,7 @@ public class FEM1 {
 					// note down sliver-sliver neighbourhoods to eliminate the stacked sliver cases 
 					nodeSupportAddElementIST(n0F, eIdx); nodeSupportAddElementIST(n1F, eIdx);
 					nodeSupportAddElementIST(n2F, eIdx); nodeSupportAddElementIST(n3F, eIdx);
-					elementIST[eIdx*6+5] |= SET29;
+					elementIST[eIdx*E_SIZE+5] |= SET29;
 					count_boundary++;
 				}
 				continue;
@@ -2954,7 +3169,7 @@ public class FEM1 {
 			if (snapSum > 1 && ((n0&SET30)!=0&&sC0==0||(n1&SET30)!=0&&sC1==0||(n2&SET30)!=0&&sC2==0||(n3&SET30)!=0&&sC3==0)) {
 				if ((Q = tetraQualityIST(n0F, n1F, n2F, n3F, snap0, snap1, snap2, snap3)) < minUnsnapQuality) {
 					if (DEBUG_LEVEL > 1) {
-						System.out.println("Boundary element "+eIdx+" defective: "+String.format("%.3f", Q)+". Element is unsnapped");
+						System.out.println("Boundary element "+eIdx+" need improvement: "+String.format("%.3f", Q)+". Element is unsnapped");
 						if (DEBUG_LEVEL > 2) {
 							int n03 = n0F * 6, n13 = n1F * 6, n23 = n2F * 6, n33 = n3F * 6;
 							if (snap0 < 0) n03+=3; System.out.print(String.format("      n0: %.3f,%.3f,%.3f, ",nodeIST[n03++],nodeIST[n03++],nodeIST[n03]));
@@ -2989,10 +3204,10 @@ public class FEM1 {
 				// DEBUG: straddling discarding needs much better (and intensive) heuristics, avoid using
 				} else if (discardStraddlers && snapSum > 2 && !elementCentroidInternal3S(geocTree, n0F, n1F, n2F, n3F, snap0, snap1, snap2, snap3)) {
 					if (DEBUG_LEVEL > 1) System.out.println("Boundary element "+eIdx+" a 3-snap straddler, deleted.");
-					elementIST[eIdx*6+5] |= SET28; count_defectives++;				
+					elementIST[eIdx*E_SIZE+5] |= SET28; count_defectives++;				
 				} else if (discardStraddlers && snapSum > 1 && !elementCentroidInternal2S(geocTree, n0F, n1F, n2F, n3F, snap0, snap1, snap2, snap3)) {
 					if (DEBUG_LEVEL > 1) System.out.println("Boundary element "+eIdx+" a 2-snap straddler, deleted.");
-					elementIST[eIdx*6+5] |= SET28; count_defectives++; }
+					elementIST[eIdx*E_SIZE+5] |= SET28; count_defectives++; }
 				else count_boundary++;
 				count_degeneracy_checks++;
 			}
@@ -3004,11 +3219,12 @@ public class FEM1 {
 			nbrComp12 = new int[elementSupportMaxArrayL * 4 + 1];							// prepare fixed arrays (nonthreaded) for neighbourhood analysis
 			nbrComp34 = new int[elementSupportMaxArrayL * 4 + 1];
 			nbrComp1234F = new int[elementSupportMaxArrayL * 8];
-			nbrComp1234e = new int[elementSupportMaxArrayL * 8]; }
+			nbrComp1234e = new int[elementSupportMaxArrayL * 8];
+		}
 
 		for (int e5 = 0, e5end = sliverCount * 5; e5 < e5end;) {
-			int n0=testElemsIST[e5++], n1=testElemsIST[e5++], n2=testElemsIST[e5++], n3=testElemsIST[e5++], eIdx=testElemsIST[e5++], eSoffs=eIdx*6+5;
-			startPrintElement = eIdx;		
+			int n0=testElemsIST[e5++], n1=testElemsIST[e5++], n2=testElemsIST[e5++], n3=testElemsIST[e5++], eIdx=testElemsIST[e5++], eSoffs=eIdx*E_SIZE+5;
+			startPrintEntry = eIdx;		
 			if (snapNodeStatus[n0]>=0||snapNodeStatus[n1]>=0||snapNodeStatus[n2]>=0||snapNodeStatus[n3]>=0) {
 				elementIST[eSoffs] &= CLR29; continue; }							// set unsnapped sliver as boundary element
 			
@@ -3018,14 +3234,14 @@ public class FEM1 {
 				int[][] ngbrs = tetraNeighbours(nList, false, true);				// test if sliver is a "hanger", with <=1 facet neighbours
 				int[] ngbrsF = ngbrs[0];	
 				for (int i = 1, iEnd = ngbrsF[0]; i <= iEnd; i++)
-					if ((elementIST[ngbrsF[i]*6 + 5] & SET28) != 0) {				// was this sliver in this neighbourhood discarded? 
+					if ((elementIST[ngbrsF[i]*E_SIZE + 5] & SET28) != 0) {			// was this sliver in this neighbourhood discarded? 
 						if (DEBUG_LEVEL > 1) {
 							System.out.print("Sliver stack discarded: "+eIdx+", ");
 							for (int i1=1; i1 <= iEnd; i1++) System.out.print(ngbrsF[i1]+(i1==iEnd?".\n":", "));
 						}
 						elementIST[eSoffs] |= SET28; count_boundary--;
 						while (--i >= 1) {											// make sure to discard entire group
-							elementIST[ngbrsF[i]*6 + 5] |= SET28;
+							elementIST[ngbrsF[i]*E_SIZE + 5] |= SET28;
 						}
 						break;
 					}
@@ -3054,7 +3270,7 @@ public class FEM1 {
 			System.out.print("Wasted cut functions in FEM1.processISTedge(): " + debugIST_pISTe_vainSnaps);
 			System.out.print("\nNonshared edges cyclic buffer cases: " + (count_cyclic_misses + count_cyclic_finds));
 			System.out.print(" of which directly resolved: " + count_cyclic_finds);
-			System.out.print("\nSlivers found: " + sliverCount);
+			System.out.print("\nNondefective slivers found: " + sliverCount);
 			System.out.print("\nUnsnapped elements: " + count_unsnaps);
 			System.out.print("\nDegenerated checks: "+count_degeneracy_checks+", degenerated: "+count_degenerates+", defectives: "+count_defectives+"\n\n");
 			System.out.println("**************** FEM1.elementGeneratorIST() stage 3 ****************");
@@ -3070,42 +3286,44 @@ public class FEM1 {
 		count_cyclic_finds=0; count_cyclic_misses=0;
 		int count_becameIntExt=0, count_cutnodes=0;
 		count_edgetype = new int[4];
+		sliverCount = 0;
 		debugIST_pISTe_visits = debugIST_pISTe_fastVisits = debugIST_pISTe_fastFacetVisits = 0;
 		debugIST_pISTe_time1 = debugIST_pISTe_time2; debugIST_pISTe_time2 = 0;		
 		
-		for (int e6 = 0, e = 0; e < elementsIST; e++) {
+		for (int e8 = 0, e = 0; e < elementsIST; e++) {
 			
-			startPrintElement = e > 7 ? e - 7 : 0;			
+			startPrintEntry = e > 7 ? e - 7 : 0;			
 			boolean nonSharedEdge = false;
-			int n0 = elementIST[e6++], status = elementIST[e6+4];
-			if ((status&SET28) != 0) { e6+=5; continue; }										// skip defective elements
-			int n1 = elementIST[e6++], n2 = elementIST[e6++], n3 = elementIST[e6++], pattern = elementIST[e6++]; e6++;
+			int n0 = elementIST[e8++], status = elementIST[e8+4];
+			if ((status&SET28) != 0) { e8+=E_SIZE-1; continue; }										// skip defective elements
+			int n1 = elementIST[e8++], n2 = elementIST[e8++], n3 = elementIST[e8++], pattern = elementIST[e8++];
 			
 			// nonunique nodes can/will be dereferenced from their origin element, the TETREFx flags tell which need to be retrieved
 			// the previously internal nodes that became snapped (bit 31 set) are deflagged from being internal (bit 30 cleared)
 			int eX0=-1, eX1=-1, eX2=-1, eX3=-1, nX0=-1, nX1=-1, nX2=-1, nX3=-1;
-			if ((status&TETREF0)!=0) n0=elementIST[(eX0=n0&0x3FFFFFFF)*6 + (nX0=n0>>30&3)]; 
-			if ((status&TETREF1)!=0) n1=elementIST[(eX1=n1&0x3FFFFFFF)*6 + (nX1=n1>>30&3)];
-			if ((status&TETREF2)!=0) n2=elementIST[(eX2=n2&0x3FFFFFFF)*6 + (nX2=n2>>30&3)];
-			if ((status&TETREF3)!=0) n3=elementIST[(eX3=n3&0x3FFFFFFF)*6 + (nX3=n3>>30&3)];
+			if ((status&TETREF0)!=0) n0=elementIST[(eX0=n0&0x3FFFFFFF)*E_SIZE + (nX0=n0>>30&3)]; 
+			if ((status&TETREF1)!=0) n1=elementIST[(eX1=n1&0x3FFFFFFF)*E_SIZE + (nX1=n1>>30&3)];
+			if ((status&TETREF2)!=0) n2=elementIST[(eX2=n2&0x3FFFFFFF)*E_SIZE + (nX2=n2>>30&3)];
+			if ((status&TETREF3)!=0) n3=elementIST[(eX3=n3&0x3FFFFFFF)*E_SIZE + (nX3=n3>>30&3)];
 			int n0F = n0 & 0x3FFFFFFF, n1F = n1 & 0x3FFFFFFF, n2F = n2 & 0x3FFFFFFF, n3F = n3 & 0x3FFFFFFF;
 			
 			// reconfigure pattern & status according to snapnode results, clear internal status of snapped nodes
 			if ((status&SET29)!=0) {
 				pattern = pattern & (CLR_n0&CLR_n1&CLR_n2&CLR_n3) | (FLG_n0_0|FLG_n1_0|FLG_n2_0|FLG_n3_0);
 				status &= CLR_EST0&CLR_EST1&CLR_EST2&CLR_EST3; n0=(n0|SET31)&CLR30; n1=(n1|SET31)&CLR30; n2=(n2|SET31)&CLR30; n3=(n3|SET31)&CLR30;
+				sliverCount++;
 			} else {
 				if (snapNodeStatus[n0F] < 0) { pattern = pattern&CLR_n0|FLG_n0_0; status &= CLR_EST0; n0 = (n0|SET31) & CLR30; }
 				if (snapNodeStatus[n1F] < 0) { pattern = pattern&CLR_n1|FLG_n1_0; status &= CLR_EST1; n1 = (n1|SET31) & CLR30; }
 				if (snapNodeStatus[n2F] < 0) { pattern = pattern&CLR_n2|FLG_n2_0; status &= CLR_EST2; n2 = (n2|SET31) & CLR30; }
 				if (snapNodeStatus[n3F] < 0) { pattern = pattern&CLR_n3|FLG_n3_0; status &= CLR_EST3; n3 = (n3|SET31) & CLR30; }
 			}
-			e6 -= 6;
-			elementIST[e6++] = n0; elementIST[e6++] = n1; elementIST[e6++] = n2; elementIST[e6++] = n3;	
-			elementIST[e6++] = pattern; elementIST[e6] = status & TETREF_CLR;
+			e8 -= 5;
+			elementIST[e8++] = n0; elementIST[e8++] = n1; elementIST[e8++] = n2; elementIST[e8++] = n3;	
+			elementIST[e8++] = pattern; elementIST[e8] = status & TETREF_CLR;
 
 			// if snapped element became internal/external (checked by edges status), no cuts can be made, do nothing more
-			if ((status&FLG_EBND) == 0) { e6++; count_becameIntExt++; continue; }
+			if ((status&FLG_EBND) == 0) { e8+=E_SIZE-5; count_becameIntExt++; continue; }
 			int eM6 = e * 6, edgeGenFlags = status & 0xFFF, edge = 0;
 			
 			while (edge < 6) {
@@ -3116,12 +3334,12 @@ public class FEM1 {
 					eStatus[0] = 1+2;												// flag cut point calculation & usage of existing snapnodes
 					double[] cutNodeO = null;
 					switch (edge) {
-					case 0:	cutNodeO = processISTedge(geocTree, n0, n1, eStatus, false); pattern|=FLG_CUT01; break;	// edge 01
-					case 1:	cutNodeO = processISTedge(geocTree, n0, n2, eStatus, false); pattern|=FLG_CUT02; break;	// edge 02
-					case 2:	cutNodeO = processISTedge(geocTree, n0, n3, eStatus, false); pattern|=FLG_CUT03; break;	// edge 03
-					case 3:	cutNodeO = processISTedge(geocTree, n1, n2, eStatus, false); pattern|=FLG_CUT12; break;	// edge 12
-					case 4:	cutNodeO = processISTedge(geocTree, n1, n3, eStatus, false); pattern|=FLG_CUT13; break;	// edge 13							
-					case 5:	cutNodeO = processISTedge(geocTree, n2, n3, eStatus, false); pattern|=FLG_CUT23;			// edge 23
+					case 0:	cutNodeO = processISTedge(geocTree, null, n0, n1, eStatus, false); pattern|=FLG_CUT01; break;	// edge 01
+					case 1:	cutNodeO = processISTedge(geocTree, null, n0, n2, eStatus, false); pattern|=FLG_CUT02; break;	// edge 02
+					case 2:	cutNodeO = processISTedge(geocTree, null, n0, n3, eStatus, false); pattern|=FLG_CUT03; break;	// edge 03
+					case 3:	cutNodeO = processISTedge(geocTree, null, n1, n2, eStatus, false); pattern|=FLG_CUT12; break;	// edge 12
+					case 4:	cutNodeO = processISTedge(geocTree, null, n1, n3, eStatus, false); pattern|=FLG_CUT13; break;	// edge 13							
+					case 5:	cutNodeO = processISTedge(geocTree, null, n2, n3, eStatus, false); pattern|=FLG_CUT23;			// edge 23
 					}
 					// note: since an exhaustive edge uniqueness check is not done, "indicate" flag is set so node hash WILL check for node non-uniqueness
 					int nIdx = (int)(nodeHTableIST.add(cutNodeO[0], cutNodeO[1], cutNodeO[2], e, true)&0x7FFFFFFF);
@@ -3178,7 +3396,7 @@ public class FEM1 {
 				}
 				edge++; edgeGenFlags >>= 2;
 			}
-			elementIST[--e6] = pattern;	e6 +=2;											// matching pattern has been updated	
+			elementIST[--e8] = pattern;	e8 += E_SIZE-4;									// matching pattern has been updated	
 		}
 		
 		// the snap nodes were separately updated to closest possible snap points and need now to replace their counterparts
@@ -3203,7 +3421,8 @@ public class FEM1 {
 			System.out.print(", fast facet visits: " + debugIST_pISTe_fastFacetVisits);
 			System.out.print("\nTime spent in FEM1.processISTedge(): " + debugIST_pISTe_time2 + " ns\n");
 			System.out.print("Nonshared edges cyclic buffer cases: " + (count_cyclic_misses + count_cyclic_finds));
-			System.out.print(" of which directly resolved: " + count_cyclic_finds +"\n\n");
+			System.out.print(" of which directly resolved: " + count_cyclic_finds);
+			System.out.print("\nSlivers kept: " + sliverCount +"\n\n");
 		}
 	
 		// if zero elements were produced, return zero
@@ -3220,15 +3439,15 @@ public class FEM1 {
 		elementPg = new int[elementPgN=400][]; elementPg[0] = new int[elementPgSize];	// we will regather elements & stencil elements in elementPg
 		elementPgI = 0; ePg = 0;
 		
-		int[] nodeRemap = new int[nodesIST+nodeHTableIST.count()];						// node indexes remapped to a condensed indexing
-		int newNodeIdx = 1;																// the new running node index
+		int newNodeIdx = 1, nodeSum = nodesIST+nodeHTableIST.count();					// newNodeIdx = the new running node index of remapper
+		int[] nodeRemap = new int[nodeSum];												// node indexes remapped to a condensed indexing
 		boolean force_ChgA = false;
-		int count_ChgAforces=0, writeElements = maxOutputElementsIST > 0 ? maxOutputElementsIST : Integer.MAX_VALUE;
-		int[] count_stencil = {0,0,0,0,0,0,0,0};
+		int count_ChgAforces=0, edgeFillElements = 0, writeElements = maxOutputElementsIST>0?maxOutputElementsIST:Integer.MAX_VALUE;
+		int[] count_stencil = {0,0,0,0,0,0,0,0};										// DEBUG/statistics information
 		SpreadBin angleSpread = null;
 		if (DEBUG_LEVEL > 2) angleSpread = new SpreadBin(30, 0, 180, 80);
 		
-		for (int e = 0, e6 = 0; e < elementsIST && elements < writeElements; e++) {
+		for (int e = 0, e8 = 0; e < elementsIST && elements < writeElements; e++) {
 			
 			// stop if element or node target count was exceeded
 			if (elementTarget > 0 && elements > elementTarget) {
@@ -3238,10 +3457,11 @@ public class FEM1 {
 				if (DEBUG_LEVEL > 1) System.out.println("FEM1.elementGeneratorIST(): Node target exceeded, aborting.");
 				enReturn[1] = -newNodeIdx; return enReturn; }
 			
-			startPrintElement = e;
-			int s0 = elementIST[e6++], s1 = elementIST[e6++], s2 = elementIST[e6++], s3 = elementIST[e6++];
+			startPrintEntry = e;
+			int s0 = elementIST[e8++], s1 = elementIST[e8++], s2 = elementIST[e8++], s3 = elementIST[e8++];
 			int n0 = s0&0x3FFFFFFF, n1 = s1&0x3FFFFFFF, n2 = s2&0x3FFFFFFF,n3 = s3&0x3FFFFFFF;
-			int pattern = elementIST[e6++], status = elementIST[e6++];
+			int pattern = elementIST[e8++], status = elementIST[e8++], o = elementIST[e8++], oN = elementIST[e8++];
+			FEM1Octant oct = neighbourhoodIST[o], nbr = oN>=0 ? neighbourhoodIST[oN] : null;
 			
 			// DEBUG: skip volume-internal gradation elements
 			if (skipVolumeInternalsIST && (status&SET30)!=0 && ((s0|s1|s2|s3)&SET31)==0) { force_ChgA = true; continue; }
@@ -3249,7 +3469,7 @@ public class FEM1 {
 			if ((status&SET29)==0 && ((s0|s1|s2|s3)&SET30)==0) { force_ChgA = true; continue; }	// skip externals, except approved slivers
 				
 			double Q=0;
-			if (DEBUG_LEVEL > 2) {														// do angle spread analysis before stencilling							
+			if (DEBUG_LEVEL > 2) {																// do before-stencils angle distribution analysis							
 				double[] angles = tetraDihedralAngles(nodeIST, n0, n1, n2, n3);
 				if ((Q = tetraSmallestDihedral(angles)) < 10) System.out.println("Boundary element " + e + " with too small dihedral angle: " + Q);
 				if ((Q = tetraLargestDihedral(angles)) > 170) System.out.println("Boundary element " + e + " with too large dihedral angle: " + Q);
@@ -3257,45 +3477,52 @@ public class FEM1 {
 				angleSpread.add(angles[3]); angleSpread.add(angles[4]); angleSpread.add(angles[5]);
 			}
 			
-			int[] elemPage = elementPg[elementPgI];
-			if ((status & FLG_EBND) == 0) {								// directly store internal elements (those lacking boundary edges)
-				elemPage = verifySpaceElementPg();						// verify that there is space in the paging array
-				elemPage[ePg++] = nodeRemap[n0] > 0 ? nodeRemap[n0] : (nodeRemap[n0] = newNodeIdx++);
-				elemPage[ePg++] = nodeRemap[n1] > 0 ? nodeRemap[n1] : (nodeRemap[n1] = newNodeIdx++);
-				elemPage[ePg++] = nodeRemap[n2] > 0 ? nodeRemap[n2] : (nodeRemap[n2] = newNodeIdx++);
-				elemPage[ePg++] = nodeRemap[n3] > 0 ? nodeRemap[n3] : (nodeRemap[n3] = newNodeIdx++);
+			// if underlying octants of element possess at least one PSC feature edge, mask for extension testing of element
+			int maskPSC = featureEdgeFillIST&&(oct.edges>0 || oN>=0 && nbr.edges>0) ? 0xF<<4 : 0;
+			int[] elemPage = verifySpaceElementPg();					// verify that there is space in the paging array
+			if ((status & FLG_EBND) == 0) {								// directly store internal elements (not those that were cut and kept boundary edges)
+				elemPage[ePg++] = n0 = nodeRemap[n0] > 0 ? nodeRemap[n0] : (nodeRemap[n0] = newNodeIdx++);
+				elemPage[ePg++] = n1 = nodeRemap[n1] > 0 ? nodeRemap[n1] : (nodeRemap[n1] = newNodeIdx++);
+				elemPage[ePg++] = n2 = nodeRemap[n2] > 0 ? nodeRemap[n2] : (nodeRemap[n2] = newNodeIdx++);
+				elemPage[ePg++] = n3 = nodeRemap[n3] > 0 ? nodeRemap[n3] : (nodeRemap[n3] = newNodeIdx++);
+				int extNodeFlags = 0;
+				if (featureEdgeFillIST) {
+					if (maskPSC > 0) { extNodeFlags = ~((s0&SET30)>>26|(s1&SET30)>>25|(s2&SET30)>>24|(s3&SET30)>>23) & 0xF0; edgeFillElements++; }
+					int[] elemList = { o, oN, elements, n0,n1,n2,n3 }; storeElementInOctantsIST(elemList); }
 				// compaction code is still valid (unless previous element has force_ChgA set)
 				if (force_ChgA) {
-					elemPage[ePg++] = Sl_ChgA; streamNodesIST += 4; force_ChgA = false;
+					elemPage[ePg++] = extNodeFlags | Sl_ChgA; streamNodesIST += 4; force_ChgA = false;
 					count_ChgAforces++;
 				} else {
-					elemPage[ePg] = status>>12 & 0xF;
-					switch (elemPage[ePg++] & 0x3FFFFFFF) {
+					int slotCode = status>>12 & 0xF;
+					elemPage[ePg++] = extNodeFlags | slotCode;
+					switch (slotCode) {
 					case Sl_ChgA:								streamNodesIST+=4; break;
 					case Sl_Ch01: case Sl_Ch03: case Sl_ShMB:	streamNodesIST+=2; break;
 					case Sl_Hld2:								streamNodesIST+=3; break;
 					default: streamNodesIST++;
 					}
 				}
+				elemPage[ePg++] = o; elemPage[ePg++] = oN;
 				elements++; continue;
 			}
 			
 			int slotcode = status>>12 & 0xF;
 			boolean mirror = (status&SET31) != 0;
+			// do binary search within sorted stencil pattern permutations for a match to this element's pattern 
 			int cn = e*6, seekS=0, seekE=126, seekM=62, countDown = 7;
-
 			while (countDown-- > 0) {
 				if (pattern < stencilPermCode[seekM]) seekE = seekM; else if (pattern > stencilPermCode[seekM]) seekS = seekM; else break;
 				seekM = seekS + (0xFE&(seekE-seekS)>>1);
 			}
-			if (countDown==0) throw new RuntimeException("FEM1.elementGeneratorIST(): Couldn't match stencil for element " + e);
+			if (countDown==0) throw new RuntimeException("FEM1.elementGeneratorIST(): Couldn't match stencil for element " + e);	// shouldn't happen!
 			int s = stencilPermSwitch[seekM>>1];
 			int idxMix = stencilPermCode[++seekM];
 
 			int cutMix = 0, nL0=0, nL1=0, nL2=0, nP0=0, nP1=0, nP2=0, nP3=0, cn1=0, cn2=0, cn3=0, cn4=0;
 			if (s >= 4) {
 				// the node-compacted order is lost with the compounded stencils 4/5/6/7/8
-				cutMix = idxMix >> 16;								// get the cutnode indexes part
+				cutMix = idxMix >> 16;																// get the cutnode indexes part
 				nL0 = idxMix&15; nL1 = idxMix>>4&15; nL2 = idxMix>>8&15;
 				// do the permutation of nodes from aspect of the incoming node order to aspect of basis stencil
 				nP0 = nL0==0?n0:(nL1==0?n1:(nL2==0?n2:n3)); nP1 = nL0==1?n0:(nL1==1?n1:(nL2==1?n2:n3));
@@ -3305,8 +3532,8 @@ public class FEM1 {
 			} else {
 				// for stencils 1/2/3, snap down the proper nodes to the cutnodes, internalising & finalising the element, order is preserved
 				if ((pattern&(1<<2|1<<7|1<<12)) != 0) {
-					if ((pattern&1<<2)!=0)	{ if ((pattern&3)==1) n1 = cutNodes[cn]; else n0 = cutNodes[cn]; }
-					if ((pattern&1<<7)!=0)	{ if (((pattern>>5)&3)==1) n2 = cutNodes[cn+1]; else n0 = cutNodes[cn+1]; }
+					if ((pattern&1<<2)!=0)	{ if ((pattern&3)==1)		n1 = cutNodes[cn];   else n0 = cutNodes[cn]; }
+					if ((pattern&1<<7)!=0)	{ if (((pattern>>5)&3)==1)	n2 = cutNodes[cn+1]; else n0 = cutNodes[cn+1]; }
 					if ((pattern&1<<12)!=0) { if (((pattern>>10)&3)==1) n3 = cutNodes[cn+2]; else n0 = cutNodes[cn+2]; }}
 				if ((pattern&(1<<17|1<<22|1<<27)) != 0) {
 					if ((pattern&1<<17)!=0)	{ if (((pattern>>15)&3)==1) n2 = cutNodes[cn+3]; else n1 = cutNodes[cn+3]; }
@@ -3315,208 +3542,246 @@ public class FEM1 {
 			}
 
 			switch (s) {
-			case 1: case 2: case 3:	{								// found stencil 1/2/3?
-				streamNodesIST += slotcodeSumIST[force_ChgA?Sl_ChgA:slotcode]; elements++;
-				elemPage = verifySpaceElementPg();					// verify that there is space in the paging array
-				elemPage[ePg++] = nodeRemap[n0] > 0 ? nodeRemap[n0] : (nodeRemap[n0] = newNodeIdx++);
-				elemPage[ePg++] = nodeRemap[n1] > 0 ? nodeRemap[n1] : (nodeRemap[n1] = newNodeIdx++);
-				elemPage[ePg++] = nodeRemap[n2] > 0 ? nodeRemap[n2] : (nodeRemap[n2] = newNodeIdx++);
-				elemPage[ePg++] = nodeRemap[n3] > 0 ? nodeRemap[n3] : (nodeRemap[n3] = newNodeIdx++);
+			case 1: case 2: case 3:	{											// found stencil 1/2/3?
+				streamNodesIST += slotcodeSumIST[force_ChgA?Sl_ChgA:slotcode];
+				elemPage = verifySpaceElementPg();								// verify that there is space in the paging array
+				elemPage[ePg++] = n0 = nodeRemap[n0] > 0 ? nodeRemap[n0] : (nodeRemap[n0] = newNodeIdx++);
+				elemPage[ePg++] = n1 = nodeRemap[n1] > 0 ? nodeRemap[n1] : (nodeRemap[n1] = newNodeIdx++);
+				elemPage[ePg++] = n2 = nodeRemap[n2] > 0 ? nodeRemap[n2] : (nodeRemap[n2] = newNodeIdx++);
+				elemPage[ePg++] = n3 = nodeRemap[n3] > 0 ? nodeRemap[n3] : (nodeRemap[n3] = newNodeIdx++);
 				// DEBUG: edgesharing tetra will also be cut on same edge (unless externalised/internalised), nodestream CAN continue
-				elemPage[ePg++] = force_ChgA?Sl_ChgA:slotcode;
-				force_ChgA = false;									// only stencils 1/2/3 can continue compaction sequence
-				count_stencil[s-1]++; }
+				int extNodeFlags = maskPSC==0 ? 0 : ~((s0&SET30)>>26|(s1&SET30)>>25|(s2&SET30)>>24|(s3&SET30)>>23) & 0xF0;
+				elemPage[ePg++]=(force_ChgA?Sl_ChgA:slotcode)|extNodeFlags;		// flag facet F132 for PSC edge fill-in testing
+				force_ChgA = false;												// only stencils 1/2/3 can continue compaction sequence
+				if (featureEdgeFillIST) { int[] elemList = { o, oN, elements, n0,n1,n2,n3 }; storeElementInOctantsIST(elemList); }
+				elements++; count_stencil[s-1]++; }
 				break;
 					
-			case 4:	{												// found stencil 4?
-				streamNodesIST += 4 + 1; elements+=2;
+			case 4:	{															// found stencil 4?
+				streamNodesIST += 4 + 1;
 				int c1 = cutNodes[cn1], c2 = cutNodes[cn2];
-				elemPage = verifySpaceElementPg();					// verify that there is space in the paging array
-				elemPage[ePg++] = nP1 = nodeRemap[nP1] > 0 ? nodeRemap[nP1] : (nodeRemap[nP1] = newNodeIdx++);
-				elemPage[ePg++] = c2 = nodeRemap[c2] > 0 ? nodeRemap[c2] : (nodeRemap[c2] = newNodeIdx++);
-				elemPage[ePg++] = nP2 = nodeRemap[nP2] > 0 ? nodeRemap[nP2] : (nodeRemap[nP2] = newNodeIdx++);
-				elemPage[ePg++] = nodeRemap[c1] > 0 ? nodeRemap[c1] : (nodeRemap[c1] = newNodeIdx++);
-				elemPage[ePg++] = Sl_ChgA;
-				elemPage = verifySpaceElementPg();					// verify that there is space in the paging array
-				elemPage[ePg++] = nodeRemap[nP3] > 0 ? nodeRemap[nP3] : (nodeRemap[nP3] = newNodeIdx++);
+				elemPage = verifySpaceElementPg();								// verify that there is space in the paging array
+				elemPage[ePg++] = nP1= nodeRemap[nP1] > 0 ? nodeRemap[nP1] : (nodeRemap[nP1] = newNodeIdx++);
+				elemPage[ePg++] = c2 = nodeRemap[c2] >   0 ? nodeRemap[c2]  : (nodeRemap[c2] = newNodeIdx++);
+				elemPage[ePg++] = nP2= nodeRemap[nP2] > 0 ? nodeRemap[nP2] : (nodeRemap[nP2] = newNodeIdx++);
+				elemPage[ePg++] = c1 = nodeRemap[c1] > 0 ? nodeRemap[c1] : (nodeRemap[c1] = newNodeIdx++);
+				elemPage[ePg++] = Sl_ChgA | (11<<4&maskPSC);					// flag facet F031 for PSC edge fill-in testing
+				elemPage[ePg++] = o; elemPage[ePg++] = oN;
+				elemPage = verifySpaceElementPg();								// verify that there is space in the paging array
+				elemPage[ePg++] = nP3= nodeRemap[nP3] > 0 ? nodeRemap[nP3] : (nodeRemap[nP3] = newNodeIdx++);
 				elemPage[ePg++] = c2;
 				elemPage[ePg++] = nP2;
 				elemPage[ePg++] = nP1;
-				elemPage[ePg++] = Sl_FtoL|COMPACT_NEXT_ChgA;		// can be compacted by First-To-Last-mode with previous 4 nodes
-				count_stencil[3]++; } break;
+				elemPage[ePg++] = Sl_FtoL|COMPACT_NEXT_ChgA;					// can be compacted by First-To-Last-mode with previous 4 nodes
+				if (featureEdgeFillIST) { int[] elemList = { o, oN, elements, nP1,c2,nP2,c1,nP3,c2,nP2,nP1 }; storeElementInOctantsIST(elemList); }
+				elements += 2; count_stencil[3]++;
+			} break;
 
-			case 5:	{												// found stencil 5?
-				streamNodesIST += 4 + 1 + 1; elements+=3;
+			case 5:	{															// found stencil 5?
+				streamNodesIST += 4 + 1 + 1;
 				int c1 = cutNodes[cn1], c2 = cutNodes[cn2], c3 = cutNodes[cn3], c4 = cutNodes[cn4];
-				elemPage = verifySpaceElementPg();					// verify that there is space in the paging array
+				elemPage = verifySpaceElementPg();								// verify that there is space in the paging array
 				elemPage[ePg++] = c3 = nodeRemap[c3] > 0 ? nodeRemap[c3] : (nodeRemap[c3] = newNodeIdx++);
-				elemPage[ePg++] = nP2 = nodeRemap[nP2] > 0 ? nodeRemap[nP2] : (nodeRemap[nP2] = newNodeIdx++);
+				elemPage[ePg++] = nP2= nodeRemap[nP2] > 0 ? nodeRemap[nP2] : (nodeRemap[nP2] = newNodeIdx++);
 				elemPage[ePg++] = c2 = nodeRemap[c2] > 0 ? nodeRemap[c2] : (nodeRemap[c2] = newNodeIdx++);
-				elemPage[ePg++] = nodeRemap[c4] > 0 ? nodeRemap[c4] : (nodeRemap[c4] = newNodeIdx++);
-				elemPage[ePg++] = Sl_ChgA;
-				elemPage = verifySpaceElementPg();					// verify that there is space in the paging array
-				elemPage[ePg++] = nP0 = nodeRemap[nP0] > 0 ? nodeRemap[nP0] : (nodeRemap[nP0] = newNodeIdx++);
+				elemPage[ePg++] = c4 = nodeRemap[c4] > 0 ? nodeRemap[c4] : (nodeRemap[c4] = newNodeIdx++);
+				elemPage[ePg++] = Sl_ChgA| (13<<4&maskPSC);						// flag facet F023 for PSC edge fill-in testing
+				elemPage[ePg++] = o; elemPage[ePg++] = oN;
+				elemPage = verifySpaceElementPg();								// verify that there is space in the paging array
+				elemPage[ePg++] = nP0= nodeRemap[nP0] > 0 ? nodeRemap[nP0] : (nodeRemap[nP0] = newNodeIdx++);
 				elemPage[ePg++] = nP2;
 				elemPage[ePg++] = c2;
 				elemPage[ePg++] = c3;
-				elemPage[ePg++] = Sl_FtoL;							// can be compacted by First-To-Last-mode with previous 4 nodes
-				elemPage = verifySpaceElementPg();					// verify that there is space in the paging array
-				elemPage[ePg++] = nodeRemap[c1] > 0 ? nodeRemap[c1] : (nodeRemap[c1] = newNodeIdx++);
+				elemPage[ePg++] = Sl_FtoL;										// can be compacted by First-To-Last-mode with previous 4 nodes
+				elemPage[ePg++] = o; elemPage[ePg++] = oN;
+				elemPage = verifySpaceElementPg();								// verify that there is space in the paging array
+				elemPage[ePg++] = c1 = nodeRemap[c1] > 0 ? nodeRemap[c1] : (nodeRemap[c1] = newNodeIdx++);
 				elemPage[ePg++] = nP0;
 				elemPage[ePg++] = c2;
 				elemPage[ePg++] = c3;
-				elemPage[ePg++] = Sl_Mv01|COMPACT_NEXT_ChgA;		// can be compacted by Move-1st-To-2nd with previous 4 nodes
-				count_stencil[4]++; } break;
+				elemPage[ePg++] = Sl_Mv01|COMPACT_NEXT_ChgA|(13<<4&maskPSC);	// flag facet F023 for PSC edge fill-in testing
+				if (featureEdgeFillIST) {
+					int[] elemList = { o, oN, elements, c3,nP2,c2,c4,nP0,nP2,c2,c3,c1,nP0,c2,c3 }; storeElementInOctantsIST(elemList); }
+				elements += 3; count_stencil[4]++; } break;
 				
-			case 50: {												// found stencil 5 mirrored?
-				streamNodesIST += 4 + 1 + 1; elements+=3;
+			case 50: {															// found stencil 5 mirrored?
+				streamNodesIST += 4 + 1 + 1;
 				int c1 = cutNodes[cn1], c2 = cutNodes[cn2], c3 = cutNodes[cn3], c4 = cutNodes[cn4];
-				elemPage = verifySpaceElementPg();					// verify that there is space in the paging array
-				elemPage[ePg++] = nP1 = nodeRemap[nP1] > 0 ? nodeRemap[nP1] : (nodeRemap[nP1] = newNodeIdx++);
-				elemPage[ePg++] = nodeRemap[c4] > 0 ? nodeRemap[c4] : (nodeRemap[c4] = newNodeIdx++);
+				elemPage = verifySpaceElementPg();								// verify that there is space in the paging array
+				elemPage[ePg++] = nP1= nodeRemap[nP1] > 0 ? nodeRemap[nP1] : (nodeRemap[nP1] = newNodeIdx++);
+				elemPage[ePg++] = c4 = nodeRemap[c4] > 0 ? nodeRemap[c4] : (nodeRemap[c4] = newNodeIdx++);
 				elemPage[ePg++] = c3 = nodeRemap[c3] > 0 ? nodeRemap[c3] : (nodeRemap[c3] = newNodeIdx++);
 				elemPage[ePg++] = c2 = nodeRemap[c2] > 0 ? nodeRemap[c2] : (nodeRemap[c2] = newNodeIdx++);
-				elemPage[ePg++] = Sl_ChgA;
-				elemPage = verifySpaceElementPg();					// verify that there is space in the paging array
-				elemPage[ePg++] = nP0 = nodeRemap[nP0] > 0 ? nodeRemap[nP0] : (nodeRemap[nP0] = newNodeIdx++);
+				elemPage[ePg++] = Sl_ChgA | (14<<4&maskPSC);					// flag facet F132 for PSC edge fill-in testing
+				elemPage[ePg++] = o; elemPage[ePg++] = oN;
+				elemPage = verifySpaceElementPg();								// verify that there is space in the paging array
+				elemPage[ePg++] = nP0= nodeRemap[nP0] > 0 ? nodeRemap[nP0] : (nodeRemap[nP0] = newNodeIdx++);
 				elemPage[ePg++] = nP1;
 				elemPage[ePg++] = c3;
 				elemPage[ePg++] = c2;
-				elemPage[ePg++] = Sl_Mv01;							// can be compacted by First-To-Last-mode with previous 4 nodes
-				elemPage = verifySpaceElementPg();					// verify that there is space in the paging array
-				elemPage[ePg++] = nodeRemap[c1] > 0 ? nodeRemap[c1] : (nodeRemap[c1] = newNodeIdx++);
+				elemPage[ePg++] = Sl_Mv01;										// can be compacted by First-To-Last-mode with previous 4 nodes
+				elemPage[ePg++] = o; elemPage[ePg++] = oN;
+				elemPage = verifySpaceElementPg();								// verify that there is space in the paging array
+				elemPage[ePg++] = c1 = nodeRemap[c1] > 0 ? nodeRemap[c1] : (nodeRemap[c1] = newNodeIdx++);
 				elemPage[ePg++] = nP0;
 				elemPage[ePg++] = c3;
 				elemPage[ePg++] = c2;
-				elemPage[ePg++] = Sl_Mv01|COMPACT_NEXT_ChgA;		// can be compacted by Move-1st-To-2nd with previous 4 nodes
-				count_stencil[4]++; } break;
+				elemPage[ePg++] = Sl_Mv01|COMPACT_NEXT_ChgA|(13<<4&maskPSC);	// flag facet F023 for PSC edge fill-in testing
+				if (featureEdgeFillIST) {
+					int[] elemList = { o, oN, elements, nP1,c4,c3,c2,nP0,nP1,c3,c2,c1,nP0,c3,c2 }; storeElementInOctantsIST(elemList); }
+				elements += 3; count_stencil[4]++; } break;
 
-			case 6: {												// found stencil 6?
-				streamNodesIST += 4 + 1; elements+=2;
+			case 6: {															// found stencil 6?
+				streamNodesIST += 4 + 1;
 				int c1 = cutNodes[cn1], c2 = cutNodes[cn2];
-				elemPage = verifySpaceElementPg();					// verify that there is space in the paging array
-				if (mirror) {										// was parity rule flag set, enforcing a mirror?
-					elemPage[ePg++] = nP1 = nodeRemap[nP1] > 0 ? nodeRemap[nP1] : (nodeRemap[nP1] = newNodeIdx++);
-					elemPage[ePg++] = nP3 = nodeRemap[nP3] > 0 ? nodeRemap[nP3] : (nodeRemap[nP3] = newNodeIdx++);
+				elemPage = verifySpaceElementPg();								// verify that there is space in the paging array
+				if (mirror) {													// was parity rule flag set, enforcing a mirror?
+					elemPage[ePg++] = nP1= nodeRemap[nP1] > 0 ? nodeRemap[nP1] : (nodeRemap[nP1] = newNodeIdx++);
+					elemPage[ePg++] = nP3= nodeRemap[nP3] > 0 ? nodeRemap[nP3] : (nodeRemap[nP3] = newNodeIdx++);
 					elemPage[ePg++] = c2 = nodeRemap[c2] > 0 ? nodeRemap[c2] : (nodeRemap[c2] = newNodeIdx++);
-					elemPage[ePg++] = nodeRemap[c1] > 0 ? nodeRemap[c1] : (nodeRemap[c1] = newNodeIdx++);
-					elemPage[ePg++] = Sl_ChgA;
-					elemPage = verifySpaceElementPg();				// verify that there is space in the paging array
-					elemPage[ePg++] = nodeRemap[nP2] > 0 ? nodeRemap[nP2] : (nodeRemap[nP2] = newNodeIdx++);
+					elemPage[ePg++] = c1 = nodeRemap[c1] > 0 ? nodeRemap[c1] : (nodeRemap[c1] = newNodeIdx++);
+					elemPage[ePg++] = Sl_ChgA | (14<<4&maskPSC);				// flag facet F132 for PSC edge fill-in testing
+					elemPage[ePg++] = o; elemPage[ePg++] = oN;
+					elemPage = verifySpaceElementPg();							// verify that there is space in the paging array
+					elemPage[ePg++] = nP2= nodeRemap[nP2] > 0 ? nodeRemap[nP2] : (nodeRemap[nP2] = newNodeIdx++);
 					elemPage[ePg++] = nP3;
 					elemPage[ePg++] = c2;
 					elemPage[ePg++] = nP1;
+					if (featureEdgeFillIST) { int[] elemList = { o, oN, elements, nP1,nP3,c2,c1,nP2,nP3,c2,nP1 }; storeElementInOctantsIST(elemList); }
 				} else {
 					elemPage[ePg++] = c1 = nodeRemap[c1] > 0 ? nodeRemap[c1] : (nodeRemap[c1] = newNodeIdx++);
-					elemPage[ePg++] = nP3 = nodeRemap[nP3] > 0 ? nodeRemap[nP3] : (nodeRemap[nP3] = newNodeIdx++);
-					elemPage[ePg++] = nP2 = nodeRemap[nP2] > 0 ? nodeRemap[nP2] : (nodeRemap[nP2] = newNodeIdx++);
-					elemPage[ePg++] = nodeRemap[c2] > 0 ? nodeRemap[c2] : (nodeRemap[c2] = newNodeIdx++);
-					elemPage[ePg++] = Sl_ChgA;
-					elemPage = verifySpaceElementPg();				// verify that there is space in the paging array
-					elemPage[ePg++] = nodeRemap[nP1] > 0 ? nodeRemap[nP1] : (nodeRemap[nP1] = newNodeIdx++);
+					elemPage[ePg++] = nP3= nodeRemap[nP3] > 0 ? nodeRemap[nP3] : (nodeRemap[nP3] = newNodeIdx++);
+					elemPage[ePg++] = nP2= nodeRemap[nP2] > 0 ? nodeRemap[nP2] : (nodeRemap[nP2] = newNodeIdx++);
+					elemPage[ePg++] = c2 = nodeRemap[c2] > 0 ? nodeRemap[c2] : (nodeRemap[c2] = newNodeIdx++);
+					elemPage[ePg++] = Sl_ChgA | (11<<4&maskPSC);				// flag facet F031 for PSC edge fill-in testing
+					elemPage[ePg++] = o; elemPage[ePg++] = oN;
+					elemPage = verifySpaceElementPg();							// verify that there is space in the paging array
+					elemPage[ePg++] = nP1= nodeRemap[nP1] > 0 ? nodeRemap[nP1] : (nodeRemap[nP1] = newNodeIdx++);
 					elemPage[ePg++] = nP3;
 					elemPage[ePg++] = nP2;
 					elemPage[ePg++] = c1;
+					if (featureEdgeFillIST) { int[] elemList = { o, oN, elements, c1,nP3,nP2,c2,nP1,nP3,nP2,c1 }; storeElementInOctantsIST(elemList); }
 				}
-				elemPage[ePg++] = Sl_FtoL|COMPACT_NEXT_ChgA;		// can be compacted by First-To-Last-mode with previous 4 nodes
-				count_stencil[5]++; } break;
+				elemPage[ePg++] = Sl_FtoL|COMPACT_NEXT_ChgA;					// can be compacted by First-To-Last-mode with previous 4 nodes
+				elements += 2; count_stencil[5]++; } break;
 				
-			case 7: {												// found stencil 7?
-				streamNodesIST += 4 + 1 + 1; elements+=3;
+			case 7: {															// found stencil 7?
+				streamNodesIST += 4 + 1 + 1;
 				int c1 = cutNodes[cn1], c2 = cutNodes[cn2], c3 = cutNodes[cn3];
-				elemPage = verifySpaceElementPg();					// verify that there is space in the paging array
+				elemPage = verifySpaceElementPg();								// verify that there is space in the paging array
 				if (mirror) {
 					elemPage[ePg++] = c2 = nodeRemap[c2] > 0 ? nodeRemap[c2] : (nodeRemap[c2] = newNodeIdx++);
-					elemPage[ePg++] = nP1 = nodeRemap[nP1] > 0 ? nodeRemap[nP1] : (nodeRemap[nP1] = newNodeIdx++);
+					elemPage[ePg++] = nP1= nodeRemap[nP1] > 0 ? nodeRemap[nP1] : (nodeRemap[nP1] = newNodeIdx++);
 					elemPage[ePg++] = c3 = nodeRemap[c3] > 0 ? nodeRemap[c3] : (nodeRemap[c3] = newNodeIdx++);
-					elemPage[ePg++] = nodeRemap[c1] > 0 ? nodeRemap[c1] : (nodeRemap[c1] = newNodeIdx++);
-					elemPage[ePg++] = Sl_ChgA;
-					elemPage = verifySpaceElementPg();				// verify that there is space in the paging array
+					elemPage[ePg++] = c1 = nodeRemap[c1] > 0 ? nodeRemap[c1] : (nodeRemap[c1] = newNodeIdx++);
+					elemPage[ePg++] = Sl_ChgA | (13<<4&maskPSC);				// flag facet F023 for PSC edge fill-in testing
+					elemPage[ePg++] = o; elemPage[ePg++] = oN;
+					elemPage = verifySpaceElementPg();							// verify that there is space in the paging array
 					elemPage[ePg++] = nP2 = nodeRemap[nP2] > 0 ? nodeRemap[nP2] : (nodeRemap[nP2] = newNodeIdx++);
 					elemPage[ePg++] = nP1;
 					elemPage[ePg++] = c3;
 					elemPage[ePg++] = c2;
-					elemPage[ePg++] = Sl_FtoL;						// can be compacted by First-To-Last-mode with previous 4 nodes
-					elemPage = verifySpaceElementPg();				// verify that there is space in the paging array
-					elemPage[ePg++] = nodeRemap[nP3] > 0 ? nodeRemap[nP3] : (nodeRemap[nP3] = newNodeIdx++);
+					elemPage[ePg++] = Sl_FtoL;									// can be compacted by First-To-Last-mode with previous 4 nodes
+					elemPage[ePg++] = o; elemPage[ePg++] = oN;
+					elemPage = verifySpaceElementPg();							// verify that there is space in the paging array
+					elemPage[ePg++] = nP3= nodeRemap[nP3] > 0 ? nodeRemap[nP3] : (nodeRemap[nP3] = newNodeIdx++);
 					elemPage[ePg++] = nP1;
 					elemPage[ePg++] = c3;
 					elemPage[ePg++] = nP2;
-					elemPage[ePg++] = Sl_FtoL|COMPACT_NEXT_ChgA;	// can be compacted by First-To-Last-mode with previous 4 nodes
+					elemPage[ePg++] = Sl_FtoL|COMPACT_NEXT_ChgA;				// can be compacted by First-To-Last-mode with previous 4 nodes
+					if (featureEdgeFillIST) {
+						int[] elemList = { o, oN, elements, c2,nP1,c3,c1,nP2,nP1,c3,c2,nP3,nP1,c3,nP2 }; storeElementInOctantsIST(elemList); }
 				} else {
-					elemPage[ePg++] = nP2 = nodeRemap[nP2] > 0 ? nodeRemap[nP2] : (nodeRemap[nP2] = newNodeIdx++);
+					elemPage[ePg++] = nP2= nodeRemap[nP2] > 0 ? nodeRemap[nP2] : (nodeRemap[nP2] = newNodeIdx++);
 					elemPage[ePg++] = c1 = nodeRemap[c1] > 0 ? nodeRemap[c1] : (nodeRemap[c1] = newNodeIdx++);
 					elemPage[ePg++] = c3 = nodeRemap[c3] > 0 ? nodeRemap[c3] : (nodeRemap[c3] = newNodeIdx++);
-					elemPage[ePg++] = nodeRemap[c2] > 0 ? nodeRemap[c2] : (nodeRemap[c2] = newNodeIdx++);
-					elemPage[ePg++] = Sl_ChgA;
-					elemPage = verifySpaceElementPg();				// verify that there is space in the paging array
-					elemPage[ePg++] = nP1 = nodeRemap[nP1] > 0 ? nodeRemap[nP1] : (nodeRemap[nP1] = newNodeIdx++);
+					elemPage[ePg++] = c2 = nodeRemap[c2] > 0 ? nodeRemap[c2] : (nodeRemap[c2] = newNodeIdx++);
+					elemPage[ePg++] = Sl_ChgA | (14<<4&maskPSC);				// flag facet F132 for PSC edge fill-in testing
+					elemPage[ePg++] = o; elemPage[ePg++] = oN;
+					elemPage = verifySpaceElementPg();							// verify that there is space in the paging array
+					elemPage[ePg++] = nP1= nodeRemap[nP1] > 0 ? nodeRemap[nP1] : (nodeRemap[nP1] = newNodeIdx++);
 					elemPage[ePg++] = c1;
 					elemPage[ePg++] = c3;
 					elemPage[ePg++] = nP2;
-					elemPage[ePg++] = Sl_FtoL;						// can be compacted by First-To-Last-mode with previous 4 nodes
-					elemPage = verifySpaceElementPg();				// verify that there is space in the paging array
-					elemPage[ePg++] = nodeRemap[nP3] > 0 ? nodeRemap[nP3] : (nodeRemap[nP3] = newNodeIdx++);
+					elemPage[ePg++] = Sl_FtoL;									// can be compacted by First-To-Last-mode with previous 4 nodes
+					elemPage[ePg++] = o; elemPage[ePg++] = oN;
+					elemPage = verifySpaceElementPg();							// verify that there is space in the paging array
+					elemPage[ePg++] = nP3= nodeRemap[nP3] > 0 ? nodeRemap[nP3] : (nodeRemap[nP3] = newNodeIdx++);
 					elemPage[ePg++] = nP1;
 					elemPage[ePg++] = c3;
 					elemPage[ePg++] = nP2;
-					elemPage[ePg++] = Sl_Mv01|COMPACT_NEXT_ChgA;	// can be compacted by Move-1st-To-2nd with previous 4 nodes
+					elemPage[ePg++] = Sl_Mv01|COMPACT_NEXT_ChgA;				// can be compacted by Move-1st-To-2nd with previous 4 nodes
+					if (featureEdgeFillIST) {
+						int[] elemList = { o, oN, elements, nP2,c1,c3,c2,nP1,c1,c3,nP2,nP3,nP1,c3,nP2 }; storeElementInOctantsIST(elemList); }
 				}
-				count_stencil[6]++; } break;
+				elements += 3; count_stencil[6]++; } break;
 
-			case 8: {												// found stencil 8?
-				streamNodesIST += 4 + 1 + 1; elements+=3;
+			case 8: {															// found stencil 8?
+				streamNodesIST += 4 + 1 + 1;
 				int c1 = cutNodes[cn1], c2 = cutNodes[cn2], c3 = cutNodes[cn3], c4 = cutNodes[cn4];
-				elemPage = verifySpaceElementPg();					// verify that there is space in the paging array
+				elemPage = verifySpaceElementPg();								// verify that there is space in the paging array
 				if (mirror) {
 					elemPage[ePg++] = c2 = nodeRemap[c2] > 0 ? nodeRemap[c2] : (nodeRemap[c2] = newNodeIdx++);
-					elemPage[ePg++] = nP1 = nodeRemap[nP1] > 0 ? nodeRemap[nP1] : (nodeRemap[nP1] = newNodeIdx++);
+					elemPage[ePg++] = nP1= nodeRemap[nP1] > 0 ? nodeRemap[nP1] : (nodeRemap[nP1] = newNodeIdx++);
 					elemPage[ePg++] = c3 = nodeRemap[c3] > 0 ? nodeRemap[c3] : (nodeRemap[c3] = newNodeIdx++);
-					elemPage[ePg++] = nodeRemap[c1] > 0 ? nodeRemap[c1] : (nodeRemap[c1] = newNodeIdx++);
-					elemPage[ePg++] = Sl_ChgA;
-					elemPage = verifySpaceElementPg();				// verify that there is space in the paging array
+					elemPage[ePg++] = c1 = nodeRemap[c1] > 0 ? nodeRemap[c1] : (nodeRemap[c1] = newNodeIdx++);
+					elemPage[ePg++] = Sl_ChgA | (13<<4&maskPSC);				// flag facet F023 for PSC edge fill-in testing
+					elemPage[ePg++] = o; elemPage[ePg++] = oN;
+					elemPage = verifySpaceElementPg();							// verify that there is space in the paging array
 					elemPage[ePg++] = nP2 = nodeRemap[nP2] > 0 ? nodeRemap[nP2] : (nodeRemap[nP2] = newNodeIdx++);
 					elemPage[ePg++] = nP1;
 					elemPage[ePg++] = c3;
 					elemPage[ePg++] = c2;
-					elemPage[ePg++] = Sl_FtoL;					// can be compacted by First-To-Last-mode with previous 4 nodes
-					elemPage = verifySpaceElementPg();				// verify that there is space in the paging array
-					elemPage[ePg++] = nodeRemap[c4] > 0 ? nodeRemap[c4] : (nodeRemap[c4] = newNodeIdx++);
+					elemPage[ePg++] = Sl_FtoL;									// can be compacted by First-To-Last-mode with previous 4 nodes
+					elemPage[ePg++] = o; elemPage[ePg++] = oN;
+					elemPage = verifySpaceElementPg();							// verify that there is space in the paging array
+					elemPage[ePg++] = c4 = nodeRemap[c4] > 0 ? nodeRemap[c4] : (nodeRemap[c4] = newNodeIdx++);
 					elemPage[ePg++] = nP2;
 					elemPage[ePg++] = c3;
 					elemPage[ePg++] = c2;
-					elemPage[ePg++] = Sl_Mv01|COMPACT_NEXT_ChgA;	// can be compacted by First-To-Last-mode with previous 4 nodes
+					elemPage[ePg++] = Sl_Mv01|COMPACT_NEXT_ChgA|(13<<4&maskPSC);// flag facet F023 for PSC edge fill-in testing
+					if (featureEdgeFillIST) {
+						int[] elemList = { o, oN, elements, c2,nP1,c3,c1,nP2,nP1,c3,c2,c4,nP2,c3,c2 }; storeElementInOctantsIST(elemList); }
 				} else {
-					elemPage[ePg++] = nP2 = nodeRemap[nP2] > 0 ? nodeRemap[nP2] : (nodeRemap[nP2] = newNodeIdx++);
+					elemPage[ePg++] = nP2= nodeRemap[nP2] > 0 ? nodeRemap[nP2] : (nodeRemap[nP2] = newNodeIdx++);
 					elemPage[ePg++] = c1 = nodeRemap[c1] > 0 ? nodeRemap[c1] : (nodeRemap[c1] = newNodeIdx++);
 					elemPage[ePg++] = c4 = nodeRemap[c4] > 0 ? nodeRemap[c4] : (nodeRemap[c4] = newNodeIdx++);
-					elemPage[ePg++] = nodeRemap[c2] > 0 ? nodeRemap[c2] : (nodeRemap[c2] = newNodeIdx++);
-					elemPage[ePg++] = Sl_ChgA;
-					elemPage = verifySpaceElementPg();				// verify that there is space in the paging array
+					elemPage[ePg++] = c2 = nodeRemap[c2] > 0 ? nodeRemap[c2] : (nodeRemap[c2] = newNodeIdx++);
+					elemPage[ePg++] = Sl_ChgA | (14<<4&maskPSC);				// flag facet F132 for PSC edge fill-in testing
+					elemPage[ePg++] = o; elemPage[ePg++] = oN;
+					elemPage = verifySpaceElementPg();							// verify that there is space in the paging array
 					elemPage[ePg++] = nP1 = nodeRemap[nP1] > 0 ? nodeRemap[nP1] : (nodeRemap[nP1] = newNodeIdx++);
 					elemPage[ePg++] = c1;
 					elemPage[ePg++] = c4;
 					elemPage[ePg++] = nP2;
-					elemPage[ePg++] = Sl_FtoL;						// can be compacted by First-To-Last-mode with previous 4 nodes
-					elemPage = verifySpaceElementPg();				// verify that there is space in the paging array
-					elemPage[ePg++] = nodeRemap[c3] > 0 ? nodeRemap[c3] : (nodeRemap[c3] = newNodeIdx++);
+					elemPage[ePg++] = Sl_FtoL;									// can be compacted by First-To-Last-mode with previous 4 nodes
+					elemPage[ePg++] = o; elemPage[ePg++] = oN;
+					elemPage = verifySpaceElementPg();							// verify that there is space in the paging array
+					elemPage[ePg++] = c3 = nodeRemap[c3] > 0 ? nodeRemap[c3] : (nodeRemap[c3] = newNodeIdx++);
 					elemPage[ePg++] = c1;
 					elemPage[ePg++] = c4;
 					elemPage[ePg++] = nP1;
-					elemPage[ePg++] = Sl_FtoL|COMPACT_NEXT_ChgA;	// can be compacted by First-To-Last-mode with previous 4 nodes
+					elemPage[ePg++] = Sl_FtoL|COMPACT_NEXT_ChgA|(7<<4&maskPSC);	// flag facet F012 for PSC edge fill-in testing
+					if (featureEdgeFillIST) {
+						int[] elemList = { o, oN, elements, nP2,c1,c4,c2,nP1,c1,c4,nP2,c3,c1,c4,nP1 }; storeElementInOctantsIST(elemList); }
 				}
-				count_stencil[7]++; } break;
+				elements += 3; count_stencil[7]++; } break;
 			}
+			elemPage[ePg++] = o; elemPage[ePg++] = oN;
 			if (force_ChgA) count_ChgAforces++;
 		}
-		cutNodes = null;											// cut nodes only needed for stencil generation, kill array
-		elementIST = null;											// kill the boundary elements gathering array
+		cutNodes = null;														// cut nodes only needed for stencil generation, kill array
+		elementIST = null;														// elements were reaccumulated in elementPg[], kill elementIST[]
+		readElementPg = finalArrayPg = true; startPrintEntry = 0;
 		
 		// recombine snapped nodes & cutnodes into a single condensed array, unused nodes eliminated			
-		double[] nodeIST1 = nodeHTableIST.array(0, nodeRemap, newNodeIdx);
+		double[] nodeIST1 = null;
+		// if PSC edge fill-in activated, attach worst-case space at end for eventual elements filled versus PSC feature edges
+		if (featureEdgeFillIST) nodeIST1 = nodeHTableIST.arrayWithSpace(edgeFillElements, false, 0, nodeRemap, newNodeIdx, true);
+		else 					nodeIST1 = nodeHTableIST.array(0, nodeRemap, newNodeIdx);
 		for (int i=0, i3f = 0; i < nodesIST; i++) {
 			int i3t = nodeRemap[i];
-			if (i3t == 0) { i3f += 3; continue; } else i3t *= 3;
+			if (i3t == 0) { i3f += NCOORD; continue; } else i3t *= NCOORD;
 			nodeIST1[i3t++] = nodeIST[i3f++]; nodeIST1[i3t++] = nodeIST[i3f++]; nodeIST1[i3t] = nodeIST[i3f++];
 		}
 		nodeRemap = null;
@@ -3525,47 +3790,78 @@ public class FEM1 {
 		nodeHTableIST = null;
 		debugIST_phase4time = System.nanoTime() - debugIST_phase4time;		// time phase 4
 
+		// do the extension of elements towards PSC feature edges, if requested
+		int[] elemPage = elementPg[0];
+		if (featureEdgeFillIST) {
+			visitFillNodeIST = new VisitBitArray(nodesIST);									// tested nodes marked here
+			for (int e = 0, ePage = 0, e7 = 0; e < elements; e++) {
+				startPrintEntry = e;
+				if (e7 >= elementPgSize) { e7 = 0; elemPage = elementPg[++ePage]; }			// go to next page of elements if last one was read
+				int n0 = elemPage[e7++], status = elemPage[e7+3], int_ext = status>>4&0xF;
+				if (int_ext<7 || (status&SET28)!=0) { e7 += 6; continue; }					// prerequisites: at least 3 boundary nodes & nondeleted element
+				int n1 = elemPage[e7++], n2 = elemPage[e7++], n3 = elemPage[e7++]; e7++;
+				int extendType = 0, sliverRetests = 0;
+				do {
+					switch (int_ext) {
+					case 7:		extendType = extendElementToEdgeIST(elemPage[e7++], elemPage[e7++], n0, n1, n2, n3, e7-7, elemPage); break;
+					case 11:	extendType = extendElementToEdgeIST(elemPage[e7++], elemPage[e7++], n0, n3, n1, n2, e7-7, elemPage); break;
+					case 13:	extendType = extendElementToEdgeIST(elemPage[e7++], elemPage[e7++], n0, n2, n3, n1, e7-7, elemPage); break;
+					case 14:	extendType = extendElementToEdgeIST(elemPage[e7++], elemPage[e7++], n1, n3, n2, n0, e7-7, elemPage); break;
+					case 15: 	//sliverRetests = testSliverIntExt();		// TODO: a facet eliminator for slivers, by finding facet neighbours
+								//int_ext = sliverRetests>>16; sliverRetests &= 0xFFFF;
+					default: e7 += 2; }
+				} while (sliverRetests > 0);
+				//if (extendType == -1)  elemPage[e7-3]|=SET28;				// if extension was INTO the boundary, mark element as deleted
+			}
+		}	
+		elementIST = null;													// kill the boundary elements gathering array
+
 		if (DEBUG_LEVEL > 1) {
 			System.out.print(elements + " final tetrahedra.\n");
 			System.out.print("Condensed nodes final count: " + newNodeIdx + "\nStencils encountered:\n");
 			for (int s = 0; s < 8; s++) System.out.println("Stencil " + s + ": " + count_stencil[s]);
-			System.out.println("\nCompaction, forced all-node changes: " + count_ChgAforces);
+			System.out.print("\nElements eligible for PSC edge fill test: "+edgeFillElements+" ("+edgeFillElements*100/elements+"%)\n");
+			System.out.println("Compaction, forced all-node changes: " + count_ChgAforces);
 			if (DEBUG_LEVEL > 2) System.out.print("Angle distribution prior to stencilling:\n" + angleSpread.toString() + "\n\n");
 			else System.out.print("\n\n");
-			System.out.println("**************** FEM1.elementGeneratorIST() stage 5 ****************");
 		}
-		
-		debugIST_phase5time = System.nanoTime();							// start time phase 5
-		readElementPg = finalArrayPg = true;
-		startPrintElement=0; //printSlotcodes1 = true;
-		int[] count_foundCompactions = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+
 
 		// time to do the final collection of nodes into a single compact stream
 		// ---------------------------------------------------------------------
+		if (DEBUG_LEVEL > 1) System.out.println("**************** FEM1.elementGeneratorIST() stage 5 ****************");
+		debugIST_phase5time = System.nanoTime();							// start time phase 5
+		int[] count_foundCompactions = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
 		elementStream = new double[streamNodesIST * 3];
 		elementStreamCode = new long[elements / 16 + 1];
-		int[] elemPage = elementPg[0];
-		int n0=0, n1=0, n2=0, n3=0, eS = 0, n03, n13, n23, n33, eSC = 0;
+		elemPage = elementPg[0];
+		
+		int e = 0, e7 = 0, ePage = 0;
+		while ((elemPage[e7+4]&SET28)!=0) {												// skip any initial deleted element/s
+			e7+=7; e++; if (e7>=elementPgSize) { e7=0; elemPage=elementPg[++ePage]; }}	// go to next page of elements if last one was read
 		
 		// preload first element for one-ahead comparison
-		n0=elemPage[0]; n1=elemPage[1]; n2=elemPage[2]; n3=elemPage[3]; 
+		int n0=0, n1=0, n2=0, n3=0, eS = 0, n03, n13, n23, n33, eSC = 0;
+		n0=elemPage[e7++]; n1=elemPage[e7++]; n2=elemPage[e7++]; n3=elemPage[e7++]; e7 += 3; e++;
 		elementStream[eS++] = nodeIST[n03=n0*3]; elementStream[eS++] = nodeIST[++n03]; elementStream[eS++] = nodeIST[++n03];	// store first element
 		elementStream[eS++] = nodeIST[n13=n1*3]; elementStream[eS++] = nodeIST[++n13]; elementStream[eS++] = nodeIST[++n13];
 		elementStream[eS++] = nodeIST[n23=n2*3]; elementStream[eS++] = nodeIST[++n23]; elementStream[eS++] = nodeIST[++n23];
 		elementStream[eS++] = nodeIST[n33=n3*3]; elementStream[eS++] = nodeIST[++n33]; elementStream[eS++] = nodeIST[++n33];
 		long slotcodes = 0, slotCnt = 1;
 		
-		for (int e = 1, ePage = 0, e5 = 5; e < elements; e++, slotCnt++) {
-			startPrintElement = e;
-			if (e5 >= elementPgSize) { e5 = 0; elemPage = elementPg[++ePage]; }			// go to next page of elements if last one was read
+		for (; e < elements; e++, slotCnt++) {
+			startPrintEntry = e;
+			if (e7 >= elementPgSize) { e7 = 0; elemPage = elementPg[++ePage]; }			// go to next page of elements if last one was read
+			int n0N = elemPage[e7++], status = elemPage[e7 + 3];
+			if ((status&SET28) != 0) { e7 += 6; continue; }								// skip elements deleted by PSC edge extender
+			int n1N = elemPage[e7++], n2N = elemPage[e7++], n3N = elemPage[e7++]; e7 += 3;
+
 			if (slotCnt >= 16) { elementStreamCode[eSC++] = slotcodes; slotcodes = slotCnt = 0; }
-			
-			int n0N = elemPage[e5++], n1N = elemPage[e5++], n2N = elemPage[e5++], n3N = elemPage[e5++], slotcode = elemPage[e5++];
-			
-			// on changing all nodes, do a check if new nodes match up according to SOME slot coding scheme, employ scheme if they do
-			slotcode &= 0xF;
+				
+			// on changing all nodes, do a check if new nodes match up according to SOME slot coding scheme, employ that scheme if they do
+			int slotcode = status & 0xF;
 			//if (slotcode == Sl_ChgA) {
-			int oldSlotcode = slotcode;
+				int oldSlotcode = slotcode;
 				if (n1N==n1 && n2N==n2)		{
 									if (n3N==n0)		slotcode = Sl_FtoL;				// found a First-to-Last transition?
 									else 				slotcode = Sl_Ch03;	}			// found Change-3rd transition?
@@ -3603,34 +3899,40 @@ public class FEM1 {
 		}
 		if (slotcodes != 0) elementStreamCode[eSC++] = slotcodes;
 		
-		startPrintElement = 0; printSlotcodes1 = false; printSlotcodes2 = true;
+		printSlotcodes1 = false; printSlotcodes2 = true;
+		printWhat = PRINT_SLOTCODES;												// show slotcodes in debug window
 		int oldStreamNodesIST = streamNodesIST;
 		streamNodesIST = eS / 3;													// the true final count of streamed nodes	
 		element = new int[elements * 4];											// gather elements into a final index-quartet array
 		elemPage = elementPg[0];
 				
-		for (int e = 0, ePage = 0, e4 = 0, e5 = 0; e < elements; e++) {
-			startPrintElement=e;
-			if (e5 >= elementPgSize) { e5 = 0; elemPage = elementPg[++ePage]; }		// go to next page if last element was read
-			element[e4++] = elemPage[e5++]; element[e4++] = elemPage[e5++];
-			element[e4++] = elemPage[e5++]; element[e4++] = elemPage[e5++];
-			e5++;
+		e = 0; e7 = 0; ePage = 0;
+		for (int e4 = 0; e < elements; e++) {
+			startPrintEntry=e;
+			if (e7 >= elementPgSize) { e7 = 0; elemPage = elementPg[++ePage]; }		// go to next page if last element was read
+			if ((elemPage[e7 + 4]&SET28) != 0) { e7 += 7; elements--; continue; }	// skip elements deleted by PSC edge extender
+			element[e4++] = elemPage[e7++]; element[e4++] = elemPage[e7++];
+			element[e4++] = elemPage[e7++]; element[e4++] = elemPage[e7++];
+			e7 += 3;
 		}
+		elementPg = null;
+		printWhat = PRINT_ELEMENTS;													// show element quadruple data in debug window
 		debugIST_phase5time = System.nanoTime() - debugIST_phase5time;				// time phase 5
 
 		if (DEBUG_LEVEL > 1) {
 			System.out.print(oldStreamNodesIST + " premature streamnodes, " + streamNodesIST + " final streamnodes\nStream compactions found:\n");
 			for (int s = 1; s < 16; s++)
-				if (count_foundCompactions[s] != 0) System.out.print(slotcodeName[s] + ": " + count_foundCompactions[s] + (s==15 ? "\n\n" : "\n"));
-			System.out.print("Total stage timings:\nBndOcts: " + debugIST_aBOIST_time + " ns\n");
+				if (count_foundCompactions[s] != 0) System.out.print(slotcodeName[s] + ": " + count_foundCompactions[s] + "\n");
+			System.out.print("\nTotal stage timings:\nlatTree: " + debugIST_bLatt_time + " ns\nBndOcts: " + debugIST_aBOIST_time + " ns\n");
 			System.out.print("Lattice: " + debugIST_bLatt_time + " ns\n");
 			System.out.print("Stage 1: " + debugIST_phase1time + " ns\n");
 			System.out.print("Stage 2: "+debugIST_phase2time+" ns (cut function): "+debugIST_pISTe_time1+" ns, (quality analysis): "+debugIST_analysisTime+" ns\n");
 			System.out.print("Stage 3: " + debugIST_phase3time + " ns, (cut function): " + debugIST_pISTe_time2 + " ns\nStage 4: " + 
 								debugIST_phase4time + " ns\nStage 5: " + debugIST_phase5time + " ns\n");
-			double timeSum = debugIST_aBOIST_time + debugIST_bLatt_time + 
+			double timeSum = debugIST_aBOIST_time + debugIST_bLatt_time + debugIST_lTree_time +
 					debugIST_phase1time + debugIST_phase2time + debugIST_phase3time + debugIST_phase4time + debugIST_phase5time;
-			System.out.print("Percentage time:\nBndOcts: " + String.format("%.1f", 100*(double)debugIST_aBOIST_time/timeSum));
+			System.out.print("Percentage time:\nlatTree: " + String.format("%.1f", 100*(double)debugIST_lTree_time/timeSum)+"%");
+			System.out.print("\nBndOcts: " + String.format("%.1f", 100*(double)debugIST_aBOIST_time/timeSum)+"%");
 			System.out.print("\nLattice: " + String.format("%.1f", 100*(double)debugIST_bLatt_time/timeSum)+"%");
 			System.out.print("\nStage 1: " + String.format("%.1f", 100*(double)debugIST_phase1time/timeSum)+"%");
 			System.out.print("\nStage 2: " + String.format("%.1f", 100*(double)debugIST_phase2time/timeSum)+"%");
@@ -3645,30 +3947,469 @@ public class FEM1 {
 		if (DEBUG_LEVEL > 1) {
 			count_defectives = 0;
 			angleSpread = new SpreadBin(30, 0, 180, 80);
-			for (int e = 0, e4 = 0; e < elements; e++) {
+			for (int e1 = 0, e4 = 0; e1 < elements; e1++) {
 				n0 = element[e4++]; n1 = element[e4++]; n2 = element[e4++]; n3 = element[e4++];
 				double Q = 0;
 				if ((Q = tetraQuality(nodeIST, n0, n1, n2, n3)) < minElemQuality) {
-					System.out.println("Element " + e + " has bad quality: " + Q);
+					System.out.println("Element " + e1 + " has bad quality: " + Q);
 					if (DEBUG_LEVEL > 2) {
-						System.out.print(String.format  ("      n0: %.3f,%.3f,%.3f, ", nodeIST[n0*3], nodeIST[n0*3+1], nodeIST[n0*3+2]));
-						System.out.print(String.format  ("      n1: %.3f,%.3f,%.3f, ", nodeIST[n1*3], nodeIST[n1*3+1], nodeIST[n1*3+2]));
-						System.out.print(String.format  ("      n2: %.3f,%.3f,%.3f, ", nodeIST[n2*3], nodeIST[n2*3+1], nodeIST[n2*3+2]));
-						System.out.println(String.format("      n3: %.3f,%.3f,%.3f, ", nodeIST[n3*3], nodeIST[n3*3+1], nodeIST[n3*3+2]));
+						System.out.print(String.format  ("      n0: %.3f,%.3f,%.3f, ", nodeIST[n0*NCOORD], nodeIST[n0*NCOORD+1], nodeIST[n0*NCOORD+2]));
+						System.out.print(String.format  ("      n1: %.3f,%.3f,%.3f, ", nodeIST[n1*NCOORD], nodeIST[n1*NCOORD+1], nodeIST[n1*NCOORD+2]));
+						System.out.print(String.format  ("      n2: %.3f,%.3f,%.3f, ", nodeIST[n2*NCOORD], nodeIST[n2*NCOORD+1], nodeIST[n2*NCOORD+2]));
+						System.out.println(String.format("      n3: %.3f,%.3f,%.3f, ", nodeIST[n3*NCOORD], nodeIST[n3*NCOORD+1], nodeIST[n3*NCOORD+2]));
 					}
 					count_defectives++;
 				}				
 				double[] angles = tetraDihedralAngles(nodeIST, n0, n1, n2, n3);
-				if ((Q = tetraSmallestDihedral(angles)) < 10) System.out.println("Boundary element " + e + " with too small dihedral angle: " + Q);
-				if ((Q = tetraLargestDihedral(angles)) > 170) System.out.println("Boundary element " + e + " with too large dihedral angle: " + Q);
+				if ((Q = tetraSmallestDihedral(angles)) < 10) System.out.println("Boundary element " + e1 + " with too small dihedral angle: " + Q);
+				if ((Q = tetraLargestDihedral(angles)) > 170) System.out.println("Boundary element " + e1 + " with too large dihedral angle: " + Q);
 				angleSpread.add(angles[0]); angleSpread.add(angles[1]); angleSpread.add(angles[2]); 
 				angleSpread.add(angles[3]); angleSpread.add(angles[4]); angleSpread.add(angles[5]);
 			}
 			if (count_defectives > 0) System.out.print("Bad quality tetrahedra: " + count_defectives);
 			System.out.println("\nAngle distribution, final:\n" + angleSpread.toString() + "\n\n");
 		}
-		printSlotcodes2 = false;
 		enReturn[0] = elements; enReturn[1] = nodesIST; return enReturn;
+	}
+	
+	
+	
+	// method stores copy of element in the face neighbours of octant that fulfill criterions of:
+	// a) octant neighbour having fature edges			b) octant neighbour being a boundary octant
+	// method can receive a list of node quartets as optimisation to avoid redoing the criterion search of neighbours
+	void storeElementInOctantsIST(int[] elemList) {
+		int o = elemList[0];
+		FEM1Octant oct = neighbourhoodIST[o];
+		int[] nodeI = oct.nodeI;
+		if (nodeI==null) { oct.nodes = 0; nodeI = oct.nodeI = new int[8*5]; }
+		for (int n=3, n5 = 0, e = elemList[2]; n < elemList.length;) {
+			if (nodeI.length <= (n5=oct.nodes*5)){
+				int[] nodeI1 = new int[nodeI.length*2];
+				for (int n1 = 0; n1 < nodeI.length; n1++) nodeI1[n1] = nodeI[n1]; nodeI = oct.nodeI = nodeI1; }
+			nodeI[n5++]=elemList[n++]; nodeI[n5++]=elemList[n++]; nodeI[n5++]=elemList[n++]; nodeI[n5++]=elemList[n++]; nodeI[n5++]=e;
+			oct.nodes++;
+		}	
+		for (int o1 = o+1; o1 < o+7; o1++) {
+			FEM1Octant nbr = neighbourhoodIST[o1];
+			if (nbr != null && nbr.edges > 0 && !nbr.internal()) {
+				nodeI = nbr.nodeI;
+				if (nodeI==null) { nbr.nodes = 0; nodeI = nbr.nodeI = new int[8*5]; }
+				for (int n=3, e = elemList[2], n5 = 0; n < elemList.length;) {
+					if (nodeI.length <= (n5=nbr.nodes*5)){
+						int[] nodeI1 = new int[nodeI.length*2];
+						for (int n1=0; n1 < nodeI.length; n1++) nodeI1[n1]=nodeI[n1]; nodeI=nbr.nodeI=nodeI1; }
+					nodeI[n5++]=elemList[n++]; nodeI[n5++]=elemList[n++]; nodeI[n5++]=elemList[n++]; nodeI[n5++]=elemList[n++]; nodeI[n5++]=e;
+					nbr.nodes++;
+				}
+			}
+		}		
+	}
+	
+	// method finds the octant-locally stored element formed by n0,n1,n2,n3 and deletes it from elementPg[][] paging structure
+	// one of the nodes can have bit 31 set, the method then assumes it should look for that node's counter-node (the one lying in neighbour across facet)
+	// for the 4-node search the array index is returned, for counter-node search, node's global index returned + node tuple index in top 2 bits of int32
+	// search failure returns -1
+	int findElementOfOctantIST(FEM1Octant oct, int n0, int n1, int n2, int n3, boolean delete) {
+		int[] nodeI = oct.nodeI; if (nodeI==null) return -1;
+		int nCN = -1, nSum = n0+n1+n2+n3;
+		// if counter-node sought, we want facet to be defined by n0,n1,n2 and nCN to be the node opposite to the counter-node
+		if (n0<0) { nCN=n0&CLR31; n0=n1; n1=n2; n2=n3; } else if (n1<0) { nCN=n1&CLR31; n1=n2; n2=n3; } else
+		if (n2<0) { nCN=n2&CLR31; n2=n3; } else if (n3<0) { nCN=n3&CLR31; }
+		if (nCN >= 0) {
+			for (int n=0, n5=0; n < oct.nodes; n++) {
+				int n0o = nodeI[n5++], n1o = nodeI[n5++], n2o = nodeI[n5++], n3o = nodeI[n5++], e = nodeI[n5++], i0=0, i1=1, i2=2, i3=3;
+				if (n0o > n3o) { int t=n0o; n0o=n3o; n3o=t; t=i0; i0=i3; i3=t; } if (n1o > n2o) { int t=n1o; n1o=n2o; n2o=t; t=i1; i1=i2; i2=t; }
+				if (n0o > n1o) { int t=n0o; n0o=n1o; n1o=t; t=i0; i0=i1; i1=t; } if (n2o > n3o) { int t=n2o; n2o=n3o; n3o=t; t=i2; i2=i3; i3=t; }
+				if (n0 > n2) { int t=n0; n0=n2; n2=t; } if (n0 > n1) { int t=n0; n0=n1; n1=t; } if (n1 > n2) { int t=n1; n1=n2; n2=t; }
+				if (n0==n0o && n1==n1o && n2==n2o) return n3o|i3<<30; else
+				if (n0==n0o && n1==n1o && n3==n3o) return n2o|i2<<30; else
+				if (n0==n0o && n2==n2o && n3==n3o) return n1o|i1<<30; else
+				if (n1==n1o && n2==n2o && n3==n3o) return n0o|i0<<30; }
+			return -1;
+		}		
+		for (int n=0, n5=0; n < oct.nodes; n++) {
+			int n0o = nodeI[n5++], n1o = nodeI[n5++], n2o = nodeI[n5++], n3o = nodeI[n5++]; n5++;
+			if (	nSum == n0o+n1o+n2o+n3o &&							// optimisation: check if node sums match first
+					(n0==n0o||n0==n1o||n0==n2o||n0==n3o) && (n1==n0o||n1==n1o||n1==n2o||n1==n3o) &&
+					(n2==n0o||n2==n1o||n2==n2o||n2==n3o) && (n3==n0o||n3==n1o||n3==n2o||n3==n3o)) return n5-5; }
+		return -1;
+	}
+	
+	
+	// method does octant-local investigation of PSC feature edges & corners, finds out if supplied element lies OVER or UNDER the edges
+	// and tries to either EXTEND a feature element towards nearest edge/corner or EXCAVATE (construct replacement elements) into the hull towards edge
+	// note: the feature corners were found in extendBCCdoNhoodsIST()
+	private int extendElementToEdgeIST(int o, int oN, int n0, int n1, int n2, int n3, int e7, int[] elemPage) {
+		
+		FEM1Octant oct = neighbourhoodIST[o], octN = oN >= 0 ? neighbourhoodIST[oN] : null, oct1 = oct;
+		int[] facetI = oct.facetI, facetIN = null;
+		int f7o = oct.facets++ * 7, f7oN = -1, f7;
+		if (facetI==null) facetI = oct.facetI = new int[8*7];							// want to store this facet for reference, allocate space in octant
+		else if (oct.facetI.length <= f7o + 7) {										// or reallocate
+			facetI = new int[oct.facetI.length*2]; f7o = 0;
+			for (int f = 0; f < oct.facets; f++) facetI[f7o] = oct.facetI[f7o++]; oct.facetI = facetI; }
+		facetI[f7o++]=n0; facetI[f7o++]=n1; facetI[f7o++]=n2; facetI[f7o++]=n3;			// store facet + 4th node of element (always last)
+		facetI[f7o++] = -1; facetI[f7o++] = -1; facetI[f7o--] = e7/7;					// store also: spawn edge, corner/spawn node, spawn element index
+		// for tests against neighbours, store octant-overlapping element in both of it's parent octants
+		if (oN >= 0) {
+			facetIN = octN.facetI;
+			f7oN = octN.facets++ * 7;
+			if (facetIN==null) facetIN = octN.facetI = new int[8*7];					// want to store this facet for reference, allocate space in octant
+			else if (octN.facetI.length <= f7oN + 7) {									// or reallocate
+				facetIN = new int[octN.facetI.length*2]; f7oN = 0;
+				for (int f = 0; f < octN.facets; f++) facetIN[f7oN] = octN.facetI[f7oN++]; octN.facetI = facetIN; }
+			facetIN[f7oN++]=n0; facetIN[f7oN++]=n1; facetIN[f7oN++]=n2; facetIN[f7oN++]=n3;	// store facet + 4th node of element (always last)
+			facetIN[f7oN++] = -1; facetIN[f7oN++] = -1; facetIN[f7oN--] = e7/7;			// store also: spawn edge, corner/spawn node, spawn element index
+		}
+		
+		double[] eA = oct.tmpR;
+		boolean n0done = visitFillNodeIST.visited(n0), n1done = visitFillNodeIST.visited(n1), n2done = visitFillNodeIST.visited(n2);
+		int n03 = n0 * NCOORD, n13 = n1 * NCOORD, n23 = n2 * NCOORD, n33 = n3 * NCOORD; 
+		double f0x = nodeIST[n03++], f0y = nodeIST[n03++], f0z = nodeIST[n03--]; n03--;
+		double f1x = nodeIST[n13++], f1y = nodeIST[n13++], f1z = nodeIST[n13--]; n13--;
+		double f2x = nodeIST[n23++], f2y = nodeIST[n23++], f2z = nodeIST[n23--]; n23--;
+		double f3x = nodeIST[n33++], f3y = nodeIST[n33++], f3z = nodeIST[n33--]; n33--;
+		boolean octantsTested = false, neighbourTested = false, snapped = false;
+		
+		// first check if any node of triangle is within close enough range to feature edge to do a direct facet snap
+		// the check marks off nodes, so they will never be tested again (except the internal node 3, which will delete element if snapped)
+		if (!(n0done&&n1done&&n2done)) {
+			int edges = oct.edges;
+			double dist0=Double.MAX_VALUE, dist1=Double.MAX_VALUE, dist2=Double.MAX_VALUE, dist3=Double.MAX_VALUE;
+			while (!octantsTested) {
+				for (int e=0, e3=0; e < edges; e++, e3+=6) {
+					double[] point0=null, point1=null, point2=null, point3=null;
+					 // check n0/n1/n2/n3's closeness to edge
+					if (!n0done) { point0=closestPointOnEdge(f0x,f0y,f0z, eA[e3++],eA[e3++],eA[e3++],eA[e3++],eA[e3++],eA[e3]); e3-=5; dist0=point0[3]; }			
+					if (!n1done) { point1=closestPointOnEdge(f1x,f1y,f1z, eA[e3++],eA[e3++],eA[e3++],eA[e3++],eA[e3++],eA[e3]); e3-=5; dist1=point1[3]; }			
+					if (!n2done) { point2=closestPointOnEdge(f2x,f2y,f2z, eA[e3++],eA[e3++],eA[e3++],eA[e3++],eA[e3++],eA[e3]); e3-=5; dist2=point2[3]; }
+					point3 =	          closestPointOnEdge(f3x,f3y,f3z, eA[e3++],eA[e3++],eA[e3++],eA[e3++],eA[e3++],eA[e3]); e3-=5; dist3=point3[3];
+					
+					// test internal node 3 first, since it will delete element if snapped
+					if (dist3 <= featureSnapFSq) {
+						if (dist3 > featureSnapFSq*.01) {									// move node to point if it isn't already very close
+							nodeIST[n33++] = point3[0]; nodeIST[n33++] = point3[1]; nodeIST[n33--] = point3[2]; n33--; }
+						elemPage[e7 + 4] |= SET28;											// mark spawning element "deleted"
+						oct.facets--; if (oN>=0) octN.facets--; return 0;					// only internal element snapped
+					}
+					if (!n0done && dist0 <= featureSnapFSq) {
+						if (dist0 > featureSnapFSq*.01) {									// move node to point if it isn't already very close
+							double xDlt = point0[0]-f0x, yDlt = point0[1]-f0y, zDlt = point0[2]-f0z;
+							nodeIST[n03++] += xDlt; nodeIST[n03++] += yDlt; nodeIST[n03--] += zDlt; n03--;
+							// also move along the 4th node of snapped element a factor of same snape vector, compensating for quality reduction
+							int n3_3 = n3*NCOORD; nodeIST[n3_3++] += xDlt*.333; nodeIST[n3_3++] += yDlt*.333; nodeIST[n3_3] += zDlt*.333; }
+						visitFillNodeIST.visit(n0); n0done=true;
+						if (snapped) { oct.facets--; if (oN>=0) octN.facets--; return 0; }	// two snaps means we're already on surface, wipe facet & exit
+						facetI[f7o] = n0; if (oN>=0) facetIN[f7oN] = n0;						// configure snapped node for element bridging test
+						snapped = true;														// signal snap success to further tests
+					}
+					if (!n1done && dist1 <= featureSnapFSq) {
+						if (dist1 > featureSnapFSq*.01) {									// move node to point if it isn't already very close
+							double xDlt = point1[0]-f1x, yDlt = point1[1]-f1y, zDlt = point1[2]-f1z;
+							nodeIST[n13++] += xDlt; nodeIST[n13++] += yDlt; nodeIST[n13--] += zDlt; n13--;
+							int n3_3 = n3*NCOORD; nodeIST[n3_3++] += xDlt*.333; nodeIST[n3_3++] += yDlt*.333; nodeIST[n3_3] += zDlt*.333; }
+						visitFillNodeIST.visit(n1); n1done=true;
+						if (snapped) { oct.facets--; if (oN>=0) octN.facets--; return 0; }	// two snaps means we're already on surface, wipe facet & exit
+						facetI[f7o] = n1; if (oN>=0) facetIN[f7oN] = n1;						// configure snapped node for element bridging test
+						snapped = true;														// signal snap success to further tests
+					}
+					if (!n2done && dist2 <= featureSnapFSq) {
+						if (dist2 > featureSnapFSq*.01) {									// move node to point if it isn't already very close
+							double xDlt = point2[0]-f2x, yDlt = point2[1]-f2y, zDlt = point2[2]-f2z;
+							nodeIST[n23++] += xDlt; nodeIST[n23++] += yDlt; nodeIST[n23--] += zDlt; n23--;
+							int n3_3 = n3*NCOORD; nodeIST[n3_3++] += xDlt*.333; nodeIST[n3_3++] += yDlt*.333; nodeIST[n3_3] += zDlt*.333; }
+						visitFillNodeIST.visit(n2); n2done=true;
+						if (snapped) { oct.facets--; if (oN>=0) octN.facets--; return 0; }	// two snaps means we're already on surface, wipe facet & exit
+						facetI[f7o] = n2; if (oN>=0) facetIN[f7oN] = n2;						// configure snapped node for element bridging test
+						snapped = true;														// signal snap success to further tests
+					}
+				}
+				if (!neighbourTested && oN >= 0) { edges = octN.edges; eA = octN.tmpR; neighbourTested = true; continue; }
+				octantsTested = true;
+			}
+		}
+		if (!n0done) visitFillNodeIST.visit(n0); if (!n1done) visitFillNodeIST.visit(n1); if (!n2done) visitFillNodeIST.visit(n2);
+		if (featureSnapOnlyIST) return 0;													// if only snapping flagged, we're done
+		
+		double xF=(f0x+f1x+f2x)*.33333, yF=(f0y+f1y+f2y)*.33333, zF=(f0z+f1z+f2z)*.33333;	// calculate centroid of this facet element
+		double distC = Double.MAX_VALUE;
+		double[] closestPoint = null;
+		eA = oct.tmpR; int[] edgeI = oct.edgeI;
+		octantsTested = false; neighbourTested = false;
+	
+		// test every PSC feature edge to find a point on an edge closest to the centroid of the tested element facet
+		double dPF = 0; int a = 0, aClosest = 0, edges = oct.edges;							// aClosest = angle of closest found edge, a = temp.angle
+		while (!octantsTested) {
+			for (int e = 0, e3 = 0;  e < edges; e++) {
+				a = edgeAngle[edgeI[e]];
+				if (a < 7 && a > -7) continue;												// ignore too flat feature edges (-14<a<14 degrees)
+				double[] point = closestPointOnEdge(xF, yF, zF, eA[e3++],eA[e3++],eA[e3++],eA[e3++],eA[e3++],eA[e3++]);
+				//if (point[3] < featureSnapFSq) { oct.facets--; if (oN>=0) octN.facets--; return 0; }
+				if (point[3] < distC) {
+					distC = point[3]; closestPoint = point; aClosest = a;
+					facetI[f7o-1] = oct.edgeI[e]; if (oN>=0) facetIN[f7oN-1] = oct.edgeI[e]; }
+			}
+			if (!neighbourTested && oN >= 0) { edges = octN.edges; edgeI=octN.edgeI; eA = octN.tmpR; neighbourTested = true; continue; }
+			octantsTested = true;
+		}
+		double cPx = closestPoint[0], cPy = closestPoint[1], cPz = closestPoint[2];
+		// if an edge is very close to centroid, then obviously the facet is virtually lying on the surface, delete from tests and return
+		if ((dPF=distancePointToFacet(cPx,cPy,cPz, f0x,f0y,f0z,f1x,f1y,f1z,f2x,f2y,f2z)) < featureFlatnessF && dPF > -featureFlatnessF) {
+			oct.facets--; if (oN>=0) octN.facets--; return 0; }
+		
+		// for a spawn point hovering over the surface, test: 1) snapping, 2) construct element, 3) corners extension test, 4) try build bridging elements
+		if (dPF > 0) {			
+			// check if found spawn point is close enough to snap to an existing spawn node
+			octantsTested = false; neighbourTested = false; f7 = f7o;
+			while (!octantsTested) {
+				for (int f = 0, fEnd = oct1.facets-1, f7N2 = 5; f < fEnd; f++, f7N2+=7) {
+					int nNewN; if ((nNewN=oct1.facetI[f7N2])==-1) continue;		// skip facets without a spawned node
+					double dx = nodeIST[nNewN*=3] - cPx, dy = nodeIST[++nNewN] - cPy, dz = nodeIST[++nNewN] - cPz, distNN = dx*dx+dy*dy+dz*dz;
+					
+					// TODO: one can modulate the snap distance by the local feature edge lengths for adaptive tradeoff, snapping vs forming bridge elements
+					if (distNN <= featureSnapFSq && featureEdgesLinked(oct1.edgeI, f, facetI[f7o-1], oct1.facetI[f7N2-1], false, -1)) {
+						// node found to be within snap range to existing spawned node and on the same feature edge
+						int n0N = facetI[f7N2-=5], n1N = facetI[++f7N2], n2N = facetI[++f7N2];
+						// make sure this facet is an edge neighbour of found facet, mark that edge as occupied
+						if (n0==n1N&&n1==n0N || n0==n2N&&n1==n1N || n0==n0N&&n1==n2N) oct1.facetI[f7-1] |= SET29; else
+						if (n1==n1N&&n2==n0N || n1==n2N&&n2==n1N || n1==n0N&&n2==n2N) oct1.facetI[f7-1] |= SET30; else
+						if (n2==n1N&&n0==n0N || n2==n2N&&n0==n1N || n2==n0N&&n0==n2N) oct1.facetI[f7-1] |= SET31; else continue;
+					 	// place neighbour node in mid-position between both spawn points
+						cPx = (nodeIST[nNewN-=2]-=dx*.5); cPy = (nodeIST[++nNewN]-=dx*.5); cPz = (nodeIST[++nNewN]-=dx*.5);
+						facetI[f7o] = nNewN = facetI[f7N2]; if (oN>=0) facetIN[f7oN] = nNewN;
+						neighbourTested = octantsTested = true;	break;					// assign this facet's spawn node as equal to neighbour facet's
+					}
+				}
+				if (!neighbourTested && oN >= 0) { oct1 = octN; f7 = f7oN; neighbourTested = true; continue; }
+				octantsTested = true;
+			}
+
+			// take care of concave edge case when element is extended from a sunk-in facet, with a negative angle versus 1-2 neighbour elements,
+			// need to check if those 1-2 elements need to be replaced by an element trisection excavation
+/*			if (aClosest < 0) {
+				double	d01=distance(cPx-(f0x+f1x)*.5, cPy-(f0y+f1y)*.5, cPz-(f0z+f1z)*.5, false),
+						d12=distance(cPx-(f1x+f2x)*.5, cPy-(f1y+f2y)*.5, cPz-(f1z+f2z)*.5, false),
+						d20=distance(cPx-(f2x+f0x)*.5, cPy-(f2y+f0y)*.5, cPz-(f2z+f0z)*.5, false);
+				int na=-1, nb=-1, nc=-1;														// find out which edge of facet lies closest to spawning edge
+				if (d01<d12) { if (d01<d20) { na=n1; nb=n0; } else { na=n0; nb=n2; }} else if (d12<d20) { na=n2; nb=n1; } else { na=n0; nb=n2; }
+				// locate the locally stored neighbours element that share this closest edge with this facet
+				int[] nodeI = oct.nodeI;
+				for (int n = 0, n5=0; n < nodes; n++) {
+					int n0N=oct.nodeI[n5++], n1N=nodeI[n5++], n2N=nodeI[n5++], n3N=nodeI[n5++], eN=nodeI[n5++];
+					// let na,nb,nc signify the facet neighbouring on found edge
+					if (na==n0N&&nb==n1N||na==n1N&&nb==n0N) { nc = na==n0N ? n2N : n3N; } else
+					if (na==n1N&&nb==n2N||na==n2N&&nb==n1N) { nc = na==n1N ? n0N : n3N; } else
+					if (na==n2N&&nb==n0N||na==n0N&&nb==n2N) { nc = na==n0N ? n1N : n3N; } else
+					if (na==n0N&&nb==n3N||na==n3N&&nb==n0N) { nc = na==n0N ? n1N : n2N; } else
+					if (na==n1N&&nb==n3N||na==n3N&&nb==n1N) { nc = na==n1N ? n2N : n0N; } else
+					if (na==n2N&&nb==n3N||na==n3N&&nb==n2N) { nc = na==n0N ? n0N : n1N; }
+					if (nc==-1) continue;														// this element was NOT facet-neighbour on the edge
+					// TODO: delete element, insert element trisection
+				}
+			}*/
+
+			// add tetrahedron generated by the spawned point
+			int nc3 = (nodesIST + fillNodesIST) * NCOORD, nES;							// nES = feature edge spawn node
+			nodeIST[nc3++]=cPx; nodeIST[nc3++]=cPy; nodeIST[nc3++]=cPz;
+			int[] elemPageNew = verifySpaceElementPg();									// keep adding elements at end of elementPg[]
+			elemPageNew[ePg++] = n0; elemPageNew[ePg++] = n2; elemPageNew[ePg++] = n1; elemPageNew[ePg++] = nES = nodesIST + fillNodesIST++;
+			facetI[f7o] = nES; if (oN >= 0) facetIN[f7oN] = nES;						// store the generated point for that facet (otherwise = -1)			
+			elemPageNew[ePg++] = Sl_ChgA; elemPageNew[ePg++] = o; elemPageNew[ePg++] = oN; elements++;	// new tetrahedron extended
+			octantsTested = false; neighbourTested = false; f7 = f7o;
+	
+			// check all corner features: if the spawned facet is on same edge and an element can be extended towards the corner node
+			while (!octantsTested) {
+				int eN = oct1.facetI[f7-1], eNf = eN & 0xFFFFFFF;									// get spawn facet's spawning edge
+				edgeI = oct1.edgeI;
+				for (int e = oct.edges;  e < edgeI.length; e+=3) {
+					if (edgeI[e] >= 0) continue;
+					int nC = edgeI[e++]&0x7FFFFFFF, nC3 = nC*NCOORD;
+					// if spawned facet's spawned point is lying on any feature edge series linked to this PSC corner
+					if (featureEdgesLinked(edgeI, oct1.edges, edgeI[e++], eNf, true, nC)) {
+//					if (edgeI[e++]==eNf || edgeI[e++]==eNf || edgeI[e++]==eNf) {
+						int nSa=0, nSb=0; boolean extend = false;
+						// if a neighbour edge isn't occupied and a positive volume can be extended from the spawned facet on that edge towards corner node
+						if (	(eN&SET29)==0 &&
+								distancePointToFacet(node[nC3],node[nC3+1],node[nC3+2], f0x,f0y,f0z,f1x,f1y,f1z,cPx,cPy,cPz)>featureSnapF) {
+							nSa = n1; nSb = n0; oct1.facetI[f7-1]|=SET29; extend = true; } else
+						if (	(eN&SET30)==0 &&
+								distancePointToFacet(node[nC3],node[nC3+1],node[nC3+2], f1x,f1y,f1z,f2x,f2y,f2z,cPx,cPy,cPz)>featureSnapF) {
+							nSa = n2; nSb = n1; oct1.facetI[f7-1]|=SET30; extend = true; } else
+						if (	(eN&SET31)==0 &&
+								distancePointToFacet(node[nC3],node[nC3+1],node[nC3+2], f2x,f2y,f2z,f0x,f0y,f0z,cPx,cPy,cPz)>featureSnapF) {
+							nSa = n0; nSb = n2; oct1.facetI[f7-1]|=SET31; extend = true; }
+						
+						if (extend) {
+							int nCS = nodesIST + fillNodesIST++; int nCS3 = nCS * NCOORD;								// nCS = corner spawn node
+							nodeIST[nCS3++]=node[nC3++]; nodeIST[nCS3++]=node[nC3++]; nodeIST[nCS3++]=node[nC3];		// store corner feature as node
+							elemPageNew = verifySpaceElementPg();									// keep adding elements at end of elementPg[]
+							elemPageNew[ePg++] = nSa; elemPageNew[ePg++] = nSb; elemPageNew[ePg++] = nES; elemPageNew[ePg++] = nCS;
+							//oct.facetI[f7] = nCS; if (oN >= 0) octN.facetI[f7oN] = nCS;
+							elemPageNew[ePg++] = Sl_ChgA; elemPageNew[ePg++] = o; elemPageNew[ePg++] = oN; elements++;	// new tetrahedron extended
+						}
+					}
+				}
+				if (!neighbourTested && oN >= 0) { oct1 = octN; f7 = f7oN; neighbourTested = true; continue; }
+				octantsTested = true;
+			}
+
+			// investigate if a bridging element can be constructed with another neigbouring facet's generated element
+			oct = neighbourhoodIST[o]; octantsTested = neighbourTested = false; f7 = f7o;
+			while (!octantsTested) {
+				facetI = oct.facetI;
+				int nNew = facetI[f7], e = facetI[f7-1];
+				for (int f = 0, fEnd = oct.facets-1, f7N2 = 0; f < fEnd; f++) {
+					int n0N = facetI[f7N2++], n1N = facetI[f7N2++], n2N = facetI[f7N2++], eN = facetI[++f7N2], nNewN = facetI[++f7N2]; f7N2+=2;
+					// if neighbour lacks spawn node OR nodes were snapped or they're on different feature edge series, skip that neighbour facet
+					if (nNewN==-1 || nNew==nNewN || !(featureEdgesLinked(oct.edgeI, oct.edges, e, eN, true, -1))) continue;	
+					boolean n01Nfree = (eN&SET29)==0, n12Nfree = (eN&SET30)==0, n20Nfree = (eN&SET31)==0; 
+					
+					// check all possible facet-facet neighbourhoods, make sure that the meeting edges aren't already occupied
+					if ((e&SET29)==0 && (n01Nfree&&n0==n1N&&n1==n0N || n12Nfree&&n0==n2N&&n1==n1N || n20Nfree&&n0==n0N&&n1==n2N)) {
+						elemPageNew = verifySpaceElementPg();									// keep adding elements at end of elementPg[]
+						elemPageNew[ePg++] = n1; elemPageNew[ePg++] = n0; elemPageNew[ePg++] = nNew; elemPageNew[ePg++] = nNewN;
+						elemPageNew[ePg++] = Sl_ChgA; elemPageNew[ePg++] = o; elemPageNew[ePg++] = oN; elements++;
+						facetI[f7-1]|=SET29;										// flag node pair n0,n1 as occupied
+					}
+					if ((e&SET30)==0 && (n01Nfree&&n1==n1N&&n2==n0N || n12Nfree&&n1==n2N&&n2==n1N || n20Nfree&&n1==n0N&&n2==n2N)) {
+						elemPageNew = verifySpaceElementPg();						// keep adding elements at end of elementPg[]
+						elemPageNew[ePg++] = n2; elemPageNew[ePg++] = n1; elemPageNew[ePg++] = nNew; elemPageNew[ePg++] = nNewN;
+						elemPageNew[ePg++] = Sl_ChgA; elemPageNew[ePg++] = o; elemPageNew[ePg++] = oN; elements++;
+						facetI[f7-1]|=SET30;										// flag node pair n0,n1 as occupied
+					}
+					if ((e&SET31)==0 && (n01Nfree&&n2==n1N&&n0==n0N || n12Nfree&&n2==n2N&&n0==n1N || n20Nfree&&n2==n0N&&n0==n2N)) {
+						elemPageNew = verifySpaceElementPg();						// keep adding elements at end of elementPg[]
+						elemPageNew[ePg++] = n0; elemPageNew[ePg++] = n2; elemPageNew[ePg++] = nNew; elemPageNew[ePg++] = nNewN;
+						elemPageNew[ePg++] = Sl_ChgA; elemPageNew[ePg++] = o; elemPageNew[ePg++] = oN; elements++;
+						facetI[f7-1]|=SET31;										// flag node pair n0,n1 as occupied
+					}
+				}
+				if (!neighbourTested && oN >= 0) { oct = neighbourhoodIST[oN]; f7 = f7oN; neighbourTested = true; continue; }
+				octantsTested = true;
+			}
+			return 1;
+		
+		// element is negative-volumed with distance from facet plane to spawn point above negative threshold
+		} else {
+			// add trisection of tetrahedra generated by the spawned point, sunk into the boundary, mark original element for deletion
+			int nE = nodesIST + fillNodesIST++, nE3 = nE * NCOORD;
+			nodeIST[nE3++]=cPx; nodeIST[nE3++]=cPy; nodeIST[nE3++]=cPz;
+			boolean shallowExcavation = false;										// make test on depth of this excavation
+			if (tetraQuality(nodeIST, n0, n1, n2, nE) < minElemQuality) shallowExcavation = true;
+			// TODO: the deepness of the excavation is directly influencing the element quality that the 3 side-elements will have
+			// trisected elements of ACCEPTABLE quality (for further improvement), need to check how these factors interact -> what depth to accept
+			
+			// iterate through the 3 prospective elements, if any one appears defective, replace it & it's neighbour element with 3 further elements
+			int[] excTest = { n0,n3,n1, n2,n3,n0, n1,n3,n2 };						// base petals on these facet cases
+			for (int i = 0; i < excTest.length;) {
+				int na=excTest[i++], nb=excTest[i++], nc=excTest[i++];
+				if (tetraQuality(nodeIST, na, nb, nE, nc) >= minElemQuality) {		// will this trisect element have good enough quality?
+					int[] elemPageNew = verifySpaceElementPg();						// keep adding elements at end of elementPg[]
+					elemPageNew[ePg++] = na; elemPageNew[ePg++] = nb; elemPageNew[ePg++] = nE; elemPageNew[ePg++] = nc;
+					elemPageNew[ePg++] = Sl_FtoL; elemPageNew[ePg++] = o; elemPageNew[ePg++] = oN; elements++;	// new tetrahedron extended
+				} else {
+					// erase this facing element of trisect-element (it's too close to excavation point) & get it's opposing node
+					int nO = findElementOfOctantIST(oct, na, nb, nc, nE|SET31, true)&0x3FFFFFFF;
+					if (nO==-1) { fillNodesIST--; return 0; }						// DEBUG: if facing element not found, excavation fails (shouldn't happen)
+					int[] elemPageNew = verifySpaceElementPg();
+					elemPageNew[ePg++] = na; elemPageNew[ePg++] = nO; elemPageNew[ePg++] = nE; elemPageNew[ePg++] = nc;
+					elemPageNew[ePg++] = Sl_FtoL; elemPageNew[ePg++] = o; elemPageNew[ePg++] = oN; elements++;	// new tetrahedron extended
+					elemPageNew = verifySpaceElementPg();
+					elemPageNew[ePg++] = nb; elemPageNew[ePg++] = nO; elemPageNew[ePg++] = nE; elemPageNew[ePg++] = na;
+					elemPageNew[ePg++] = Sl_FtoL; elemPageNew[ePg++] = o; elemPageNew[ePg++] = oN; elements++;	// new tetrahedron extended
+					elemPageNew = verifySpaceElementPg();
+					elemPageNew[ePg++] = nc; elemPageNew[ePg++] = nO; elemPageNew[ePg++] = nE; elemPageNew[ePg++] = nb;
+					elemPageNew[ePg++] = Sl_FtoL; elemPageNew[ePg++] = o; elemPageNew[ePg++] = oN; elements++;	// new tetrahedron extended
+				}
+			}
+			elemPage[e7 + 4] |= SET28;												// mark spawning element "deleted"
+			// for a tetrahedral trisection, store element index of 1st new element with bit 31 set
+			oct.facetI[f7o++] = nE; oct.facetI[f7o] = e7 = elements|SET31;
+			if (oN >= 0) { octN.facetI[f7oN++] = nE; oct.facetI[f7oN] = elements|SET31; }
+			
+			// check if found spawn point is close enough to snap to an existing spawn node
+			oct = neighbourhoodIST[o];
+			octantsTested = false; neighbourTested = false; f7 = f7o;
+			while (!octantsTested) {
+				for (int f = 0, fEnd = oct.facets-1, f7N2 = 5; f < fEnd; f++, f7N2+=7) {
+					int nNewN, nNewN3, e7N;
+					facetI = oct.facetI;
+					if ((nNewN=facetI[f7N2])==-1 || (e7N=facetI[f7N2+1])>=0) continue;		// skip non-rose-facets/facets without spawned node
+					double dx = nodeIST[nNewN3=nNewN*NCOORD]-cPx, dy = nodeIST[++nNewN3]-cPy, dz = nodeIST[++nNewN3]-cPz, distNN = dx*dx+dy*dy+dz*dz;
+					
+					// TODO: one can modulate the snap distance by the local feature edge lengths for adaptive tradeoff, snapping vs forming bridge elements
+					if (distNN <= featureSnapFSq) {								// node found to be within snap range to existing spawned node
+						int n0N = facetI[f7N2-=5], n1N = facetI[++f7N2], n2N = facetI[++f7N2];
+						int na, nb, nc, nd;
+						// make sure this facet's an edge neighbour of found facet, mark that edge as occupied
+						if (n0==n1N&&n1==n0N) { e7N= e7N&CLR31;    e7= facetI[f7+1]&CLR31;    na=n0; nb=n1; facetI[f7-1]|=SET29; } else 
+						if (n0==n2N&&n1==n1N) { e7N= e7N&CLR31;    e7=(facetI[f7+1]&CLR31)+1; na=n0; nb=n1; facetI[f7-1]|=SET29; } else
+						if (n0==n0N&&n1==n2N) { e7N= e7N&CLR31;    e7=(facetI[f7+1]&CLR31)+2; na=n0; nb=n1; facetI[f7-1]|=SET29; } else
+						if (n1==n1N&&n2==n0N) { e7N=(e7N&CLR31)+1; e7= facetI[f7+1]&CLR31;    na=n1; nb=n2; facetI[f7-1]|=SET30; } else 
+						if (n1==n2N&&n2==n1N) { e7N=(e7N&CLR31)+1; e7=(facetI[f7+1]&CLR31)+1; na=n1; nb=n2; facetI[f7-1]|=SET30; } else
+						if (n1==n0N&&n2==n2N) { e7N=(e7N&CLR31)+1; e7=(facetI[f7+1]&CLR31)+2; na=n1; nb=n2; facetI[f7-1]|=SET30; } else
+						if (n2==n1N&&n0==n0N) { e7N=(e7N&CLR31)+2; e7= facetI[f7+1]&CLR31;    na=n2; nb=n0; facetI[f7-1]|=SET31; } else 
+						if (n2==n2N&&n0==n1N) { e7N=(e7N&CLR31)+2; e7=(facetI[f7+1]&CLR31)+1; na=n2; nb=n0; facetI[f7-1]|=SET31; } else
+						if (n2==n0N&&n0==n2N) { e7N=(e7N&CLR31)+2; e7=(facetI[f7+1]&CLR31)+2; na=n2; nb=n0; facetI[f7-1]|=SET31; } else continue;
+						// delete the two elements that form neighbourhood on the two roses shared edge
+						int page = (e7*=7)/elementPgSize; elementPg[page][e7 = e7-elementPgSize*page+4] |= SET28;
+						elementPg[page][e7-2] = nNewN;							// equal this rose's spaned node to neighbour rose's spawned node
+						int pageN = (e7N*=7)/elementPgSize; elementPg[pageN][e7N = e7N-elementPgSize*pageN+4] |= SET28;
+					 	// place neighbour node in mid-position between both spawn points
+						cPx = (nodeIST[nNewN3-=2]-=dx*.5); cPy = (nodeIST[++nNewN3]+=dx*.5); cPz = (nodeIST[++nNewN3]+=dx*.5);
+						oct.facetI[f7] = nNewN = oct.facetI[f7N2]; if (oN>=0) octN.facetI[f7oN] = nNewN;
+						
+						// note: if the two roses do not share bottommost node, then there is an unknown element wedged between them
+						// that needs to be removed, leave it's removal to stage 5, element storage, by storing the nodes for comparisons
+						if ((nc=elementPg[page][e7-3]) != (nd=elementPg[pageN][e7N-3])) {
+							if (elementPurger==null) elementPurger = new int[128*4];
+							else if (elementPurger.length <= ePrg+4) {			// check allocation of elementPurger[]
+								int[] elementPurger1 = new int[elementPurger.length * 2];
+								for (int i = 0; i < ePrg; i++) elementPurger[i] = elementPurger1[i]; elementPurger = elementPurger1; }
+							elementPurger[ePrg++] = na; elementPurger[ePrg++] = nb; elementPurger[ePrg++] = nc; elementPurger[ePrg++] = nd; 
+						}
+						neighbourTested = octantsTested = true;	break;
+					}
+				}
+				if (!neighbourTested && oN >= 0) { oct = neighbourhoodIST[oN]; f7 = f7oN; neighbourTested = true; continue; }
+				octantsTested = true;
+			}
+			return -1;																// return -1 means "excavation"
+		}
+	}
+	
+	// method finds out if two supplied feature edges are linked across 0 or more intermediate edges
+	// if cornerTest = true, method has two options:
+	//		a) if nC = -1, method will fail on tracing an edge series passing through a corner feature
+	//		b) if nC = corner node index, method will succeed if that corner is reached
+	boolean featureEdgesLinked(int[] edgeI, int edges, int e1, int e2, boolean cornerTest, int nC) {
+		int e1M2=e1<<1, e2M2=e2<<1, n1a=edgeNode[e1M2++], n1b=edgeNode[e1M2], n2a=edgeNode[e2M2++], n2b=edgeNode[e2M2], nTa=-1, nTb=-1;
+		
+		if (n1a==n2a || n1a==n2b) nTa=n1a; else if (n1b==n2a || n1b==n2b) nTa=n1b;			// first check if feature edges are linked directly
+		if (nTa >= 0) {	for (int eC = edges; eC < edgeI.length; eC+=3) {					// if so, certify they aren't linked through a corner feature
+							if (nTa==(edgeI[eC]&0x7FFFFFFF)) return false; } 
+						return true; }
+		nTa = n1a; nTb = n1b;
+
+		// the iteration will restart from beginning each time a transitive link is found, nTa shifts in one direction, nTb in the other
+		int[] edgeI1 = edgeI.clone();														// edgeI1[] array will be flagged
+		edgeI1[e1] = -1; edgeI1[e2] = -1; 
+		for (int e = 0; e < edges; e++) {													// traverse transient node equalities to "left" & "right"
+			int eT = edgeI1[e]; if (eT==-1) continue;										// ignore starting edges & tested edges
+			int eT2 = eT<<1, nQ1 = edgeNode[eT2++], nQ2 = edgeNode[eT2];
+			boolean isLinked = false;
+			if (nTa==nQ1) { nTa=nQ2; isLinked = true; } else if (nTa==nQ2) { nTa=nQ1; isLinked = true; } else
+			if (nTb==nQ1) {	nTb=nQ2; isLinked = true; } else if (nTb==nQ2) { nTb=nQ1; isLinked = true;	}		
+			if (isLinked) {
+				if (cornerTest) {
+					if (nC >= 0 && nTa==nC||nTb==nC) return true;							// corner node search was specified, it was found, so succeed
+					for (int eC = edges; eC < edgeI1.length; eC+=3)	{						// certify this transitive node isn't a feature corner
+						int nC1=edgeI1[eC]&0x7FFFFFFF; if (nTa==nC1||nTb==nC1) return false;// if edge series passed through feature corner, fail
+					}}
+				if (n2a==nQ1 || n2a==nQ2 || n2b==nQ1 || n2b==nQ2) return true;
+				edgeNode[eT] = -1; e = 0; }
+		}
+		return false;
 	}
 
 	
@@ -3682,24 +4423,24 @@ public class FEM1 {
 			return eXa*6 + (nXa==0||nXb==0?nXa+nXb-1:nXa+nXb);
 		} else {
 			// we have situation where this element refers to a neighbour who in turn has a node referral to same neighbour as this element
-			int eXb6 = eXb * 6;
+			int eXb8 = eXb * E_SIZE;
 			switch (nXb) {
 			case 0:	// check that on neighbour's edge 01/02/03, if it's node ref. = this node ref.
-				if (elementIST[eXb6+1]==na) return eXb*6;			// nbrs e01 cut node
-				if (elementIST[eXb6+2]==na) return eXb*6+1;			// nbrs e02 cut node
-				if (elementIST[eXb6+3]==na) return eXb*6+2;	break;	// nbrs e02 cut node
+				if (elementIST[eXb8+1]==na) return eXb*6;				// nbrs e01 cut node
+				if (elementIST[eXb8+2]==na) return eXb*6+1;			// nbrs e02 cut node
+				if (elementIST[eXb8+3]==na) return eXb*6+2;	break;	// nbrs e02 cut node
 			case 1:	// check that on neighbour's edge 01/12/13, if it's  the node ref. = this node ref.
-				if (elementIST[eXb6]==na)   return eXb*6;			// nbrs e01 cut node
-				if (elementIST[eXb6+2]==na) return eXb*6+3;			// nbrs e12 cut node
-				if (elementIST[eXb6+3]==na) return eXb*6+4;	break;	// nbrs e13 cut node
+				if (elementIST[eXb8]==na)   return eXb*6;				// nbrs e01 cut node
+				if (elementIST[eXb8+2]==na) return eXb*6+3;			// nbrs e12 cut node
+				if (elementIST[eXb8+3]==na) return eXb*6+4;	break;	// nbrs e13 cut node
 			case 2:	// check that on neighbour's edge 02/12/23, if it's  the node ref. = this node ref.
-				if (elementIST[eXb6]==na)   return eXb*6+1;			// nbrs e02 cut node
-				if (elementIST[eXb6+1]==na) return eXb*6+3;			// nbrs e12 cut node
-				if (elementIST[eXb6+3]==na) return eXb*6+5;	break;	// nbrs e23 cut node
+				if (elementIST[eXb8]==na)   return eXb*6+1;			// nbrs e02 cut node
+				if (elementIST[eXb8+1]==na) return eXb*6+3;			// nbrs e12 cut node
+				if (elementIST[eXb8+3]==na) return eXb*6+5;	break;	// nbrs e23 cut node
 			case 3:	// check that on neighbour's edge 03/13/23, if it's  the node ref. = this node ref.
-				if (elementIST[eXb6]==na)   return eXb*6+2;			// nbrs e03 cut node
-				if (elementIST[eXb6+1]==na) return eXb*6+4;			// nbrs e13 cut node
-				if (elementIST[eXb6+2]==na) return eXb*6+5;			// nbrs e23 cut node
+				if (elementIST[eXb8]==na)   return eXb*6+2;			// nbrs e03 cut node
+				if (elementIST[eXb8+1]==na) return eXb*6+4;			// nbrs e13 cut node
+				if (elementIST[eXb8+2]==na) return eXb*6+5;			// nbrs e23 cut node
 			}
 		}
 		debugIST_nonsharedEdge++;
@@ -3709,24 +4450,24 @@ public class FEM1 {
 	// method returns 1 if transient edge reference exists, operates with the references stored in the elements, rather than node indexes
 	private int transitiveRef(int eXa, int eXb, int nXa, int nXb) {
 		// we have situation where this element refers to a neighbour who in turn has a node referral to same neighbour as this element
-		int eXb6 = eXb * 6, ngbS = elementIST[eXb6 + 5], refa = nXa<<30|eXa;
+		int eXb8 = eXb * E_SIZE, ngbS = elementIST[eXb8 + 5], refa = nXa<<30|eXa;
 		switch (nXb) {
 		case 0:	// check that on neighbour's edge 01/02/03, if it's node ref. = this node ref.
-			if ((ngbS&TETREF1)!=0 && elementIST[eXb6+1]==refa) return 1;
-			if ((ngbS&TETREF2)!=0 && elementIST[eXb6+2]==refa) return 1;
-			if ((ngbS&TETREF3)!=0 && elementIST[eXb6+3]==refa) return 1;
+			if ((ngbS&TETREF1)!=0 && elementIST[eXb8+1]==refa) return 1;
+			if ((ngbS&TETREF2)!=0 && elementIST[eXb8+2]==refa) return 1;
+			if ((ngbS&TETREF3)!=0 && elementIST[eXb8+3]==refa) return 1;
 		case 1:	// check that on neighbour's edge 01/12/13, if it's  the node ref. = this node ref.
-			if ((ngbS&TETREF0)!=0 && elementIST[eXb6]==refa)   return 1;
-			if ((ngbS&TETREF2)!=0 && elementIST[eXb6+2]==refa) return 1;
-			if ((ngbS&TETREF3)!=0 && elementIST[eXb6+3]==refa) return 1;
+			if ((ngbS&TETREF0)!=0 && elementIST[eXb8]==refa)   return 1;
+			if ((ngbS&TETREF2)!=0 && elementIST[eXb8+2]==refa) return 1;
+			if ((ngbS&TETREF3)!=0 && elementIST[eXb8+3]==refa) return 1;
 		case 2:	// check that on neighbour's edge 02/12/23, if it's  the node ref. = this node ref.
-			if ((ngbS&TETREF0)!=0 && elementIST[eXb6]==refa)   return 1;
-			if ((ngbS&TETREF1)!=0 && elementIST[eXb6+1]==refa) return 1;
-			if ((ngbS&TETREF3)!=0 && elementIST[eXb6+3]==refa) return 1;
+			if ((ngbS&TETREF0)!=0 && elementIST[eXb8]==refa)   return 1;
+			if ((ngbS&TETREF1)!=0 && elementIST[eXb8+1]==refa) return 1;
+			if ((ngbS&TETREF3)!=0 && elementIST[eXb8+3]==refa) return 1;
 		case 3:	// check that on neighbour's edge 03/13/23, if it's  the node ref. = this node ref.
-			if ((ngbS&TETREF0)!=0 && elementIST[eXb6]==refa)   return 1;
-			if ((ngbS&TETREF1)!=0 && elementIST[eXb6+1]==refa) return 1;
-			if ((ngbS&TETREF2)!=0 && elementIST[eXb6+2]==refa) return 1;
+			if ((ngbS&TETREF0)!=0 && elementIST[eXb8]==refa)   return 1;
+			if ((ngbS&TETREF1)!=0 && elementIST[eXb8+1]==refa) return 1;
+			if ((ngbS&TETREF2)!=0 && elementIST[eXb8+2]==refa) return 1;
 		}
 		debugIST_nonsharedEdge2++;
 		return -1;
@@ -3762,13 +4503,13 @@ public class FEM1 {
 
 	private double lStepI_pISTe = 0, lStepI2_pISTe = 0, intOfsX_pISTe = 0, intOfsY_pISTe = 0;
 	private int divCofs_pISTe = 0;
+	private double[] edgeShifterIST = { 1e-8,0,0, 0,1e-8,0, 0,0,1e-8, -1e-8,0,0, 0,-1e-8,0, 0,0,-1e-8 };
 
 	// method does the boundary intersection test on a "short" or "long" IST edge, if any end of edge is within criterion closeness to the
 	// boundary, that node-end of edge is snapped to voundary and turned into a 0-node, and if no end fulfills the snapping criterion
 	// the resulting cut node is hash-stored together with the other unique IST nodes, it's approx. distance & status stored in snapNodeStatus[] array
 	// note: method works on the supplied geometry octree that carries the boundary facets
-	// TODO: method could benefit from a simple salvaging strategy for non-watertight meshes, since the boundaryLattice() method has one
-	private double[] processISTedge(FEM1Octree geocTree, int na, int nb, int[] statusE, boolean longEdge) {
+	private double[] processISTedge(FEM1Octree geocTree, FEM1Octant[] octArray, int na, int nb, int[] statusE, boolean longEdge) {
 
 		debugIST_pISTe_visits++;
 		long timerS = DEBUG_LEVEL > 1 ? System.nanoTime() : 0;
@@ -3795,10 +4536,10 @@ public class FEM1 {
 		// this edge-shrinking code expects to take care of certain topological defects when a "straddling" element gets snapped across empty space
 		// if that happens, a defective cutnode might return, right at the cusp where the edge got snapped onto the surface, this can be solved
 		// by shrinking the edge somewhat inward, and is ONLY done for stage 3, the cutnode search iterator
-		if ((status&1)==1) {
-			double shrinkx = (nax-nbx)*maxZordinDev, shrinky = (nay-nby)*maxZordinDev, shrinkz = (naz-nbz)*maxZordinDev;
-			nax -= shrinkx; nay -= shrinky; naz -= shrinkz; nbx += shrinkx; nby += shrinky; nbz += shrinkz;
-		}
+//		if ((status&1)==1) {
+//			double shrinkx = (nax-nbx)*maxZordinDev, shrinky = (nay-nby)*maxZordinDev, shrinkz = (naz-nbz)*maxZordinDev;
+//			nax -= shrinkx; nay -= shrinky; naz -= shrinkz; nbx += shrinkx; nby += shrinky; nbz += shrinkz;
+//		}
 		double xdba = nbx<nax ? nax-nbx : nbx-nax, ydba = nby<nay ? nay-nby : nby-nay, zdba = nbz<naz ? naz-nbz : nbz-naz;
 		
 		// since we've already calculated volume intersections along Z ordinate, for Z ordinate aligned edges that data will be used,
@@ -3814,26 +4555,30 @@ public class FEM1 {
 				double zEnc = fEncounterXY[e3];
 				if (z1 < zEnc && zEnc < z2) { cutNodeO[0] = nax; cutNodeO[1] = nay; cutNodeO[2] = zEnc; break; }}
 			debugIST_pISTe_fastVisits++;
+			
 		} else if (statusE[1] >= 0) {											// do we have a fast facet stored away?
 			cutNodeO = new double[3];
-			if (geocTree.fem.facetSegmentIntersection(statusE[1], nax, nay, naz, nbx, nby, nbz, cutNodeO) != 0) {
+			if (geocTree.fem.facetSegmentIntersection(statusE[1]/*|SET31*/, nax, nay, naz, nbx, nby, nbz, cutNodeO) != 0) {
 				debugIST_pISTe_fastFacetVisits++;
 			} else {
 				geocTree.fem.polygonCheck.clearVisits();						// fast facet failed to intersect, fallback to facetEncounters()
 				geocTree.fem.polygonCheck.visit(statusE[1]);
-				cutNodeO = geocTree.root.facetEncounters(geocTree, nax, nay, naz, nbx, nby, nbz, 3+16+32, statusG);
+				cutNodeO = geocTree.root.facetEncounters(geocTree, null, nax, nay, naz, nbx, nby, nbz, 3+16+32, statusG);
 				statusE[1] = statusG[2]; }
+			
 		} else {
-			cutNodeO = geocTree.root.facetEncounters(geocTree, nax, nay, naz, nbx, nby, nbz, 3+32, statusG);
+			cutNodeO = geocTree.root.facetEncounters(geocTree, null, nax, nay, naz, nbx, nby, nbz, 3+32, statusG);
 			statusE[1] = statusG[2];
 		}
-		// handle numeric border cases (node exactly at a facet plane, etc) by miniscule expansion of edge length
-//		if (statusG[0] == 0) {
-//			double growx = (nax-nbx)*1e-9, growy = (nay-nby)*1e-9, growz = (naz-nbz)*1e-9;
-//			nax += growx; nay += growy; naz += growz; nbx -= growx; nby -= growy; nbz -= growz;
-//			cutNodeO = geocTree.root.facetEncounters(geocTree, nax, nay, naz, nbx, nby, nbz, 3+32, statusG);
-//			statusE[1] = statusG[2];
-//		}
+		// handle numeric border cases (node exactly between two facets, etc) by miniscule X/Y/Z-shifts
+		if (statusG[0] == 0) {
+			int t = 0;
+			do {	cutNodeO = geocTree.root.facetEncounters(geocTree, null,
+						nax+edgeShifterIST[t++], nay+edgeShifterIST[t++], naz+edgeShifterIST[t--],
+						nbx+edgeShifterIST[--t], nby+edgeShifterIST[++t], nbz+edgeShifterIST[++t], 3+32, statusG); t++;
+			} while (cutNodeO == null && t < 18);
+			statusE[1] = statusG[2];
+		}
 		
 		/***** Cut function block ends ********************************************/
 		
@@ -3897,7 +4642,7 @@ public class FEM1 {
 	// helping method for Isosurface Stuffing method backgroundTetraGridBCC() extracts nodes from octant according to a supplied code scheme
 	// the scheme aids in compacting the nodes later (avoiding repititions) but also avoids reading them more than once
 	// method registers the running internal/external coordinate status in the intExt bitfield
-	private void processISTnode(FEM1Octant o, FEM1Octant n, int codes) {
+	private void processISTnode(FEM1Octant o, int octN, FEM1Octant n, int nbrN, int codes) {
 		
 		long timerS = DEBUG_LEVEL > 1 ? System.nanoTime() : 0;
 		byte slotcode = (byte)(codes & 0x7F), aspectCode = (byte)((codes>>8) & 0xFF);
@@ -3905,21 +4650,24 @@ public class FEM1 {
 		int mirrorFlag = (codes & 0x80) != 0 ? SET31 : 0;
 		// flush previous tetrahedron either to the internal or the boundary element arrays
 		if (slotcode < 8) {
-			switch (slotcodeIST) {													// need to mark the  vertexes that remained in place as nonunique
+			switch (slotcodeIST) {															// mark vertexes that remained in place as nonunique
 			case Sl_FtoL: tetIST1 |= SET31; tetIST2 |= SET31; tetIST3 |= SET31; break;
 			case Sl_Hld2: tetIST2 |= SET31; break;
 			case Sl_Ch01: tetIST2 |= SET31; tetIST3 |= SET31; break;
 			case Sl_Mv01: tetIST1 |= SET31; tetIST2 |= SET31; tetIST3 |= SET31; break;
 			case Sl_Ch03: tetIST1 |= SET31; tetIST2 |= SET31; break;
 			}
-			int tF0=tetIST0>>30&3, tF1=tetIST1>>30&3, tF2=tetIST2>>30&3, tF3=tetIST3>>30&3;
+			int tF0 = tetIST0>>30&3, tF1 = tetIST1>>30&3, tF2 = tetIST2>>30&3, tF3 = tetIST3>>30&3;
 
-			if (elements < 0) elements++;											// avoid writing an empty element by a 1st increment of "elements"
-			// an internal element has, per entry: 1 global order index, 4 node indexes, 1 int for the slot code
-			
-			else if (((tF0|tF1|tF2|tF3)&1) != 0) {									// if at least one node is internal
+			if (elements < 0) {
+				slotcodeIST=slotcode; edgeCodeIST=edgeCode; mirrorFlagIST=mirrorFlag;		// store data for the next element writedown
+				octantNoIST = octN; octNbrNoIST = nbrN;
+				elements++;																	// avoid writing an empty element by a 1st increment of "elements"
+			}
+			// an internal element has, per entry: 1 global order index, 4 node indexes, 1 int for the slot code, 1 spawning octant index	
+			else if (((tF0|tF1|tF2|tF3)&1) != 0) {											// if at least one node is internal
 				// the boundary element array is special, having per entry:
-				// 1 global order index, 4 node indexes/element refs, 1 pattern for stencil matching, 1 edge status & slotcode & noderef. status int
+				// 1 global index, 4 node indexes/refs, 1 stencil match pattern, 1 edge status/slotcode/noderef. status int, 2 parent octant indexes
 				int[] elemPage = verifySpaceElementPg();
 
 				int edgeFlags=0;
@@ -3927,8 +4675,8 @@ public class FEM1 {
 				switch (tF0) {
 				case 0:	edgeFlags=21;										elemPage[ePg++]=tetIST0&CLR31; break;	// if node is external & unique
 				case 1:	edgeFlags=21+FLG_EST0;								elemPage[ePg++]=tetIST0&CLR31; break;	// if node is internal & unique
-				case 2: edgeFlags|=TETREF0; tF0&=1;							elemPage[ePg++]=tetRef0; break;		// external & nonunique
-				case 3:	edgeFlags|=TETREF0; edgeFlags^=FLG_EST0; tF0&=1;	elemPage[ePg++]=tetRef0; }			// internal & nonunique, saving element ref.
+				case 2: edgeFlags|=TETREF0; tF0&=1;							elemPage[ePg++]=tetRef0; break;			// external & nonunique
+				case 3:	edgeFlags|=TETREF0; edgeFlags^=FLG_EST0; tF0&=1;	elemPage[ePg++]=tetRef0; }				// internal & nonunique, save elem. ref.
 				switch (tF1) {
 				case 0:	edgeFlags|=321;										elemPage[ePg++]=tetIST1&CLR31; break;
 				case 1:	edgeFlags|=321; edgeFlags^=FLG_EST1;				elemPage[ePg++]=tetIST1&CLR31; break;
@@ -3945,23 +4693,25 @@ public class FEM1 {
 				case 2: edgeFlags|=TETREF3; tF3&=1;							elemPage[ePg++]=tetRef3; break;
 				case 3:	edgeFlags|=TETREF3; edgeFlags^=FLG_EST3; tF3&=1;	elemPage[ePg++]=tetRef3; }
 
-				if ((edgeFlags & FLG_EBND) == 0) {										// if element is internal, pattern unnecessary
+				if ((edgeFlags & FLG_EBND) == 0) {											// if element is internal, pattern unnecessary
 					ePg++;
 					elemPage[ePg++] = SET30|edgeFlags|slotcodeIST<<12|edgeCodeIST;			// bit 31 -> volume-internal non-boundary element
-					elementsIntIST++;
+					elemPage[ePg++] = octantNoIST; elemPage[ePg++] = octNbrNoIST; elementsIntIST++;
 				} else {
 					// generate & store the pattern
 					elemPage[ePg++] = tF0|tF1<<3|tF0<<5|tF2<<8|tF0<<10|tF3<<13|tF1<<15|tF2<<18|tF1<<20|tF3<<23|tF2<<25|tF3<<28;
 					// generate & store the edge testing flags (two bits must be set for a legitimate testing edge)
 					elemPage[ePg++] = mirrorFlagIST|edgeFlags|slotcodeIST<<12|edgeCodeIST;	// tag on compaction code & edges long/short code
+					elemPage[ePg++] = octantNoIST; elemPage[ePg++] = octNbrNoIST;			// store holding octant's offset in neighbourhoodIST[] 					
 				}
 				slotcodeIST=slotcode; edgeCodeIST=edgeCode; mirrorFlagIST=mirrorFlag;		// store data for the next element writedown
-				elementsIST++;																// we've made another entry in the boundary element array
+				octantNoIST = octN; octNbrNoIST = nbrN;
+				elementsIST++;																// made another entry in the boundary element array
 			} else {
 				// DEBUG: should not end up here since tetrahedron external-ness was already tested!
 				throw new RuntimeException("FEM1.processISTnode(): Tetrahedron was external despite being checked as boundary.");
 			}
-			if ((codes&SET31) != 0) return;						// if last element writedown was flagged, do nothing more
+			if ((codes&SET31) != 0) return;													// if last element writedown was flagged, do nothing more
 		}
 		
 		// before it gets flagged locally, check if node (as specified by it's in-octant position) is locally unique for octant (or its neighbour centroid)
@@ -4080,17 +4830,16 @@ public class FEM1 {
 			if (elementPgI + 1 >= elementPgN) {								// if we've run out of element array pages, add 400 more
 				int[][] elementPgNew = new int[elementPgN += 400][];
 				for (int i = 0; i <= elementPgI; i++) elementPgNew[i] = elementPg[i];
-				elementPg = elementPgNew;
-			}
+				elementPg = elementPgNew; }
 			ePg = 0;
 			return elementPg[++elementPgI] = new int[elementPgSize]; 			// allocate new page
 		}
 		return elementPg[elementPgI];
 	}
 	
-	
+	// method finds an element in array by it's centroid, looking for closest centroid to provided coordinate (x,y,z)
 	// method takes any one of the element arrays generated by FEM1 class, a "skip" provided will jump past any status data,
-	// the node array must be provided in nArray[] and the multiplier for node offsets must be given in "multN" (usually = 3)
+	// the node array must be provided in nArray[] and the multiplier for node offsets must be given in "multN" (generally = 4)
 	static int findElementIndex(int[] eArray, double[] nArray, double x, double y, double z, int skip, int multN) {
 		double shortestDist = Double.MAX_VALUE;
 		int closestE = -1;
@@ -4379,8 +5128,7 @@ public class FEM1 {
 						eW = e;												// since we've read a value out of ii[], jj[] & sA[],
 						purge = true;										// set the purging flag & position
 					}
-				} else
-					if (purge) { ii[eW] = ii[e];  jj[eW] = jj[e];  sA[eW++] = sA[e]; } 
+				} else if (purge) { ii[eW] = ii[e];  jj[eW] = jj[e];  sA[eW++] = sA[e]; } 
 			}
 			elements16 -= purged;
 		}
@@ -4402,7 +5150,7 @@ public class FEM1 {
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////	
 
 	// NDOF = degrees of freedom, NCOORDS = 3 coordinates for 3D, OFFSPRECOMP = an offset for precomputed arrays, MAXNODES = max. integration nodes used
-	static final int NDOF = 3, NCOORD = 3, OFFSPRECOMP = 3, MAXNODES = 20;
+	static final int NDOF = 3, NCOORD = 3, NCOORD2 = 6, OFFSPRECOMP = 3, MAXNODES = 20;
 	static final double DIV4 = 1./8., DIV8 = 1./8.;
 	// arrays return number of integration points for specific element's node count, by direct indexation
 	static final int[] numIntegPoints = {0,0,0,0,1,0,0,0,8,0,4,0,0,0,0,0,0,0,0,0,27};
@@ -4525,9 +5273,8 @@ public class FEM1 {
 				int rowOffs = nDOFn * a;
 				double rho_Na_w_det = N[a] * rho_w_det;
 				for (int i = 0, iRowOffs = rowOffs; i < NDOF; i++, iRowOffs += nDOFn) {
-					for (int b = 0, offsetMme = iRowOffs + i; b < nNodes; b++, offsetMme += NDOF) {
-							Mme[offsetMme] += rho_Na_w_det * N[b];
-					}
+					for (int b = 0, offsetMme = iRowOffs + i; b < nNodes; b++, offsetMme += NDOF)
+						Mme[offsetMme] += rho_Na_w_det * N[b];
 				}
 			}
 		}
@@ -4537,9 +5284,7 @@ public class FEM1 {
 			for (int a = 0; a < nDOFn; a++) {
 				int rowOffs = nDOFn * a, pivotOffs = rowOffs + a;
 				for (int b = rowOffs, bEnd = b + nDOFn; b < bEnd; b++)
-					if (a != b) {
-						Mme[pivotOffs] += Mme[b]; Mme[b] = 0;
-					}
+					if (a != b) { Mme[pivotOffs] += Mme[b]; Mme[b] = 0; }
 			}
 		}		
 		return Mme;
@@ -5072,24 +5817,27 @@ public class FEM1 {
 	
 	public boolean externalNode(int n) { return n * NCOORD > node.length ? (nodeWorkFlag[n - nodes] & 1) == 1 : (nodeFlag[n] & 1) == 1; }
 	
-	int catchSmoothingGroup(String s) {
-		if (s.startsWith("s")) {							// if caught a smoothing group separator, register start of patch
-			int sGroup = Integer.valueOf(s.split(" ")[1]) - 1;
-			return sGroup;
-		}
+	public static boolean nearZero(double v) { return (v < -ROUNDOFF_ERROR || v > ROUNDOFF_ERROR ? false : true); }
+	
+	int catchSmoothingGroup(String s, int[] patchI) {
+		if (s.startsWith("s")) {											// if caught a smoothing group separator
+			int sGroup = Integer.valueOf(s.split(" ")[1]), p = 0;
+			for (; p < patchI.length && patchI[p] != -1; p++)
+				if (patchI[p] == sGroup) return p;							// if smooth group exists, return it's index in array
+			patchI[p] = sGroup; return p; }									// otherwise, return it's new index
 		return -1;
 	}
+
 
 	static int[] decodePolygon(String s, boolean gotNormals) {
 		int[] polygon;
 		String[] dataRow;
-		dataRow = s.split(" ");							// OBJ file with normals has a different format for polygon indexes
+		dataRow = s.split(" ");												// OBJ file with normals has a different format for polygon indexes
 		int len = dataRow.length - 1;
 		polygon = new int[len];
-		for (int i = 1; i <= len; i++) {				// decode each polygon into it's node integer indexes
+		for (int i = 1; i <= len; i++) {									// decode each polygon into it's node integer indexes
 			if (gotNormals) dataRow[i] = dataRow[i].split("//")[0];
-			polygon[i - 1] = Integer.valueOf(dataRow[i]) - 1;
-		}
+			polygon[i - 1] = Integer.valueOf(dataRow[i]) - 1; }
 		return polygon;
 	}
 
@@ -5100,6 +5848,16 @@ public class FEM1 {
 			double dx = node[i3++] - x, dy = node[i3++] - y, dz = node[i3++] - z;
 			if (dx<error && dx>-error && dy<error && dy>-error && dz<error && dz>-error) { finds[f++] = (i3-3)/3; if (f>=16) return finds; }}
 		return f==0 ? null : finds;
+	}
+	
+	
+	// method takes a point and facet coordinates, returning the distance of point to facet's plane
+	public static double distancePointToFacet(double px, double py, double pz,
+			double x0, double y0, double z0, double x1, double y1, double z1, double x2, double y2, double z2) {
+		double x20 = x2-x0, y20 = y2-y0, z20 = z2-z0, x10 = x1-x0, y10 = y1-y0, z10 = z1-z0;
+		double nx = y10 * z20 - z10 * y20, ny = z10 * x20 - x10 * z20, nz = x10 * y20 - y10 * x20;
+		double distance = (nx*(px-x0) + ny*(py-y0) + nz*(pz-z0))/Math.sqrt(nx*nx + ny*ny + nz*nz);
+		return distance;
 	}
 	
 	
@@ -5162,7 +5920,16 @@ public class FEM1 {
 		double x10 = x1 - x0, y10 = y1 - y0, z10 = z1 - z0, x20 = x2 - x0, y20 = y2 - y0, z20 = z2 - z0;
 		double n012x = y10 * z20 - z10 * y20, n012y = z10 * x20 - x10 * z20, n012z = x10 * y20 - y10 * x20;
 		double nx = node[n3++] - x0, ny = node[n3++] - y0, nz = node[n3] - z0;
-		return -(n012x * nx + n012y * ny + n012z * nz);
+		return -(n012x * nx + n012y * ny + n012z * nz);			// return dot p. of node n3 with cross p. of vectors formed by nodes n1-n0 & n2-n0
+	}
+
+	// a version of tetraVolumePositivity() with fourth node supplied as coordinates
+	public static double tetraVolumePositivity(double[] node, int n0, int n1, int n2, double nx, double ny, double nz) {
+		n0 *= NCOORD; n1 *= NCOORD; n2 *= NCOORD;
+		double x0=node[n0++], y0=node[n0++], z0=node[n0], x1=node[n1++], y1=node[n1++], z1=node[n1], x2=node[n2++], y2=node[n2++], z2=node[n2];
+		double x10 = x1 - x0, y10 = y1 - y0, z10 = z1 - z0, x20 = x2 - x0, y20 = y2 - y0, z20 = z2 - z0;
+		double n012x = y10 * z20 - z10 * y20, n012y = z10 * x20 - x10 * z20, n012z = x10 * y20 - y10 * x20;
+		return -(n012x*(nx-x0)+n012y*(ny-y0)+n012z*(nz-z0));	// return dot p. of node n3 with cross p. of vectors formed by nodes n1-n0 & n2-n0
 	}
 
 	public double tetraVolumePositivityIST(int n0, int n1, int n2, int n3, byte snap0, byte snap1, byte snap2, byte snap3) {
@@ -5180,7 +5947,7 @@ public class FEM1 {
 		double x2=nodeIST[n2=n2*6+3], y2=nodeIST[++n2], z2=nodeIST[++n2], x3=nodeIST[n3=n3*6+3], y3=nodeIST[++n3], z3=nodeIST[++n3];
 		double xc = (x0+x1+x2+x3)*0.25, yc = (y0+y1+y2+y3)*0.25, zc = (z0+z1+z2+z3)*0.25;
 		int[] status = {0, 0};
-		geocTree.root.facetEncounters(geocTree, xc, yc, zc, xc, yc, geocTree.root.zP+0.001, 3, status);
+		geocTree.root.facetEncounters(geocTree, null, xc, yc, zc, xc, yc, geocTree.root.zP+0.001, 3, status);
 		return status[0] != 0;
 	}
 	
@@ -5194,7 +5961,7 @@ public class FEM1 {
 		double x2=nodeIST[n2=snap2<0?n2*6+3:n2*6], y2=nodeIST[++n2], z2=nodeIST[++n2];
 		double x3=nodeIST[n3=snap3<0?n3*6+3:n3*6], y3=nodeIST[++n3], z3=nodeIST[++n3];
 		double xc = x0*f0+x1*f1+x2*f2+x3*f3, yc = y0*f0+y1*f1+y2*f2+y3*f3, zc = z0*f0+z1*f1+z2*f2+z3*f3; int[] status = {0, 0};
-		geocTree.root.facetEncounters(geocTree, xc, yc, zc, xc, yc, geocTree.root.zP+0.001, 3, status);
+		geocTree.root.facetEncounters(geocTree, null, xc, yc, zc, xc, yc, geocTree.root.zP+0.001, 3, status);
 		return status[0] != 0;
 	}
 
@@ -5208,11 +5975,12 @@ public class FEM1 {
 		double x2=nodeIST[n2=snap2<0?n2*6+3:n2*6], y2=nodeIST[++n2], z2=nodeIST[++n2];
 		double x3=nodeIST[n3=snap3<0?n3*6+3:n3*6], y3=nodeIST[++n3], z3=nodeIST[++n3];
 		double xc = x0*f0+x1*f1+x2*f2+x3*f3, yc = y0*f0+y1*f1+y2*f2+y3*f3, zc = z0*f0+z1*f1+z2*f2+z3*f3; int[] status = {0, 0};
-		geocTree.root.facetEncounters(geocTree, xc, yc, zc, xc, yc, geocTree.root.zP+0.001, 3, status);
+		geocTree.root.facetEncounters(geocTree, null, xc, yc, zc, xc, yc, geocTree.root.zP+0.001, 3, status);
 		return status[0] != 0;
 	}
 
 
+	private static final double TO_DEG = 180 / Math.PI, TO_DEG_D2 = 90 / Math.PI;
 	public static double[] tetraDihedralAngles(double[] node, int n0, int n1, int n2, int n3) {
 		n0 *= NCOORD; n1 *= NCOORD; n2 *= NCOORD; n3 *= NCOORD;
 		double[] angles = {0,0,0,0,0,0};
@@ -5229,14 +5997,28 @@ public class FEM1 {
 		double x21 = x2 - x1, y21 = y2 - y1, z21 = z2 - z1, x31 = x3 - x1, y31 = y3 - y1, z31 = z3 - z1;
 		double n132x = y31 * z21 - z31 * y21, n132y = z31 * x21 - x31 * z21, n132z = x31 * y21 - y31 * x21;
 		double n132D = 1.0/Math.sqrt(n132x*n132x+n132y*n132y+n132z*n132z); n132x *= n132D; n132y *= n132D; n132z *= n132D;
-		double toDeg = 180.0 / Math.PI;
-		angles[0] = Math.acos(-(n012x*n023x + n012y*n023y + n012z*n023z)) * toDeg;	// theta012v023
-		angles[1] = Math.acos(-(n012x*n031x + n012y*n031y + n012z*n031z)) * toDeg;	// theta012v031
-		angles[2] = Math.acos(-(n012x*n132x + n012y*n132y + n012z*n132z)) * toDeg;	// theta012v132
-		angles[3] = Math.acos(-(n023x*n031x + n023y*n031y + n023z*n031z)) * toDeg;	// theta023v031
-		angles[4] = Math.acos(-(n023x*n132x + n023y*n132y + n023z*n132z)) * toDeg;	// theta023v132
-		angles[5] = Math.acos(-(n031x*n132x + n031y*n132y + n031z*n132z)) * toDeg;	// theta031v132
+		angles[0] = Math.acos(-(n012x*n023x + n012y*n023y + n012z*n023z)) * TO_DEG;	// theta012v023
+		angles[1] = Math.acos(-(n012x*n031x + n012y*n031y + n012z*n031z)) * TO_DEG;	// theta012v031
+		angles[2] = Math.acos(-(n012x*n132x + n012y*n132y + n012z*n132z)) * TO_DEG;	// theta012v132
+		angles[3] = Math.acos(-(n023x*n031x + n023y*n031y + n023z*n031z)) * TO_DEG;	// theta023v031
+		angles[4] = Math.acos(-(n023x*n132x + n023y*n132y + n023z*n132z)) * TO_DEG;	// theta023v132
+		angles[5] = Math.acos(-(n031x*n132x + n031y*n132y + n031z*n132z)) * TO_DEG;	// theta031v132
 		return angles;
+	}
+	
+	// given a 2 facets, one n0/n1/n2 the other n1/n0/n3, sharing edge (n0,n1), returns the low precision facet-facet angle in degrees/2 (max -90 to 90)
+	// method returns a positive angle (0 to 180/2) if the edge is convex, a negative (0 to -180/2) if edge is concave
+	public static byte facetFacetAngle(double[] node, int n0, int n1, int n2, int n3) {
+		n0 *= NCOORD; n1 *= NCOORD; n2 *= NCOORD; n3 *= NCOORD;
+		double x0=node[n0++], y0=node[n0++], z0=node[n0], x1=node[n1++], y1=node[n1++], z1=node[n1];
+		double x2=node[n2++], y2=node[n2++], z2=node[n2], x3=node[n3++], y3=node[n3++], z3=node[n3];
+		double x10=x1-x0, y10=y1-y0, z10=z1-z0, x20=x2-x0, y20=y2-y0, z20=z2-z0, x30=x3-x0, y30=y3-y0, z30=z3-z0;
+		double n012x = y10 * z20 - z10 * y20, n012y = z10 * x20 - x10 * z20, n012z = x10 * y20 - y10 * x20;
+		double n012D = 1.0/Math.sqrt(n012x*n012x+n012y*n012y+n012z*n012z); n012x *= n012D; n012y *= n012D; n012z *= n012D;
+		double n031x = y30 * z10 - z30 * y10, n031y = z30 * x10 - x30 * z10, n031z = x30 * y10 - y30 * x10;
+		double n031D = 1.0/Math.sqrt(n031x*n031x+n031y*n031y+n031z*n031z); n031x *= n031D; n031y *= n031D; n031z *= n031D;
+		double angle = Math.acos(-(n012x*n031x + n012y*n031y + n012z*n031z)) * TO_DEG_D2;
+		return (byte)(-(n012x * x30 + n012y * y30 + n012z * z30) >= 0 ? 90-angle : angle-90);
 	}
 	
 	public static double tetraSmallestDihedral(double[] angles) {
@@ -5249,6 +6031,48 @@ public class FEM1 {
 		double max45 = angles[4] > angles[5] ? angles[4] : angles[5], max01_a2 = max01 > max23 ? max01 : max23;
 		return max45 > max01_a2 ? max45 : max01_a2; }
 
+	// given a test coordinate & 2 edge coordinates, method approximates by binary division the closest point on edge to the test coordinate
+	// method assumes edge is not a degenerate
+	// returning the parametric factor along the edge from point ea to eb to that closest point
+	// dir will tell whether the search was persistently towards ea or eb,
+	// if search persisted towards one end, a negative value returned as it's PROBABLE that one of edge's ends was "out of range"
+	// dir's nonpersistence will be indicating that edge was GUARANTEEDLY "within range" (since subdivider had to "turn back at" some subdivision)
+	public static double closestPointOnEdgeS(double x, double y, double z, double eax, double eay, double eaz, double ebx, double eby, double ebz) {
+		double eax1 = eax, eay1 = eay, eaz1 = eaz, ebx1 = ebx, eby1 = eby, ebz1 = ebz;
+		double dax = eax-x, day = eay-y, daz = eaz-z, dbx = ebx-x, dby = eby-y, dbz = ebz-z;
+		double dbax = (ebx-eax)*.5, dbay = (eby-eay)*.5, dbaz = (ebz-eaz)*.5; int i = 5, dir = 0;
+		while (i-- > 0) {
+			if (dax*dax+day*day+daz*daz < dbx*dbx+dby*dby+dbz*dbz)
+					{ ebx = eax+dbax; eby = eay+dbay; ebz = eaz+dbaz;	dbx = ebx-x; dby = eby-y; dbz = ebz-z; dir--; }
+			else	{ eax = eax+dbax; eay = eay+dbay; eaz = eaz+dbaz;	dax = eax-x; day = eay-y; daz = eaz-z; dir++; }
+			dbax *= .5; dbay *= .5; dbaz *= .5; }
+		
+		if (dbax > dbay) { if (dbax > dbaz) dax = ((eax+ebx)*.5-eax1)/(ebx1-eax1); else dax = ((eaz+ebz)*.5-eaz1)/(ebz1-eaz1); }
+		else if (dbay > dbaz)	dax = ((eay+eby)*.5-eay1)/(eby1-eay1); else dax = ((eaz+ebz)*.5-eaz1)/(ebz1-eaz1);
+		return (dir > -5 && dir < 5) ? dax : -dax;
+	}
+
+	// method returns the coordinate AND (squared) distance to point in array position 4
+	public static double[] closestPointOnEdgeSC(double x, double y, double z, double eax, double eay, double eaz, double ebx, double eby, double ebz) {
+		double dax = eax-x, day = eay-y, daz = eaz-z, dbx = ebx-x, dby = eby-y, dbz = ebz-z;
+		double dbax = (ebx-eax)*.5, dbay = (eby-eay)*.5, dbaz = (ebz-eaz)*.5, daSq=dax*dax+day*day+daz*daz, dbSq=dbx*dbx+dby*dby+dbz*dbz;
+		int i = 5;
+		while (i-- > 0) {
+			if (daSq < dbSq)	{ ebx=eax+dbax; eby=eay+dbay; ebz=eaz+dbaz;	dbx=ebx-x; dby=eby-y; dbz=ebz-z; dbSq=dbx*dbx+dby*dby+dbz*dbz; }
+			else				{ eax=eax+dbax; eay=eay+dbay; eaz=eaz+dbaz;	dax=eax-x; day=eay-y; daz=eaz-z; daSq=dax*dax+day*day+daz*daz; }
+			dbax *= .5; dbay *= .5; dbaz *= .5; }	
+		double[] point = { (eax+ebx)*.5, (eay+eby)*.5, (eaz+ebz)*.5, (daSq+dbSq)*.5 }; return point;
+	}
+	
+	public static double[] closestPointOnEdge(double x, double y, double z, double eax, double eay, double eaz, double ebx, double eby, double ebz) {
+		double abx = ebx-eax, aby = eby-eay, abz = ebz-eaz, apx = x-eax, apy = y-eay, apz = z-eaz;
+		double abDSq = abx*abx+aby*aby+abz*abz, k = (abx*apx+aby*apy+abz*apz) / abDSq;
+		if (k >= 1) {	double[] point = { ebx, eby, ebz, (ebx-x)*(ebx-x)+(eby-y)*(eby-y)+(ebz-z)*(ebz-z) }; return point; } else
+		if (k <= 0) {	double[] point = { eax, eay, eaz, apx*apx+apy*apy+apz*apz }; return point; }
+		else {			double cx=eax+abx*k, cy=eay+aby*k, cz=eaz+abz*k, pcx = cx-x, pcy = cy-y, pcz = cz-z;
+						double[] point = { cx, cy, cz, pcx*pcx+pcy*pcy+pcz*pcz }; return point; }
+	}
+
 	
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////
 	//			OUTPUT METHODS
@@ -5257,8 +6081,10 @@ public class FEM1 {
 	final private static String[] slotcodeName = {"ChgA","FtoL","Hld2","Ch01","Mv01","Ch03","ShMB","**7*","Chg0","Chg1","Chg2","Chg3","Ch02","*13*","*14*","*15*"};
 	final private static String[] edgeCodeName = {"SSSSSS","","LSSSSS/SLSSSS","","","","","","SSSLSS","","","","SSLLSS","","","","SSSSLS",
 													"","","","","","","","","","","","","","","","SSSSSL"};
-	// note: START_PRINT_ELEMENT can be assigned by any algorithm that processes IST elements to tell toString() what element to start printing from
-	private static int maxPrintElements = 100, startPrintElement = 0;
+	final private static int PRINT_FACETNEIGHBOURS=1, PRINT_SLOTCODES=5, PRINT_ELEMENTS=2, PRINT_ELEMENTS2=3, PRINT_IST_ELEMENTS=4, PRINT_BORDERPOLYS=6;
+	// note: startPrintEntry can be assigned by any algorithm that processes IST elements to tell toString() what element to start printing from
+	private static int maxPrintEntries = 100, startPrintEntry = 0;
+	private static int printWhat = 0;
 	private boolean readElementPg = true, finalArrayPg = false, printSlotcodes1 = false, printSlotcodes2 = false, printSnapNodes = false;
 
 	public static void setDebugLevel(int l) { DEBUG_LEVEL = l > 0 ? l : 0; }
@@ -5267,32 +6093,73 @@ public class FEM1 {
 	public String toString() {
 		StringBuilder sb = new StringBuilder();
 		
-		if (printSlotcodes1 ||printSlotcodes2) { String slotcodes = toStringSlotcodes(); return slotcodes; }
+		// block will print the polygons on the PSC edge boundaries only
+		// to start printing from a particular file-original polygon index, set startPrintElement = that index
+		if (printWhat==PRINT_BORDERPOLYS) {
+			sb.append("<<<<<<<< Polygons patches border neighbourhoods (file-original indexes in parentheses) >>>>>>>>\n\n");
+			boolean foundPrintStart = false;
+			for (int p = 0, pbOfs = 0; p < patches; p++) {
+				int bPolys = borderPolygons[pbOfs];
+				if (bPolys > 0) sb.append("*** Patch " + p + "(" + patchIdx[p] + ") ***\n\n");
+				for (int b = ++pbOfs; bPolys-- > 0; b++) {
+					int bPoly = borderPolygons[b];
+					if (!foundPrintStart && polygonOriginalIdx[bPoly]!= startPrintEntry) continue;
+					foundPrintStart = true;
+					int bOffset = polygonOffset[bPoly], bCount = polygonOffset[bPoly+1] - bOffset;
+					sb.append("Border polygon " + bPoly + "(" + polygonOriginalIdx[bPoly] + "): (");
+					for (int bI = bOffset; bI < bOffset+bCount;) sb.append(polygon[bI] + (++bI==bOffset+bCount?")\n":", "));
+					int[] pNbrs = polygonNeighbours[bPoly];
+					if (pNbrs != null) {
+						sb.append("Border neighbours: " +	(pNbrs[8]>-1? "e01: P"+pNbrs[8]+ "("+polygonOriginalIdx[pNbrs[8]]+"), ":"") + 
+															(pNbrs[9]>-1? "e12: P"+pNbrs[9]+ "("+polygonOriginalIdx[pNbrs[9]]+"), ":"") + 
+															(pNbrs[10]>-1?"e20: P"+pNbrs[10]+"("+polygonOriginalIdx[pNbrs[10]]+")":"") + "\n"); }
+					if (edgeIndex != null && edge != null) {
+						sb.append("Edge lengths: ");
+						int bI = bOffset;
+						if (edgeIndex[bI]!=-1) {	String c0=(edgeIndex[bI]&SET30)!=0?"[C]":""; String c1=(edgeIndex[bI]&SET31)!=0?"[C]":""; 
+													sb.append(String.format(c0+"e01"+c1+": %.3f ",edge[edgeIndex[bI]&0x3FFFFFFF])); }
+						if (edgeIndex[++bI]!=-1) {	String c0=(edgeIndex[bI]&SET30)!=0?"[C]":""; String c1=(edgeIndex[bI]&SET31)!=0?"[C]":""; 
+													sb.append(String.format(c0+"e12"+c1+": %.3f ",edge[edgeIndex[bI]&0x3FFFFFFF])); }
+						if (edgeIndex[++bI]!=-1) {	String c0=(edgeIndex[bI]&SET30)!=0?"[C]":""; String c1=(edgeIndex[bI]&SET31)!=0?"[C]":""; 
+													sb.append(String.format(c0+"e20"+c1+": %.3f ",edge[edgeIndex[bI]&0x3FFFFFFF])); }
+						sb.append("\n");
+					}
+					for (int bI = bOffset; bI < bOffset+bCount; bI++) {
+						int n3 = polygon[bI] * NCOORD;
+						sb.append(String.format("      " + polygon[bI] + ": %.3f,%.3f,%.3f", node[n3++], node[n3++], node[n3++])); }
+					sb.append("\n\n");
+				}
+				pbOfs += borderPolygons[pbOfs-1];
+			}
+		}
 		
-		// print Isosurface Stuffing data first, as it is first to be generated
-		if (elementIST != null || elementPg != null) {
+		if (printWhat==PRINT_SLOTCODES) { String slotcodes = toStringSlotcodes(); return slotcodes; }
+		
+		// print Isosurface Stuffing data
+		if (printWhat==PRINT_IST_ELEMENTS && elementIST != null || elementPg != null) {
 			sb.append("<<<<<<<< Isosurface Stuffing Tetrahedral Data >>>>>>>>\n");
-			int printElems = startPrintElement+maxPrintElements < elementsIST ? startPrintElement+maxPrintElements : elementsIST;
+			int elemCnt = finalArrayPg ? elements : elementsIST;
+			int printElems = startPrintEntry+maxPrintEntries < elemCnt ? startPrintEntry+maxPrintEntries : elemCnt;
 			double[] nodeA = nodeIST;
 			if (nodeA==null) nodeA = nodeHTableIST.array();
-			for (int e = 0, e6 = 0, e6b = 0, eP = 0; e < printElems; e++) {
+			for (int e = 0, e8 = 0, e8b = 0, eP = 0; e < printElems; e++) {
 				int n0=0, n1=0, n2=0, n3=0, pattern=0, status=0;
 				int [] elA = null;
 				
 				if (readElementPg) {
-					e6b = e6 - eP * elementPgSize;
-					if (e6b >= elementPgSize) { eP++; e6b -= elementPgSize; }
+					e8b = e8 - eP * elementPgSize;
+					if (e8b >= elementPgSize) { eP++; e8b -= elementPgSize; }
 					elA =  elementPg[eP];
-					n0 = elA[e6b++]; n1 = elA[e6b++]; n2 = elA[e6b++]; n3 = elA[e6b++];
-					if (!finalArrayPg) { pattern = elA[e6b++]; status = elA[e6b++]; e6 += 6; } else { status = elA[e6b++]; e6 += 5; }
+					n0 = elA[e8b++]; n1 = elA[e8b++]; n2 = elA[e8b++]; n3 = elA[e8b++];
+					if (!finalArrayPg) { pattern = elA[e8b++]; status = elA[e8b++]; e8 += E_SIZE; } else { status = elA[e8b]; e8 += 7; }
 				} else {
-					e6b = e6;
-					n0 = elementIST[e6b++]; n1 = elementIST[e6b++]; n2 = elementIST[e6b++]; n3 = elementIST[e6b++];
-					pattern = elementIST[e6b++]; status = elementIST[e6b++];	
-					e6 += 6;
+					e8b = e8;
+					n0 = elementIST[e8b++]; n1 = elementIST[e8b++]; n2 = elementIST[e8b++]; n3 = elementIST[e8b++];
+					pattern = elementIST[e8b++]; status = elementIST[e8b++];	
+					e8 += E_SIZE;
 				}
 				
-				if (e < startPrintElement) continue;						// do not start printing until getting to the target element index
+				if (e < startPrintEntry) continue;						// do not start printing until getting to the target element index
 				
 				boolean elemInternal = (status&FLG_EBND)==0||(status&SET30)==SET30, elemSliver=(status&SET29)==SET29, elemDiscard=(status&SET28)==SET28;
 				String elemType = (elemDiscard?"Discarded ":(elemInternal?"Internal ":"Boundary ")) + (elemSliver?"sliver ":"")+"element ";
@@ -5300,25 +6167,28 @@ public class FEM1 {
 				boolean ref0=false, ref1=false, ref2=false, ref3=false;
 				if (!finalArrayPg) {
 					if ((status&TETREF0)!=0) {
-						eR0 = n0&0x3FFFFFFF; n0 = n0>>30&3; ref0 = true;
-						nX0=readElementPg ? elementPg[(eR0*6)/elementPgSize][eR0*6-elementPgSize*((eR0*6)/elementPgSize)+n0] : elementIST[eR0*6+n0]; }
+						eR0 = n0&0x3FFFFFFF; n0 = n0>>30&3; ref0 = true; int eR08 = eR0*E_SIZE;
+						nX0=readElementPg ? elementPg[(eR08)/elementPgSize][eR08-elementPgSize*((eR08)/elementPgSize)+n0] : elementIST[eR08+n0]; }
 					if ((status&TETREF1)!=0) {
-						eR1 = n1&0x3FFFFFFF; n1 = n1>>30&3; ref1 = true;
-						nX1=readElementPg ? elementPg[(eR1*6)/elementPgSize][eR1*6-elementPgSize*((eR1*6)/elementPgSize)+n1] : elementIST[eR1*6+n1]; }
+						eR1 = n1&0x3FFFFFFF; n1 = n1>>30&3; ref1 = true; int eR18 = eR1*E_SIZE;
+						nX1=readElementPg ? elementPg[(eR18)/elementPgSize][eR18-elementPgSize*((eR18)/elementPgSize)+n1] : elementIST[eR18+n1]; }
 					if ((status&TETREF2)!=0) {
-						eR2 = n2&0x3FFFFFFF; n2 = n2>>30&3; ref2 = true;
-						nX2=readElementPg ? elementPg[(eR2*6)/elementPgSize][eR2*6-elementPgSize*((eR2*6)/elementPgSize)+n2] : elementIST[eR2*6+n2]; }
+						eR2 = n2&0x3FFFFFFF; n2 = n2>>30&3; ref2 = true; int eR28 = eR2*E_SIZE;
+						nX2=readElementPg ? elementPg[(eR28)/elementPgSize][eR28-elementPgSize*((eR28)/elementPgSize)+n2] : elementIST[eR28+n2]; }
 					if ((status&TETREF3)!=0) {
-						eR3 = n3&0x3FFFFFFF; n3 = n3>>30&3; ref3 = true;
-						nX3=readElementPg ? elementPg[(eR3*6)/elementPgSize][eR3*6-elementPgSize*((eR3*6)/elementPgSize)+n3] : elementIST[eR3*6+n3]; }
+						eR3 = n3&0x3FFFFFFF; n3 = n3>>30&3; ref3 = true; int eR38 = eR3*E_SIZE;
+						nX3=readElementPg ? elementPg[(eR38)/elementPgSize][eR38-elementPgSize*((eR38)/elementPgSize)+n3] : elementIST[eR38+n3]; }
 				}
 				sb.append(elemType + e + ((status & SET31)!=0&&!finalArrayPg ? " [M]" : ""));
 				sb.append(", nodes: (");
 				
+				boolean n0snap=(n0&SET31)!=0, n1snap = (n1&SET31)!=0, n2snap = (n2&SET31)!=0, n3snap = (n1&SET31)!=0; 
+				boolean n0intl=(n0&SET30)!=0, n1intl = (n1&SET30)!=0, n2intl = (n2&SET30)!=0, n3intl = (n1&SET30)!=0;
+				if (finalArrayPg) { n3intl = (status&128)==0; n2intl = (status&64)==0; n1intl = (status&32)==0; n0intl = (status&16)==0; }
 				String nX0pfx = ((nX0&SET31)!=0?"s":"")+((nX0&SET30)!=0?"i":""), nX1pfx = ((nX1&SET31)!=0?"s":"")+((nX1&SET30)!=0?"i":"");
 				String nX2pfx = ((nX2&SET31)!=0?"s":"")+((nX2&SET30)!=0?"i":""), nX3pfx = ((nX3&SET31)!=0?"s":"")+((nX3&SET30)!=0?"i":"");
-				String n0pfx = ((n0&SET31)!=0?"s":"")+((n0&SET30)!=0?"i":""), n1pfx = ((n1&SET31)!=0?"s":"")+((n1&SET30)!=0?"i":"");
-				String n2pfx = ((n2&SET31)!=0?"s":"")+((n2&SET30)!=0?"i":""), n3pfx = ((n3&SET31)!=0?"s":"")+((n3&SET30)!=0?"i":"");
+				String n0pfx = (n0snap?"s":"")+(n0intl?"i":""), n1pfx = (n1snap?"s":"")+(n1intl?"i":"");
+				String n2pfx = (n2snap?"s":"")+(n2intl?"i":""), n3pfx = (n3snap?"s":"")+(n3intl?"i":"");
 				sb.append((ref0?nX0pfx+(nX0&0x3FFFFFFF)+"[E"+eR0+"|n"+n0+"]":n0pfx+(n0&0x3FFFFFFF)) + ", ");
 				sb.append((ref1?nX1pfx+(nX1&0x3FFFFFFF)+"[E"+eR1+"|n"+n1+"]":n1pfx+(n1&0x3FFFFFFF)) + ", ");
 				sb.append((ref2?nX2pfx+(nX2&0x3FFFFFFF)+"[E"+eR2+"|n"+n2+"]":n2pfx+(n2&0x3FFFFFFF)) + ", ");
@@ -5367,7 +6237,7 @@ public class FEM1 {
 					} 
 					sb.append("\n       ");
 					for (int s = 0; s < 6; s++) {
-						sb.append(((status&1)==0?" ":"U") + (cutNodes!=null&&cutNodes[e*6+s]!=0?"C":" ") + ((status&2)==0?"    ":"B   "));
+						sb.append(((status&1)==0?" ":"U") + (cutNodes!=null&&cutNodes[e*7+s]!=0?"C":" ") + ((status&2)==0?"    ":"B   "));
 						status >>= 2; }
 					sb.append("\n");
 				}
@@ -5375,51 +6245,67 @@ public class FEM1 {
 			}
 		}
 		
-		int printElems = maxPrintElements < elements2 ? maxPrintElements : elements2;
-		for (int e = 0; e < printElems; e++) {
-			FEM1Element elem = getElement2(e);
-			if (elem == null) { sb.append("[" + e + " deleted]\n\n"); continue; }
-			if (e == elements2) sb.append("<<<<<<<< element2Work[] >>>>>>>>\n");
-			switch (elem.flags & 15) {
-			case FEM1Element.TETRAHEDRON:
-				sb.append("Tetrahedron T" + e);
-				sb.append(", refs: n" + elem.nodeRef[0] + ",n" + elem.nodeRef[1] + ",n" + elem.nodeRef[2] + ",n" + elem.nodeRef[3]);
-				if (elem.volume > 0) sb.append(" V");
-				if (elem.data != null) {
-					sb.append(" A:");
-					sb.append((elem.data[6]>0?"A":".")+(elem.data[7]>0?"A":".")+(elem.data[8]>0?"A":".")+(elem.data[9]>0?"A":"."));
-					sb.append(" e:");
-					sb.append(	(elem.data[0]>0?"e":".") + (elem.data[1]>0?"e":".") + (elem.data[2]>0?"e":".")+
-								(elem.data[3]>0?"e":".") + (elem.data[4]>0?"e":".") + (elem.data[5]>0?"e":"."));
-				}
-				sb.append("\n");
-
-				if (elem.hasInterfaces()) {
-					sb.append("Interfaces: [");
-					for (int n = 0, neighbours2 = elem.neighbours * 2; n < neighbours2; n += 2)
-						sb.append(((elem.neighbour[n + 1] & 15) != 0  ? "F" : "e") + elem.neighbour[n] + (n == neighbours2 - 2 ? "]\n" : ", "));
-				}
-				break;
-			case FEM1Element.HEXAHEDRON: sb.append("Hexahedron(E" + e + ")"); break;
-			case FEM1Element.ISOTETRAHEDRON: sb.append("Isotetrahedron(E" + e + ")"); break;
-			case FEM1Element.ISOHEXAHEDRON: sb.append("Isohexahedron(E" + e + ")"); break;
+		if (printWhat==PRINT_ELEMENTS) {
+			int printElems = startPrintEntry+maxPrintEntries < elements ? startPrintEntry+maxPrintEntries : elements;
+			int startElem = startPrintEntry<printElems?startPrintEntry:printElems;
+			for (int e = startElem*4; e < printElems*4;) {
+				int n0 = element[e++], n1 = element[e++], n2 = element[e++], n3 = element[e++];
+				sb.append("Element " + e + ", nodes: ("+n0+", "+n1+", "+n2+", "+n3+"\n");
+				int m = 3, n0_3 = n0 * m, n1_3 = n1 * m, n2_3 = n2 * m, n3_3 = n3 * m;
+				sb.append(String.format("      n0: %.3f,%.3f,%.3f, ", nodeIST[n0_3++], nodeIST[n0_3++], nodeIST[n0_3++]));
+				sb.append(String.format(      "n1: %.3f,%.3f,%.3f, ", nodeIST[n1_3++], nodeIST[n1_3++], nodeIST[n1_3++]));
+				sb.append(String.format(      "n2: %.3f,%.3f,%.3f, ", nodeIST[n2_3++], nodeIST[n2_3++], nodeIST[n2_3++]));
+				sb.append(String.format(      "n3: %.3f,%.3f,%.3f\n\n", nodeIST[n3_3++], nodeIST[n3_3++], nodeIST[n3_3++]));
 			}
-			
-			sb.append("Neighbours: [");
-			if (elem.neighbours == 0 || elem.neighbour == null) sb.append("n/a]\n");
-			else {
-				if (elem.neighboursF > 0) sb.append("F: ");
-				for (int n = 0, nF = elem.neighboursF; n < elem.neighbours; n++, nF--) {
+		}
+		
+		if (printWhat==PRINT_ELEMENTS2) {
+			int printElems = maxPrintEntries < elements2 ? maxPrintEntries : elements2;
+			for (int e = 0; e < printElems; e++) {
+				FEM1Element elem = getElement2(e);
+				if (elem == null) { sb.append("[" + e + " deleted]\n\n"); continue; }
+				if (e == elements2) sb.append("<<<<<<<< element2Work[] >>>>>>>>\n");
+				switch (elem.flags & 15) {
+				case FEM1Element.TETRAHEDRON:
+					sb.append("Tetrahedron T" + e);
+					sb.append(", refs: n" + elem.nodeRef[0] + ",n" + elem.nodeRef[1] + ",n" + elem.nodeRef[2] + ",n" + elem.nodeRef[3]);
+					if (elem.volume > 0) sb.append(" V");
+					if (elem.data != null) {
+						sb.append(" A:");
+						sb.append((elem.data[6]>0?"A":".")+(elem.data[7]>0?"A":".")+(elem.data[8]>0?"A":".")+(elem.data[9]>0?"A":"."));
+						sb.append(" e:");
+						sb.append(	(elem.data[0]>0?"e":".") + (elem.data[1]>0?"e":".") + (elem.data[2]>0?"e":".")+
+									(elem.data[3]>0?"e":".") + (elem.data[4]>0?"e":".") + (elem.data[5]>0?"e":"."));
+					}
+					sb.append("\n");
+	
 					if (elem.hasInterfaces()) {
-						if (nF == 0 && elem.neighboursF < elem.neighbours) sb.append("e: ");
-						sb.append("T" + elem.neighbour[n * 2] + (n == elem.neighbours - 1 ? "]\n" : ", "));
-					} else {
-						if (nF == 0 && elem.neighboursF < elem.neighbours) sb.append("e: ");
-						sb.append("T" + elem.neighbour[n] + (n == elem.neighbours - 1 ? "]\n" : ", "));
+						sb.append("Interfaces: [");
+						for (int n = 0, neighbours2 = elem.neighbours * 2; n < neighbours2; n += 2)
+							sb.append(((elem.neighbour[n + 1] & 15) != 0  ? "F" : "e") + elem.neighbour[n] + (n == neighbours2 - 2 ? "]\n" : ", "));
+					}
+					break;
+				case FEM1Element.HEXAHEDRON: sb.append("Hexahedron(E" + e + ")"); break;
+				case FEM1Element.ISOTETRAHEDRON: sb.append("Isotetrahedron(E" + e + ")"); break;
+				case FEM1Element.ISOHEXAHEDRON: sb.append("Isohexahedron(E" + e + ")"); break;
+				}
+				
+				sb.append("Neighbours: [");
+				if (elem.neighbours == 0 || elem.neighbour == null) sb.append("n/a]\n");
+				else {
+					if (elem.neighboursF > 0) sb.append("F: ");
+					for (int n = 0, nF = elem.neighboursF; n < elem.neighbours; n++, nF--) {
+						if (elem.hasInterfaces()) {
+							if (nF == 0 && elem.neighboursF < elem.neighbours) sb.append("e: ");
+							sb.append("T" + elem.neighbour[n * 2] + (n == elem.neighbours - 1 ? "]\n" : ", "));
+						} else {
+							if (nF == 0 && elem.neighboursF < elem.neighbours) sb.append("e: ");
+							sb.append("T" + elem.neighbour[n] + (n == elem.neighbours - 1 ? "]\n" : ", "));
+						}
 					}
 				}
+				sb.append("\n");
 			}
-			sb.append("\n");
 		}
 		return sb.toString();
 	}
@@ -5517,9 +6403,9 @@ public class FEM1 {
 		}
 		if (printSlotcodes1) {
 			int[] elemPage = elementPg[0];
-			for (int e = 1, e5 = 4, ePage = 0; e <= elements; e++, e5+=5) {
-				if (e5 >= elementPgSize) { e5 = 4; elemPage = elementPg[++ePage]; }
-				sb.append(slotcodeName[elemPage[e5] & 0xF] + ((e&15)==0 ? "\n" : " "));
+			for (int e = 1, e8 = 4, ePage = 0; e <= elements; e++, e8+=E_SIZE) {
+				if (e8 >= elementPgSize) { e8 = 4; elemPage = elementPg[++ePage]; }
+				sb.append(slotcodeName[elemPage[e8] & 0xF] + ((e&15)==0 ? "\n" : " "));
 			}
 		}
 		return sb.toString();

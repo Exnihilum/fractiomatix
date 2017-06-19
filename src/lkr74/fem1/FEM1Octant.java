@@ -34,7 +34,10 @@ public class FEM1Octant {
 	float disbalance = 0;					// how disbalanced current branch is (=0 for a leaf)
 	
 	static int DEBUG_LEVEL;
-	
+
+	final static int CLR28=0xEFFFFFFF, SET28=0x10000000, CLR29=0xDFFFFFFF, SET29=0x20000000;
+	final static int CLR30=0xBFFFFFFF, SET30=0x40000000, CLR31=0x7FFFFFFF, SET31=0x80000000;
+
 	// codes for the 8 subdivisions of an octree node (M = minus, P = plus, ex: OCT_PMP = (x+,y-,z+))
 	final static byte OCT_MMM=0, OCT_PMM=1, OCT_MPM=2, OCT_PPM=3, OCT_MMP=4, OCT_PMP=5, OCT_MPP=6, OCT_PPP=7;
 	// following flags mask different children combinations to check their existence
@@ -68,6 +71,7 @@ public class FEM1Octant {
 			if (nodeCoord[n] < yM1) yM1 = nodeCoord[n]; else if (nodeCoord[n] > yP1) yP1 = nodeCoord[n]; n++;
 			if (nodeCoord[n] < zM1) zM1 = nodeCoord[n]; else if (nodeCoord[n] > zP1) zP1 = nodeCoord[n]; n++;
 		}
+		// DEBUG: solve some numerical bug missing faces flat against one if the boundaries of octree's bounding box by expanding box somewhat
 		xM1-=OCT_MARGIN; yM1-=OCT_MARGIN; zM1-=OCT_MARGIN; xP1+=OCT_MARGIN; yP1+=OCT_MARGIN; zP1+=OCT_MARGIN;
 		double xDlt = xP1 - xM1, yDlt = yP1 - yM1, zDlt = zP1 - zM1, maxBB = xDlt > yDlt ? xDlt : yDlt;
 		if (maxBB < zDlt) maxBB = zDlt;
@@ -88,7 +92,7 @@ public class FEM1Octant {
 	}
 	
 	
-	// instantiates octree from boundary-intersecting lattice cubes, the final octree size supplied as boundbox zorners
+	// creates root octant of a lattice tree, octree size supplied as boundbox corners
 	public FEM1Octant(FEM1Octree sourceTree, double xM0, double yM0, double zM0, double xP0, double yP0, double zP0) {	
 		level = 0; parent = null;
 		DEBUG_LEVEL = FEM1Octree.DEBUG_LEVEL;
@@ -96,8 +100,10 @@ public class FEM1Octant {
 		// an extra buffer of one lattice step in the global bounding box
 		xM = xM0; yM = yM0; zM = zM0; xP = xP0; yP = yP0; zP = zP0;
 		xC = (xP + xM) * .5; yC = (yP + yM) * .5; zC = (zP + zM) * .5;
-		nodeI = new int[nodes = sourceTree.fem.bLatticeNode.length / 3];
+		nodeI = new int[nodes = sourceTree.fem.bLatticeNode.length / 3];			// the nodes given are meant to generate the internal & boundary octants
 		int n = 0; while (n < nodes) nodeI[n] = n++;								// set up initial node reference array
+		//facets = sourceTree.fem.polygons;
+		edges = sourceTree.fem.edges;
 	}
 
 	
@@ -169,15 +175,15 @@ public class FEM1Octant {
 				n3 *= 3;
 				double xN = nodeCoord[n3++], yN = nodeCoord[n3++], zN = nodeCoord[n3];	// access supplied global coordinates array
 				if (xN<=xC) {
-					if (yN<=yC) {	if (zN<=zC)	{	if(inEx!=0x1FF) nodeOct[nMMM++]=nodeI[n]; int_ext |= fMap_bFC[inEx&15] |      fMap_bFC[64+(inEx>>4)]; }
-									else {			if(inEx!=0x1FF) nodeOct[nMMP++]=nodeI[n]; int_ext |= fMap_bFC[64+(inEx&15)] | fMap_bFC[128+(inEx>>4)]; }}
-					else {			if (zN<=zC)	{	if(inEx!=0x1FF) nodeOct[nMPM++]=nodeI[n]; int_ext |= fMap_bFC[32+(inEx&15)] | fMap_bFC[96+(inEx>>4)]; }
-									else 		{	if(inEx!=0x1FF) nodeOct[nMPP++]=nodeI[n]; int_ext |= fMap_bFC[96+(inEx&15)] | fMap_bFC[160+(inEx>>4)]; }}
+					if (yN<=yC) {	if (zN<=zC)	{	if(inEx!=0x1FF) nodeOct[nMMM++]=nodeI[n]; int_ext |= fMap_ieFC[inEx&15] |      fMap_ieFC[64+(inEx>>4)]; }
+									else {			if(inEx!=0x1FF) nodeOct[nMMP++]=nodeI[n]; int_ext |= fMap_ieFC[64+(inEx&15)] | fMap_ieFC[128+(inEx>>4)]; }}
+					else {			if (zN<=zC)	{	if(inEx!=0x1FF) nodeOct[nMPM++]=nodeI[n]; int_ext |= fMap_ieFC[32+(inEx&15)] | fMap_ieFC[96+(inEx>>4)]; }
+									else 		{	if(inEx!=0x1FF) nodeOct[nMPP++]=nodeI[n]; int_ext |= fMap_ieFC[96+(inEx&15)] | fMap_ieFC[160+(inEx>>4)]; }}
 				} else {
-					if (yN<=yC) {	if (zN<=zC)	{	if(inEx!=0x1FF) nodeOct[nPMM++]=nodeI[n]; int_ext |= fMap_bFC[16+(inEx&15)] | fMap_bFC[80+(inEx>>4)]; }
-									else {			if(inEx!=0x1FF) nodeOct[nPMP++]=nodeI[n]; int_ext |= fMap_bFC[80+(inEx&15)] | fMap_bFC[144+(inEx>>4)]; }}
-					else {			if (zN<=zC)	{	if(inEx!=0x1FF) nodeOct[nPPM++]=nodeI[n]; int_ext |= fMap_bFC[48+(inEx&15)] | fMap_bFC[112+(inEx>>4)]; }
-									else {			if(inEx!=0x1FF) nodeOct[nPPP++]=nodeI[n]; int_ext |= fMap_bFC[112+(inEx&15)]| fMap_bFC[176+(inEx>>4)]; }}
+					if (yN<=yC) {	if (zN<=zC)	{	if(inEx!=0x1FF) nodeOct[nPMM++]=nodeI[n]; int_ext |= fMap_ieFC[16+(inEx&15)] | fMap_ieFC[80+(inEx>>4)]; }
+									else {			if(inEx!=0x1FF) nodeOct[nPMP++]=nodeI[n]; int_ext |= fMap_ieFC[80+(inEx&15)] | fMap_ieFC[144+(inEx>>4)]; }}
+					else {			if (zN<=zC)	{	if(inEx!=0x1FF) nodeOct[nPPM++]=nodeI[n]; int_ext |= fMap_ieFC[48+(inEx&15)] | fMap_ieFC[112+(inEx>>4)]; }
+									else {			if(inEx!=0x1FF) nodeOct[nPPP++]=nodeI[n]; int_ext |= fMap_ieFC[112+(inEx&15)]| fMap_ieFC[176+(inEx>>4)]; }}
 				}
 			}
 		} else {
@@ -215,7 +221,7 @@ public class FEM1Octant {
 				} else {
 					// note: flag inProgress=true because method can be multitasked in two ways, either the nodes/edges/facets get separated
 					// in parallel, or an entire branch is split by a dedicated thread, so any processor must wait until flags are cleared backwards
-					octant[o] = new FEM1Octant(this,(short)o,nN,nodeChild,0,null,0,null,true,false);
+					octant[o] = new FEM1Octant(this, (short)o, nN, nodeChild, 0, null, 0, null, true, false);
 					iteratorAdd(o);
 				}
 			} else nodeChild = null;
@@ -224,8 +230,8 @@ public class FEM1Octant {
 	}
 	
 	
-	private boolean distributeEdges(FEM1 fem, int[] nEcnt, int maxItems, boolean multitask) {
-
+	private boolean distributeEdges(FEM1Octree octree, int[] nEcnt, int maxItems, boolean multitask) {
+		FEM1 fem = octree.fem;
 		nEcnt[1] = edges; nEcnt[2] = edges*2; nEcnt[3] = edges*3; nEcnt[4] = edges*4; nEcnt[5] = edges*5; nEcnt[6] = edges*6; nEcnt[7] = edges*7;
 		
 		int e1, pageSz = ((edges+8)*6)/8;											// pageSz = edge segment coords page allocation size
@@ -241,15 +247,14 @@ public class FEM1Octant {
 		int[] pEdgeN = fem.edgeNode;
 		// ********* EDGE SEPARATION PART ********* //
 		for (int e=0, e3b=0, oC=0, bits=0; e < edges; e++) {						// then distribute edge references into the 8 octants
-
-			if (tmpR == null) {							// if no local segments found, gather edge coordinates from FEM system's edgeNode[] referencer
-				e1 = e;
-				int ee = e * 2, ea3 = pEdgeN[ee++] * 3, eb3 = pEdgeN[ee] * 3;
+			// if no local segments found, gather edge coordinates from FEM system's edgeNode[] referencer
+			if (tmpR == null) {
+				e1 = e;																// make edge index out of iterator over edgecount
+				int ee = e * 2, ea3 = pEdgeN[ee++] * FEM1.NCOORD, eb3 = pEdgeN[ee] * FEM1.NCOORD;
 				if (fem.nodeWork == null) {
-					nodea = nodeb = fem.node;
-				} else {
-					if (ea3 >= fem.node.length) { ea3 -= fem.node.length; nodea = fem.nodeWork; } else nodea = fem.node;
-					if (eb3 >= fem.node.length) { eb3 -= fem.node.length; nodeb = fem.nodeWork; } else nodeb = fem.node;
+							nodea = nodeb = fem.node;
+				} else {	if (ea3 >= fem.node.length) { ea3 -= fem.node.length; nodea = fem.nodeWork; } else nodea = fem.node;
+							if (eb3 >= fem.node.length) { eb3 -= fem.node.length; nodeb = fem.nodeWork; } else nodeb = fem.node;
 				}
 				bits = edgeMembership(nodea[ea3++], nodea[ea3++], nodea[ea3++], nodeb[eb3++], nodeb[eb3++], nodeb[eb3++], split, 0, 0, 0xFF);
 			} else {															// for rest of tree, read from locally temporary stored edge segments
@@ -288,7 +293,8 @@ public class FEM1Octant {
 			int eN = nEcnt[o] - o * edges;
 			double[] tmpR1 = null;
 			if (eN > 0) {
-				edgeChild = new int[eN <= maxItems ? extra_space(eN) : eN];			// provide extra space only to probable leaf nodes
+				//edgeChild = new int[eN <= maxItems ? extra_space(eN) : eN];			// provide extra space only to probable leaf nodes
+				edgeChild = new int[eN];
 				for (int e = o*edges, e2=0, eEnd = nEcnt[o]; e < eEnd; e2++, e++) edgeChild[e2] = edgeOct[e];
 				int eCP = edgeCrdP[o];
 				tmpR1 = new double[eCP * pageSz + edgeCnt[o*8 + eCP]];
@@ -298,14 +304,16 @@ public class FEM1Octant {
 				
 				if (multitask) {
 					synchronized (this) {											// need synchronisation since node & facet splitter can work in parallel
-						if (octant[o] == null) {									// if octant holding edges was missing
-								octant[o] = new FEM1Octant(this, (short)o, 0, null, eN, edgeChild, 0, null,true,true);	// initialise it
+						if (octant[o] == null) {									// if octant missing (in lattice tree only nodes decide octant creation)
+							if (octree.latticeTree) { nEcnt[o] = eN; continue; }
+							octant[o] = new FEM1Octant(this, (short)o, 0, null, eN, edgeChild, 0, null,true,true);	// initialise it
 						} else {octant[o].edges = eN; octant[o].edgeI = edgeChild; }
 					}
 				} else {
-					if (octant[o] == null) {										// if octant holding edges was missing
-							octant[o] = new FEM1Octant(this, (short)o, 0, null, eN, edgeChild, 0, null,true,false);		// initialise it
-							iteratorAdd(o);
+					if (octant[o] == null) {										// if octant missing (in lattice tree only nodes decide octant creation)
+						if (octree.latticeTree) { nEcnt[o] = eN; continue; }
+						octant[o] = new FEM1Octant(this, (short)o, 0, null, eN, edgeChild, 0, null,true,false);	// initialise it
+						iteratorAdd(o);
 					} else {octant[o].edges = eN; octant[o].edgeI = edgeChild; }
 				}
 				octant[o].tmpR = tmpR1;
@@ -318,7 +326,7 @@ public class FEM1Octant {
 	// facet distributor is able to take care of degenerate case when same facets end up in all suboctants, indicating
 	// a failure of the facet count criterion: count per octant cannot be achieved since constituent facet boundboxes always cover that octant's space
 	// such a case is impossible for nondimensional objects like points
-	private boolean distributeFacets(FEM1 fem, int[] nFcnt, int maxItems, boolean multitask) {
+	private boolean distributeFacets(FEM1 fem, int[] nFcnt, int maxItems, boolean multitask, boolean spawnOctants) {
 
 		nFcnt[1] = facets; nFcnt[2] = facets*2; nFcnt[3] = facets*3; nFcnt[4] = facets*4; nFcnt[5] = facets*5; nFcnt[6] = facets*6; nFcnt[7] = facets*7;
 		int distribFailureTest = 0xFF;
@@ -331,9 +339,10 @@ public class FEM1Octant {
 			if (fBBox != null) {													// accept only facets from the polygon array
 				int bits = octantBBoxOverlap(fBBox[0], fBBox[1], fBBox[2], fBBox[3], fBBox[4], fBBox[5]) & 0xFF;	// get facet's distribution in this branch
 				distribFailureTest &= bits;
-				int o = bits < 0x0F ? 0 : ((bits & 0x0F)==0 ? 4 : 0); if (o == 4) bits >>= 4;
+				int o = bits < 0x0F ? 0 : ((bits & 0x0F)==0 ? 4 : 0);				// find the first 1 in bits
+				if (o == 4) bits >>= 4;
 				while (bits != 0) {													// pick out the octants that the facet bounding box was located in
-					if ((bits & 1) == 1) facetOct[nFcnt[o]++] = f1;
+					if ((bits & 1) == 1) facetOct[nFcnt[o]++] = f1;					// the bit of that octant will be set by octantBBoxOverlap()
 					bits >>= 1; o++;
 				}
 			}
@@ -353,14 +362,17 @@ public class FEM1Octant {
 				if (multitask) {
 					synchronized (this) {											// need synchronisation since node & edge splitter can work in parallel
 						if (octant[o] == null) {									// if octant holding facets was missing
+							if (spawnOctants)										// if we're meant to generate new octants for facets
 								octant[o] = new FEM1Octant(this, (short)o, 0, null, 0, null, fN, facetChild, true, true);	// initialise it
-						} else {octant[o].facets = fN; octant[o].facetI = facetChild; }
+						} else {octant[o].facets=fN; octant[o].facetI=facetChild; }	// if spawnOctants=false, will only distribute facets in existing octants
 					}
 				} else {
 					if (octant[o] == null) {										// if octant holding facets was missing
+						if (spawnOctants) {											// if we're meant to generate new octants for facets
 							octant[o] = new FEM1Octant(this, (short)o, 0, null, 0, null, fN, facetChild, true, false);		// initialise it
 							iteratorAdd(o);
-					} else {octant[o].facets = fN; octant[o].facetI = facetChild; }
+						}
+					} else {octant[o].facets = fN; octant[o].facetI = facetChild; }	// if spawnOctants=false, will only distribute facets in existing octants
 				}
 			}
 			nFcnt[o] = fN;
@@ -396,13 +408,14 @@ public class FEM1Octant {
 		if (nodes > 0) {
 			// DEBUG: relative element counts taken from measuring relative speeds of node/edge/facet splits, which ofcourse
 			// will only balance well if all three operations below are enacted at once
-			if (multitask && nodes > octree.threadSplitF*octree.splitNf && FEM1.freeTasks.get() > 0) {
+			// note: for a lattice tree, we want to distribute nodes BEFORE the facets
+			if (multitask && !octree.latticeTree && nodes > octree.threadSplitF*octree.splitNf && FEM1.freeTasks.get() > 0) {
 				pCtr.incrementAndGet(); FEM1.freeTasks.decrementAndGet();
 				FEM1.getExecutor(0).execute(new Runnable() {@Override public void run() {
 					distributeNodes(octree, nNcnt, octree.maxNodes, true);
 					pCtr.decrementAndGet(); FEM1.freeTasks.incrementAndGet(); } });
 			} else {
-				//long timer = level == 0 ? System.nanoTime() : 0;				// DEBUG: gets approx.timing of operation
+				//long timer = level == 0 ? System.nanoTime() : 0;				// DEBUG: gets approx.timing of operation, at lowest level (largest array)
 				distributeNodes(octree, nNcnt,  octree.maxNodes, false);
 				//if (level == 0) octree.splitNtiming = (octree.splitNtiming + (System.nanoTime() - timer)) / 2;
 			}
@@ -411,11 +424,11 @@ public class FEM1Octant {
 			if (multitask && edges > octree.threadSplitF*octree.splitEf && FEM1.freeTasks.get() > 0) {
 				pCtr.incrementAndGet(); FEM1.freeTasks.decrementAndGet();
 				FEM1.getExecutor(0).execute(new Runnable() {@Override public void run() {
-					distributeEdges(octree.fem, nEcnt, octree.maxEdges, true); 
+					distributeEdges(octree, nEcnt, octree.maxEdges, true); 
 					pCtr.decrementAndGet(); FEM1.freeTasks.incrementAndGet(); } });
 			} else {
-				//long timer = level == 0 ? System.nanoTime() : 0;				// DEBUG: gets approx.timing of operation
-				distributeEdges(octree.fem, nEcnt, octree.maxEdges, false);
+				//long timer = level == 0 ? System.nanoTime() : 0;				// DEBUG: gets approx.timing of operation, at lowest level
+				distributeEdges(octree, nEcnt, octree.maxEdges, false);
 				//if (level == 0) octree.splitEtiming = (octree.splitEtiming + (System.nanoTime() - timer)) / 2;
 			}
 		}
@@ -423,11 +436,11 @@ public class FEM1Octant {
 			if (multitask && facets > octree.threadSplitF*octree.splitFf &&  FEM1.freeTasks.get() > 0) {
 				pCtr.incrementAndGet(); FEM1.freeTasks.decrementAndGet();
 				FEM1.getExecutor(0).execute(new Runnable() {@Override public void run() {
-					distributeFacets(octree.fem, nFcnt, octree.maxFacets, true);
+					distributeFacets(octree.fem, nFcnt, octree.maxFacets, true, !octree.latticeTree);
 					pCtr.decrementAndGet(); FEM1.freeTasks.incrementAndGet(); } });
 			} else {
-				//long timer = level == 0 ? System.nanoTime() : 0;				// DEBUG: gets approx.timing of operation
-				distributeFacets(octree.fem, nFcnt, octree.maxFacets, false);
+				//long timer = level == 0 ? System.nanoTime() : 0;				// DEBUG: gets approx.timing of operation, at lowest level
+				distributeFacets(octree.fem, nFcnt, octree.maxFacets, false, !octree.latticeTree);
 				//if (level == 0) octree.splitFtiming = (octree.splitFtiming + (System.nanoTime() - timer)) / 2;
 			}
 		}
@@ -450,7 +463,9 @@ public class FEM1Octant {
 				facetSum += nFcnt[o]; edgeSum += nEcnt[o];
 				// any group, nodes/edges/facets, can be large enough to provoke a split, or enforcedLevel can force attainment a specified level
 				// note: set enforcedLevel to 0 to deactivate level enforcement criterion
-				if (octant1.level < enforcedLevel || nNcnt[o] > octree.maxNodes || nEcnt[o] > octree.maxEdges || nFcnt[o] > octree.maxFacets) {
+				// note: subdivision of lattice tree decided ONLY by the lattice subdiv. control nodes
+				if (octant1.level < enforcedLevel || nNcnt[o] > octree.maxNodes ||
+						!octree.latticeTree && (nEcnt[o] > octree.maxEdges || nFcnt[o] > octree.maxFacets)) {
 					enumerator = (enumerator<<3) | o; octantsMN++; }
 				else {
 					// for lattice tree, assign internal/external status from the lattice cube array's status words
@@ -471,12 +486,13 @@ public class FEM1Octant {
 		if (levelIncreased) {
 			if (level + 1 > octree.topLevel) octree.topLevel = (short)(level + 1);	// keep track of maximal level attained in tree
 			enumerator |= (octantsMN << 24);
-			nodeI = edgeI = facetI = null;			// a branch doesn't need item references (but keeping nodes count of entire branch can be useful)
+			nodeI = edgeI = null;						// a branch doesn't need item references (but keeping nodes count of entire branch can be useful)
+			if (!octree.latticeTree) facetI = null;		// keep facets at lower levels for lattice tree, since leaf "shaving" will be eliminating higher ones
 			branches = 1;
 		} else octant = null;													// no children could be created
 		// branch disbalance calculated from items clustered across octants, set disbalanceCap=1 to stop disbalance heuristic from deciding splits
-		// note: since facet count of parent != facet sum of childre, facetSum & edgeSum are used to stop disbalance from exceeding 1.0
-		if (octree.disbalanceCap < 1)
+		// note: since facet/edge count of parent <= facet/edge sum of children, facetSum & edgeSum are added to stop disbalance from exceeding 1.0
+		if (octree.disbalanceCap < 1 && !octree.latticeTree)
 			disbalance = octantNodeDisbalance(nodes + edgeSum + facetSum, nIcnt[0], nIcnt[1], nIcnt[2], nIcnt[3], nIcnt[4], nIcnt[5], nIcnt[6], nIcnt[7]);
 		return octantsMN;
 	}
@@ -490,15 +506,16 @@ public class FEM1Octant {
 		// if branch levels are not overrun & branch is not disbalanced
 		if (level < octree.maxLevel && disbalanceGrowth < octree.disbalanceCap) {
 			int splittable = split(octree, multitask, octree.enforcedLevel);		// split into octants (if possible), becoming a branch
+			int facets1 = octree.latticeTree ? 0 : facets;							// don't use facet count as multitask decision for lattice tree
 
 			int octantIt = enumerator;
-			if (splittable > 0) backTrack = false;									// make sure to backtrack on branches that didn't generate splittable leaves
+			if (splittable > 0) backTrack = false;									// enforce backtrack on branches that didn't generate splittable leaves
 			
 			for (int o = 0; o < splittable; o++, octantIt >>= 3) {					// note: we recurse only octants that contain more than "maxItems" items
 				FEM1Octant octantC = this.octant[octantIt & 7];
 				// if multitask requested and this branch contains enough items to bother with threading overhead
 				// and this isn't the last call (which this task can complete itself)
-				if (multitask && FEM1.freeTasks.get() > 0 && nodes + edges + facets >= octree.threadSpawnItemsCap && o < splittable-1) {
+				if (multitask && FEM1.freeTasks.get() > 0 && nodes + edges + facets1 >= octree.threadSpawnItemsCap && o < splittable-1) {
 					 FEM1.freeTasks.decrementAndGet();
 					 FEM1.getExecutor(0).execute(new Runnable() {
 						@Override public void run() {
@@ -524,8 +541,6 @@ public class FEM1Octant {
 				// note: branches CANNOT be recursively counted by threads, since each parent exits before subbranches are finished
 				// fix the incorrect branch counts (will also block up on unfinished nodes) and for a lattice tree, sort out internal status of branches
 				if (multitask) process(octree, OCTREE_SUM_BRANCHES|OCTREE_SUM_LEVELS|(octree.latticeTree ? OCTREE_IST : 0));
-//				else if (octree.latticeTree && !octree.limitGradation)			// if >2 gradations wanted, cull unnecessary IST-internal leaves
-//					process(octree, OCTREE_IST_CULL);
 			}
 		}
 		
@@ -1069,12 +1084,12 @@ public class FEM1Octant {
 	}
 	
 
-	final static int FLG_BFC_MMM = 1|1<<8|1<<9|1<<10|1<<13|1<<14|1<<16|1<<17,		FLG_BFC_PMM = 1<<8|1<<1|1<<10|1<<11|1<<14|1<<15|1<<17|1<<18;
-	final static int FLG_BFC_MPM = 1<<9|1<<10|1<<2|1<<12|1<<16|1<<17|1<<19|1<<20,	FLG_BFC_PPM = 1<<10|1<<11|1<<12|1<<3|1<<17|1<<18|1<<20|1<<21;
-	final static int FLG_BFC_MMP = 1<<13|1<<14|1<<16|1<<17|1<<4|1<<22|1<<23|1<<24,	FLG_BFC_PMP = 1<<14|1<<15|1<<17|1<<18|1<<22|1<<5|1<<24|1<<25;
-	final static int FLG_BFC_MPP = 1<<16|1<<17|1<<19|1<<20|1<<23|1<<24|1<<6|1<<26,	FLG_BFC_PPP = 1<<17|1<<18|1<<20|1<<21|1<<24|1<<25|1<<26|1<<7;
+	final static int FLG_ieFC_MMM = 1|1<<8|1<<9|1<<10|1<<13|1<<14|1<<16|1<<17,		FLG_ieFC_PMM = 1<<8|1<<1|1<<10|1<<11|1<<14|1<<15|1<<17|1<<18;
+	final static int FLG_ieFC_MPM = 1<<9|1<<10|1<<2|1<<12|1<<16|1<<17|1<<19|1<<20,	FLG_ieFC_PPM = 1<<10|1<<11|1<<12|1<<3|1<<17|1<<18|1<<20|1<<21;
+	final static int FLG_ieFC_MMP = 1<<13|1<<14|1<<16|1<<17|1<<4|1<<22|1<<23|1<<24,	FLG_ieFC_PMP = 1<<14|1<<15|1<<17|1<<18|1<<22|1<<5|1<<24|1<<25;
+	final static int FLG_ieFC_MPP = 1<<16|1<<17|1<<19|1<<20|1<<23|1<<24|1<<6|1<<26,	FLG_ieFC_PPP = 1<<17|1<<18|1<<20|1<<21|1<<24|1<<25|1<<26|1<<7;
 	// array maps child's int_ext flags of upper or lower 4 bits to parent's 27-point int_ext flags
-	final static int fMap_bFC[] = { 0, 1, 1<<8, 1|1<<8, 1<<9, 1|1<<9, 1<<8|1<<9, 1|1<<8|1<<9,
+	final static int fMap_ieFC[] = { 0, 1, 1<<8, 1|1<<8, 1<<9, 1|1<<9, 1<<8|1<<9, 1|1<<8|1<<9,
 		1<<10, 1|1<<10, 1<<8|1<<10, 1|1<<8|1<<10, 1<<9|1<<10, 1|1<<9|1<<10, 1<<8|1<<9|1<<10, 1|1<<8|1<<9|1<<10,
 		0, 1<<8, 1<<1, 1<<8|1<<1, 1<<10, 1<<8|1<<10, 1<<1|1<<10, 1<<8|1<<1|1<<10,															// +16
 		1<<11, 1<<8|1<<11, 1<<1|1<<11, 1<<8|1<<1|1<<11, 1<<10|1<<11, 1<<8|1<<10|1<<11, 1<<1|1<<10|1<<11, 1<<8|1<<1|1<<10|1<<11,	
@@ -1105,22 +1120,22 @@ public class FEM1Octant {
 	void int_extFromChildren(boolean inclusive) {
 		if (octant == null) return;		// cannot resolve anything if there are no children
 		if (!inclusive) int_ext = 0;
-		if (octant[0]!=null) {	if (octant[0].internal()) int_ext |= FLG_BFC_MMM;
-								else { int inEx=octant[0].int_ext&0xFF; int_ext |= fMap_bFC[inEx&15]|fMap_bFC[64+(inEx>>4)]; }}
-		if (octant[1]!=null) {	if (octant[1].internal()) int_ext |= FLG_BFC_PMM;
-								else { int inEx=octant[1].int_ext&0xFF; int_ext |= fMap_bFC[16+(inEx&15)]|fMap_bFC[80+(inEx>>4)]; }}
-		if (octant[2]!=null) {	if (octant[2].internal()) int_ext |= FLG_BFC_MPM;
-								else { int inEx=octant[2].int_ext&0xFF; int_ext |= fMap_bFC[32+(inEx&15)]|fMap_bFC[96+(inEx>>4)]; }}
-		if (octant[3]!=null) {	if (octant[3].internal()) int_ext |= FLG_BFC_PPM;
-								else { int inEx=octant[3].int_ext&0xFF; int_ext |= fMap_bFC[48+(inEx&15)]|fMap_bFC[112+(inEx>>4)]; }}
-		if (octant[4]!=null) {	if (octant[4].internal()) int_ext |= FLG_BFC_MMP;
-								else { int inEx=octant[4].int_ext&0xFF; int_ext |= fMap_bFC[64+(inEx&15)]|fMap_bFC[128+(inEx>>4)]; }}
-		if (octant[5]!=null) {	if (octant[5].internal()) int_ext |= FLG_BFC_PMP;
-								else { int inEx=octant[5].int_ext&0xFF; int_ext |= fMap_bFC[80+(inEx&15)]|fMap_bFC[144+(inEx>>4)]; }}
-		if (octant[6]!=null) {	if (octant[6].internal()) int_ext |= FLG_BFC_MPP;
-								else { int inEx=octant[6].int_ext&0xFF; int_ext |= fMap_bFC[96+(inEx&15)]|fMap_bFC[160+(inEx>>4)]; }}
-		if (octant[7]!=null) {	if (octant[7].internal()) int_ext |= FLG_BFC_PPP;
-								else { int inEx=octant[7].int_ext&0xFF; int_ext |= fMap_bFC[112+(inEx&15)]|fMap_bFC[176+(inEx>>4)]; }}
+		if (octant[0]!=null) {	if (octant[0].internal()) int_ext |= FLG_ieFC_MMM;
+								else { int inEx=octant[0].int_ext&0xFF; int_ext |= fMap_ieFC[inEx&15]|fMap_ieFC[64+(inEx>>4)]; }}
+		if (octant[1]!=null) {	if (octant[1].internal()) int_ext |= FLG_ieFC_PMM;
+								else { int inEx=octant[1].int_ext&0xFF; int_ext |= fMap_ieFC[16+(inEx&15)]|fMap_ieFC[80+(inEx>>4)]; }}
+		if (octant[2]!=null) {	if (octant[2].internal()) int_ext |= FLG_ieFC_MPM;
+								else { int inEx=octant[2].int_ext&0xFF; int_ext |= fMap_ieFC[32+(inEx&15)]|fMap_ieFC[96+(inEx>>4)]; }}
+		if (octant[3]!=null) {	if (octant[3].internal()) int_ext |= FLG_ieFC_PPM;
+								else { int inEx=octant[3].int_ext&0xFF; int_ext |= fMap_ieFC[48+(inEx&15)]|fMap_ieFC[112+(inEx>>4)]; }}
+		if (octant[4]!=null) {	if (octant[4].internal()) int_ext |= FLG_ieFC_MMP;
+								else { int inEx=octant[4].int_ext&0xFF; int_ext |= fMap_ieFC[64+(inEx&15)]|fMap_ieFC[128+(inEx>>4)]; }}
+		if (octant[5]!=null) {	if (octant[5].internal()) int_ext |= FLG_ieFC_PMP;
+								else { int inEx=octant[5].int_ext&0xFF; int_ext |= fMap_ieFC[80+(inEx&15)]|fMap_ieFC[144+(inEx>>4)]; }}
+		if (octant[6]!=null) {	if (octant[6].internal()) int_ext |= FLG_ieFC_MPP;
+								else { int inEx=octant[6].int_ext&0xFF; int_ext |= fMap_ieFC[96+(inEx&15)]|fMap_ieFC[160+(inEx>>4)]; }}
+		if (octant[7]!=null) {	if (octant[7].internal()) int_ext |= FLG_ieFC_PPP;
+								else { int inEx=octant[7].int_ext&0xFF; int_ext |= fMap_ieFC[112+(inEx&15)]|fMap_ieFC[176+(inEx>>4)]; }}
 	}
 	
 	// method resolves child's internal/external boundary corner flags from parent, if inclusive=true, it will OR into int_ext rather than replace it
@@ -1137,14 +1152,13 @@ public class FEM1Octant {
 		case OCT_MMP: int_ext |= inExP>>13&1|inExP>>13&2|inExP>>14&4|inExP>>14&8|inExP&16|inExP>>17&32|inExP>>17&64|inExP>>17&128; break;
 		case OCT_PMP: int_ext |= inExP>>14&1|inExP>>14&2|inExP>>15&4|inExP>>15&8|inExP>>18&16|inExP&32|inExP>>18&64|inExP>>18&128; break;
 		case OCT_MPP: int_ext |= inExP>>16&1|inExP>>16&2|inExP>>17&4|inExP>>17&8|inExP>>19&16|inExP>>19&32|inExP&64|inExP>>19&128; break;
-		case OCT_PPP: int_ext |= inExP>>17&1|inExP>>17&2|inExP>>18&4|inExP>>18&8|inExP>>20&16|inExP>>20&32|inExP>>20&64|inExP&128;
-		}
+		case OCT_PPP: int_ext |= inExP>>17&1|inExP>>17&2|inExP>>18&4|inExP>>18&8|inExP>>20&16|inExP>>20&32|inExP>>20&64|inExP&128; }
 		// DEBUG: for IST method, creation happens for internal octants of (maxLevel-1) gradation level, so centroid will clearly be internal
 		if ((int_ext&0xFF)==0xFF) int_ext |= 1<<17;
 	}
 	
 	
-	// method will use nodesX as gradation enumerator & flagger for IST-internal suboctants, if all those flags become set
+	// method will use "nodesX" parameter as gradation enumerator & flagger for IST-internal suboctants, if all those flags become set
 	// then this octant will become an IST-internal octant itself (which simplifies filtering out IST octants)
 	// this process must be top-down from the leaves, and is an EXCLUSIVE process as one progresses down the gradations
 	boolean internOfISTFromChildren() {
@@ -1186,8 +1200,7 @@ public class FEM1Octant {
 			} else {			if (y <= oct2.yC) {	if (z <= oct2.zC)	{ oct2 = oct2.octant[OCT_PMM]; } else { oct2 = oct2.octant[OCT_PMP]; }}
 								else {				if (z <= oct2.zC)	{ oct2 = oct2.octant[OCT_PPM]; } else { oct2 = oct2.octant[OCT_PPP]; }}}
 			if (oct2 == null) break;
-			oct = oct2;
-		}
+			oct = oct2; }
 		return oct;
 	}
 	public FEM1Octant locateCoordinate(double x, double y, double z) {
@@ -1198,8 +1211,7 @@ public class FEM1Octant {
 			} else {			if (y <= oct2.yC) {	if (z <= oct2.zC)	{ oct2 = oct2.octant[OCT_PMM]; } else { oct2 = oct2.octant[OCT_PMP]; }}
 								else {				if (z <= oct2.zC)	{ oct2 = oct2.octant[OCT_PPM]; } else { oct2 = oct2.octant[OCT_PPP]; }}}
 			if (oct2 == null) break;
-			oct = oct2;
-		}
+			oct = oct2; }
 		return oct;
 	}
 	
@@ -1821,16 +1833,18 @@ public class FEM1Octant {
 	// method will return total polarity sum and total encounter count in supplied status[] array
 	// method can be used for systematic gridded coverage of a mesh topology along a certain ordinate (x/y/z)
 	// for domain-spanning ray polarity consistency, the segment should begin outside the mesh, mesh volume must be watertight for expected behaviour
-	// status bits (on vDir): 16 = keep polygon check-off table, 32 = find only one intersection
-	public double[] facetEncounters(FEM1Octree geocTree, double x1, double y1, double z1, double x2, double y2, double z2, int vDir, int[] status) {
+	// status bits (on vDir): 16 = keep polygon check-off table, 32 = find only one intersection, 64 = expand parametric border of facet
+	public double[] facetEncounters(FEM1Octree geocTree, FEM1Octant[] octArray,
+									double x1, double y1, double z1, double x2, double y2, double z2, int vDir, int[] status) {
 		if (geocTree.fem.nodeWork != null) throw new RuntimeException("FEM1Octree.facetEncounters(): nodeWork[] must be integrated.");
 		// DEBUG: a simple ordinate cuboid object will perfectly span the root octant, so checking the coordinates to be inside the global boundbox
 		// will make impossible to start checking from outside the mesh, since one then has to step outside the global boundbox
 		// might as well rely on the fact that leavesOverlappingBBox() will return null on being outside the domain anyway
 		//if (x1 < xM || x1 > xP || y1 < yM || y1 > yP || z1 < zM || z1 > zP) return null;	// base case, coordinate outside octree's boundbox
 
-		boolean clearPolygonCheck = (vDir&16)!=16;											// flag in vDir specifies if visits flagarray is to be kept
-		boolean singleEncounter = (vDir&32)==32;											// flag specifies whether only one encounter is necessary
+		boolean clearPolygonCheck = (vDir&16)!=16;								// flag in vDir specifies if visits flagarray is to be kept
+		boolean singleEncounter = (vDir&32)==32;								// flag specifies whether only one encounter is necessary
+		boolean expandFacets = (vDir&64)==64;									// flag specifies if facet's parametrics should be grown for numeric stability
 		vDir &= 0x7;
 		double x1b = x1, y1b = y1, z1b = z1, x2b = x2, y2b = y2, z2b = z2;
 		if (vDir == 3) {
@@ -1846,19 +1860,21 @@ public class FEM1Octant {
 				case 2: z2 = z2b = z1 + vLen; x2 = x2b = x1; y2 = y2b = y1; }
 		}
 		
-		FEM1Octant[] octant1 = octantArrayByBBox(geocTree, x1b, y1b, z1b, x2b, y2b, z2b, true, false);	// find leaves only, include corners
 		status[0] = status[1] = 0;
-		if (octant1[0] == null) return null;
+		if (octArray == null) {																// if no octant array provided
+			octArray = octantArrayByBBox(geocTree, x1b, y1b, z1b, x2b, y2b, z2b, true, false);	// find facets in edge's bbox, leaves only, include corners
+			if (octArray[0] == null) return null;
+		}
 		if (clearPolygonCheck) geocTree.fem.polygonCheck.clearVisits();			// we need a clean checkoff list for facets (unless "do not clear" flagged)
 		
 		double[] isect = {0,0,0};
 		if (singleEncounter) {													// if any encounter requested, find one and return
-			for (FEM1Octant o : octant1) {
+			for (FEM1Octant o : octArray) {
 				if (o == null) break;
 				for (int f = 0; f < o.facets; f++) {							// check facet intersections, sum inside/outside status as polarity sum
 					int fI = o.facetI[f];
 					if (!geocTree.fem.polygonCheck.visited(fI)) {				// do not revisit checked facets
-						int polarity = geocTree.fem.facetSegmentIntersection(fI, x1, y1, z1, x2, y2, z2, isect);
+						int polarity = geocTree.fem.facetSegmentIntersection(expandFacets ? fI|SET31 : fI, x1, y1, z1, x2, y2, z2, isect);
 						if (polarity != 0) {									// found intersection ?
 							status[2] = fI;										// store the intersected facet to give caller another try on it
 							status[0] = polarity; status[1]++; return isect;	// return the encounter
@@ -1872,12 +1888,12 @@ public class FEM1Octant {
 		
 		double[] encounter = new double[3 * geocTree.maxFacetEncounters];
 		int encounters = 0;
-		for (FEM1Octant o : octant1) {
+		for (FEM1Octant o : octArray) {
 			if (o == null) break;
 			for (int f = 0; f < o.facets; f++) {								// check facet intersections, sum inside/outside status as polarity sum
 				int fI = o.facetI[f];
 				if (!geocTree.fem.polygonCheck.visited(fI)) {					// do not revisit checked facets
-					int polarity = geocTree.fem.facetSegmentIntersection(fI, x1, y1, z1, x2, y2, z2, isect);
+					int polarity = geocTree.fem.facetSegmentIntersection(expandFacets ? fI|SET31 : fI, x1, y1, z1, x2, y2, z2, isect);
 					if (polarity != 0) {										// found intersection ?
 						status[0] += polarity;
 						//if (encounters < 2) status[2 + encounters] = fI;		// store down facet index for future revisits (limited to 2 facets)
@@ -1936,7 +1952,7 @@ public class FEM1Octant {
 	public String toString() {
 		StringBuilder sb = new StringBuilder();
 		sb.append("subtree, total branches: " + branches + ", total leaves: " + leaves + "\n");
-		sb.append(appendToString());
+		sb.append(appendToString(128));
 		sb.append("\n");
 		return sb.toString();
 	}
@@ -1945,7 +1961,7 @@ public class FEM1Octant {
 	static int match_int_ext = 0;				// gets ANDed with int_ext, if given flags are all set -> output octant (set =0 to turn off)
 	static int max_level = 128;
 	
-	StringBuilder appendToString() {
+	StringBuilder appendToString(int maxLevel) {
 		StringBuilder sb2 = new StringBuilder();
 		
 		if ((match_int_ext==0||(match_int_ext&int_ext)==match_int_ext) && level <= max_level) {
@@ -1964,14 +1980,12 @@ public class FEM1Octant {
 			sb2.append((internal()?"I ":"") + (centroid_internal()?"CI ":"") + "Lvl: " + level + ", n: " + nodes + ", e: " + edges + ", f: " + facets);
 			if (octant != null) {
 				sb2.append(", br: " + branches + ", lv: " + leaves + ", disb: " + String.format("%.3f", disbalance));
-				sb2.append(" i: " + (iterator>>24) + "|" +
-						((iterator>>21)&7)+((iterator>>18)&7)+((iterator>>15)&7)+((iterator>>12)&7)+
-						((iterator>>9)&7)+((iterator>>6)&7)+((iterator>>3)&7)+(iterator&7));
-				sb2.append(" e: " + (enumerator>>24) + "|" +
-						((enumerator>>21)&7)+((enumerator>>18)&7)+((enumerator>>15)&7)+((enumerator>>12)&7)+
-						((enumerator>>9)&7)+((enumerator>>6)&7)+((enumerator>>3)&7)+(enumerator&7)+"\n");
+				sb2.append(" i: " + (iterator>>24) + "|" + ((iterator>>21)&7)+((iterator>>18)&7)+((iterator>>15)&7)+((iterator>>12)&7)+
+															((iterator>>9)&7)+((iterator>>6)&7)+((iterator>>3)&7)+(iterator&7));
+				sb2.append(" e: " + (enumerator>>24) + "|" + ((enumerator>>21)&7)+((enumerator>>18)&7)+((enumerator>>15)&7)+((enumerator>>12)&7)+
+															((enumerator>>9)&7)+((enumerator>>6)&7)+((enumerator>>3)&7)+(enumerator&7)+"\n");
 			} else 	sb2.append("\n");
-			if (int_ext != 0) {
+			if (int_ext != 0) {								// int_ext!=0 signals a latticeTree octant, with it's own specific data carry
 				indentToLevel(sb2);
 				sb2.append(((int_ext&1<<6)!=0? "x":".") + ((int_ext&1<<23)!=0?"x":".") + ((int_ext&1<<4)!=0? "x  ":".  "));
 				sb2.append(((int_ext&1<<26)!=0?"x":".") + ((int_ext&1<<24)!=0?"x":".") + ((int_ext&1<<22)!=0?"x  ":".  "));
@@ -1986,34 +2000,57 @@ public class FEM1Octant {
 				sb2.append(((int_ext&1<<3)!=0? "x":".") + ((int_ext&1<<11)!=0?"x":".") + ((int_ext&1<<1)!=0? "x   Y<-o\n":".   Y<-o\n"));
 			}
 			
-			if (nodeI != null && nodes > 0) {								// note: nodes can be > 0 even if node == null, for branches
+			if (nodeI!=null && nodes>0 && nodes<nodeI.length) {				// note: nodes can be > 0 even if node == null, for branches
 				indentToLevel(sb2);
-				sb2.append("n:[");
-				if (maxItemPrint < nodes)
-						for (int n = 0; n < maxItemPrint; n++) sb2.append(nodeI[n] + (n == maxItemPrint - 1 ? "...]\n" : ","));
-				else	for (int n = 0; n < nodes; n++) sb2.append(nodeI[n] + (n == nodes - 1 ? "]\n" : ","));
+				if (int_ext==0) {
+					sb2.append("n:[");
+					if (maxItemPrint < nodes)
+							for (int n = 0; n < maxItemPrint; n++) sb2.append(nodeI[n] + (n == maxItemPrint - 1 ? "...]\n" : ","));
+					else	for (int n = 0; n < nodes; n++) sb2.append(nodeI[n] + (n == nodes - 1 ? "]\n" : ","));
+				} else {
+					sb2.append("Local IST elements (n0, n1, n2, n3):\n");
+					for (int e=0, e5=0; e < nodes; e++) {					// the printout for stored IST elements in a lattice tree
+						int n0=nodeI[e5++], n1=nodeI[e5++], n2=nodeI[e5++], n3=nodeI[e5++], e1=nodeI[e5++];
+						indentToLevel(sb2);
+						sb2.append("E"+e1+" ("+n0+", "+n1+", "+n2+", "+n3+")\n");
+					}
+				}
 			}		
 			if (edgeI != null && edges > 0) {								// note: edges can be > 0 even if edge == null, for branches
 				indentToLevel(sb2);
 				sb2.append("e:[");
-				if (maxItemPrint < edges)
-						for (int e = 0; e < maxItemPrint; e++) sb2.append(edgeI[e] + (e == maxItemPrint - 1 ? "...]\n" : ","));
-				else	for (int e = 0; e < edges; e++) sb2.append(edgeI[e] + (e == edges - 1 ? "]\n" : ","));
+				int edgeItems = edges; boolean putDots = false;
+				if (maxItemPrint < edges) { edgeItems = maxItemPrint; putDots=true; }
+				for (int e = 0; e < edgeItems; e++) {
+					String edgeS;
+					if ((edgeI[e]&SET31)!=0)	edgeS = "corner_n" + (edgeI[e]&CLR31); else edgeS = Integer.toString(edgeI[e]);
+					sb2.append(edgeS + (e == edgeItems - 1 ? (putDots?"...]\n":"]\n") : ",")); }
 			}
 			if (facetI != null && facets > 0) {								// note: facets can be > 0 even if facet == null, for branches
-				indentToLevel(sb2);
-				sb2.append("f:[");
-				if (maxItemPrint < facets)
-						for (int f = 0; f < maxItemPrint; f++) sb2.append(facetI[f] + (f == maxItemPrint - 1 ? "...]\n" : ","));
-				else	for (int f = 0; f < facets; f++) sb2.append(facetI[f] + (f == facets - 1 ? "]\n" : ","));
+				if (int_ext==0) {											// regular printout of the stored facet indexes
+					indentToLevel(sb2);
+					sb2.append("f:[");
+					if (maxItemPrint < facets)
+							for (int f = 0; f < maxItemPrint; f++) sb2.append(facetI[f] + (f == maxItemPrint - 1 ? "...]\n" : ","));
+					else	for (int f = 0; f < facets; f++) sb2.append(facetI[f] + (f == facets - 1 ? "]\n" : ","));
+				} else {
+					indentToLevel(sb2); sb2.append("f:");
+					for (int f=0, f7=0, e; f < facets; f++) {	// the printout for feature analysis structures in a lattice tree
+						if (f>0) indentToLevel(sb2);
+						int n0=facetI[f7++], n1=facetI[f7++], n2=facetI[f7++], n3=facetI[f7++], e1=facetI[f7++], eS=e1&0x1FFFFFFF, nS=facetI[f7++];
+						sb2.append((f==0?"(n0:":"  (n0:")+n0+", n1:"+n1+", n2:"+n2+", n3:"+n3+", eS("+(e1!=-1?eS:e1)+"), nS("+nS+"), E"+facetI[f7++]+")");
+						if (e1!=-1) { if ((e1&SET29)!=0) sb2.append(" -e01"); if ((e1&SET30)!=0) sb2.append(" -e12"); if ((e1&SET31)!=0) sb2.append(" -e20"); }
+						sb2.append("\n");
+					}
+				}
 			}
 			sb2.append("\n");
 		}
-		if (octant != null) {
-			if (octant[0] != null) sb2.append(octant[0].appendToString()); if (octant[1] != null) sb2.append(octant[1].appendToString());
-			if (octant[2] != null) sb2.append(octant[2].appendToString()); if (octant[3] != null) sb2.append(octant[3].appendToString());
-			if (octant[4] != null) sb2.append(octant[4].appendToString()); if (octant[5] != null) sb2.append(octant[5].appendToString());
-			if (octant[6] != null) sb2.append(octant[6].appendToString()); if (octant[7] != null) sb2.append(octant[7].appendToString());
+		if (octant != null && level < maxLevel && iterator != 0) {
+			if (octant[0] != null) sb2.append(octant[0].appendToString(maxLevel)); if (octant[1] != null) sb2.append(octant[1].appendToString(maxLevel));
+			if (octant[2] != null) sb2.append(octant[2].appendToString(maxLevel)); if (octant[3] != null) sb2.append(octant[3].appendToString(maxLevel));
+			if (octant[4] != null) sb2.append(octant[4].appendToString(maxLevel)); if (octant[5] != null) sb2.append(octant[5].appendToString(maxLevel));
+			if (octant[6] != null) sb2.append(octant[6].appendToString(maxLevel)); if (octant[7] != null) sb2.append(octant[7].appendToString(maxLevel));
 		}
 		return sb2;
 	}
@@ -2046,7 +2083,7 @@ public class FEM1Octant {
 				octree.vOBJcnt += 8;
 			}
 		}
-		if (octant != null) {
+		if (octant != null && iterator!=0) {
 			for (int o = 0; o < 8; o++)
 				if (octant[o] != null) sb2.append(octant[o].appendVerticesToOBJ(octree, lvlS, lvlE, precFormat, leavesOnly, internalOnly, output)); }
 		return sb2;
@@ -2076,7 +2113,7 @@ public class FEM1Octant {
 				octree.pOBJidx += 8;
 			}
 		}
-		if (octant != null) {
+		if (octant != null && iterator != 0) {
 			for (int o = 0; o < 8; o++) if (octant[o] != null) sb2.append(octant[o].appendPolygonsToOBJ(octree, lvlS, lvlE, leavesOnly, internalOnly, output)); }
 		return sb2;
 	}

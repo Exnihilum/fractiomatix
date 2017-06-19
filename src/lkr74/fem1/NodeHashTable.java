@@ -24,6 +24,8 @@ public class NodeHashTable {
 	private boolean fromBack = false;			// tells whether scanning should happen from end of arrays or from beginning
 	private boolean useFastTable = false;		// tells whether fast table should be used (activating this on nodecount/bucket heuristic?)
 	
+	final static int NCOORD = FEM1.NCOORD, NCOORD2 = NCOORD*2;
+	
 	// for instantiation, NodeHashTable needs the volume scale (from 0 to a positive max.number, assumed to define a cube, equal on x/y/z)
 	// and how many nodes per each ordinate to divide the volume scale into
 	public NodeHashTable(int startIndex, double volScale, int nodesPerOrdinate, double xZero, double yZero, double zZero) {
@@ -32,8 +34,8 @@ public class NodeHashTable {
 		this.startIndex = this.nodeIndex = startIndex;
 		long nPerO3D = nodesPerOrdinate * nodesPerOrdinate * nodesPerOrdinate;
 		// DEBUG: want to make sure there isn't an out of memory issue since the allocation is the cubic of the provided nodes/ordinate value
-		// in worst case, if VisitBitArray is of lower resolution than the mesh's lattice, more calls 
-		while (nPerO3D > 0x7FFFFFFF) { nodesPerOrdinate>>=1; nPerO3D = nodesPerOrdinate * nodesPerOrdinate * nodesPerOrdinate; }
+		// let a test gird of 256x256x256 units be the maximal direct checklist
+		while (nPerO3D > 256*256*256) { nodesPerOrdinate>>=1; nPerO3D = nodesPerOrdinate * nodesPerOrdinate * nodesPerOrdinate; }
 		this.nodesPerOrdinate = nodesPerOrdinate;
 		nodesPerOrdinateSq = nodesPerOrdinate * nodesPerOrdinate;
 		nodesPerVolScale = (double)nodesPerOrdinate / volScale;
@@ -102,7 +104,7 @@ public class NodeHashTable {
 				} else {
 				// heuristic: search from back, since for spatially arranged vertices the locally relevant nodes will always be in the end
 				// TODO: check if it's possible to toggle between starting from beginning or end of array on some criterion, or just doing it randomly?
-					i3 = idxBucket[1] * 3 - 1;
+					i3 = idxBucket[1] * NCOORD - 1;
 					for (int i = idxBucket[1]*2; i > 1; i -= 2) {
 						if (bucket[i3--] == z)
 							if (bucket[i3--] == y) { if (bucket[i3--] == x) return ((long)idxBucket[i+1])<<32 | 0x80000000L | idxBucket[i]; }
@@ -117,7 +119,7 @@ public class NodeHashTable {
 		} else {																// node is unique
 			nodeFlagger.visit(composeIdx);										// coarsely flag it's integer coordinate as non-unique
 			if (bucket == null) {												// control bucket existense and proper size
-				bucket = table[hashIdx] = new double[sizeB * 3];
+				bucket = table[hashIdx] = new double[sizeB * NCOORD];
 				idxBucket = tableI[hashIdx] = new int[sizeB * 2 + 2];
 				idxBucket[0] = sizeB * 2;
 			} else if (idxBucket[0] <= idxBucket[1]) {
@@ -135,7 +137,7 @@ public class NodeHashTable {
 		
 		// at this point, either a unique node was received (coarse search failed), or a node was not found on indication request
 		// in both cases, need to insert the node
-		int i3 = idxBucket[1], i = i3 * 2 + 2; i3 *= 3;
+		int i3 = idxBucket[1], i = i3 * 2 + 2; i3 *= NCOORD;
 		if (useFastTable) {
 			idxBucket[i++] = fastTableI[fastTableIndex] = nodeIndex;		// store the inserted node's index
 			bucket[i3++] = fastTable[fastTableIndex++] = x;					// store the node
@@ -161,7 +163,7 @@ public class NodeHashTable {
 	// method returns false if the node wasn't found
 	public boolean removeRecentIST(int idx) {
 		if (!useFastTable) return false;
-		for (int iFT = 0; iFT < sizeFT3; iFT += 3) {
+		for (int iFT = 0; iFT < sizeFT3; iFT += NCOORD) {
 			if (fastTableI[iFT] == idx) {
 				fastTableI[iFT] = -1;
 				fastTable[iFT++] = Double.MAX_VALUE;					// mark fast table's coordinate as "unattainable"	
@@ -172,8 +174,8 @@ public class NodeHashTable {
 					if (idxBucket[i] == idx) {
 						idxBucket[i] = -1;								// true data deletion too costly and unnecessary, mark as "deleted"
 						// mark x-coordinate (z-coordinate for reverse scanning) as "unattainable"
-						if (fromBack)	bucket[((i-2)>>1)*3 + 2] = Double.MAX_VALUE;
-						else 			bucket[((i-2)>>1)*3] = Double.MAX_VALUE;
+						if (fromBack)	bucket[((i-2)>>1)*NCOORD + 2] = Double.MAX_VALUE;
+						else 			bucket[((i-2)>>1)*NCOORD] = Double.MAX_VALUE;
 						break;
 					}
 				}
@@ -190,8 +192,8 @@ public class NodeHashTable {
 	// 2) method can take a node condensing reindexer array nodeRemap[] that reorders indexes, remapSize will tell the size of a condensed array
 	// startNode will tell what node index to start collecting from
 	public double[] arrayWithSpace(int extraSpace, boolean inFront, int startNode, int[] nodeRemap, int remapSize, boolean interleave) {
-		extraSpace *= 3;
-		double[] nodeArray = new double[nodeRemap==null ? ((interleave ? 2 : 1)*nodeIndex*3 + extraSpace) : remapSize * 3];
+		extraSpace *= NCOORD;
+		double[] nodeArray = new double[(nodeRemap==null ? ((interleave?2:1)*nodeIndex*NCOORD) : remapSize*NCOORD) + extraSpace];
 		for (int b = 0; b < size; b++) {
 			double[] bucket = table[b];
 			int[] idxBucket = tableI[b];
@@ -199,23 +201,23 @@ public class NodeHashTable {
 			if (nodeRemap != null)
 				for (int i = 0, i3 = 0, ip2 = 2, iEnd = idxBucket[i+1]; i < iEnd; i++, ip2+=2) {
 					int nIdx = idxBucket[ip2];
-					if (nIdx < 0 || nIdx < startNode) { i3 += 3; continue;	}		// skip "deleted" nodes and node indexes < startNode
-					int i3a = nodeRemap[nIdx] * 3;
+					if (nIdx < 0 || nIdx < startNode) { i3 += NCOORD; continue;	}		// skip "deleted" nodes and node indexes < startNode
+					int i3a = nodeRemap[nIdx] * NCOORD;
 					nodeArray[i3a++] = bucket[i3++]; nodeArray[i3a++] = bucket[i3++]; nodeArray[i3a] = bucket[i3++];
 				}
 			else {
 				if (interleave) {
 					for (int i = 0, i3 = 0, ip2 = 2, iEnd = idxBucket[i+1]; i < iEnd; i++, ip2+=2) {
 						int nIdx = idxBucket[ip2];
-						if (nIdx < 0 || nIdx < startNode) { i3 += 3; continue;	}		// skip "deleted" nodes and node indexes < startNode
-						int i3a = inFront ? nIdx * 6 + extraSpace : nIdx * 6;
-						nodeArray[i3a++] = bucket[i3++]; nodeArray[i3a++] = bucket[i3++]; nodeArray[i3a] = bucket[i3++];
+						if (nIdx < 0 || nIdx < startNode) { i3+=NCOORD; continue;	}	// skip "deleted" nodes and node indexes < startNode
+						int i6a = inFront ? nIdx * NCOORD2 + extraSpace : nIdx * NCOORD2;
+						nodeArray[i6a++] = bucket[i3++]; nodeArray[i6a++] = bucket[i3++]; nodeArray[i6a] = bucket[i3++];
 					}
 				} else {
 					for (int i = 0, i3 = 0, ip2 = 2, iEnd = idxBucket[i+1]; i < iEnd; i++, ip2+=2) {
 						int nIdx = idxBucket[ip2];
-						if (nIdx < 0 || nIdx < startNode) { i3 += 3; continue;	}		// skip "deleted" nodes and node indexes < startNode
-						int i3a = inFront ? nIdx * 3 + extraSpace : nIdx * 3;
+						if (nIdx < 0 || nIdx < startNode) { i3+=NCOORD; continue;	}	// skip "deleted" nodes and node indexes < startNode
+						int i3a = inFront ? nIdx * NCOORD + extraSpace : nIdx * NCOORD;
 						nodeArray[i3a++] = bucket[i3++]; nodeArray[i3a++] = bucket[i3++]; nodeArray[i3a] = bucket[i3++];
 					}
 				}

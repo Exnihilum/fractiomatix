@@ -485,13 +485,19 @@ public class MatrixApp {
 		// print out the smallest dihedral angles and qualities of perfectly shaped BCC tetrahedra of the IST stuffer
 //		System.out.println(FEM1.toStringBCCtetraInfo());
 		
+		double[] closest = FEM1.closestPointOnEdge(-14.57, 13.43, -4.5, -20.168, -1.32, 5.6, 25.33, 16.85, 5.6);
+		double[] test2tris = { -4.34,107.97,0, 31.74,45.65,0, 9.23,61.65,45.57, -30,50,5 };
+		short testAngle = FEM1.facetFacetAngle(test2tris, 0, 1, 2, 3);
+		
 		FEM1 fem = null;
 		BufferedReader br = null;
 
 		// test loading a single object mesh from OBJ file with smoothing groups and normals
 		fem.setDebugLevel(2);
-		try {	br = new BufferedReader(new FileReader("data/Beethoven.obj"));
-				fem = new FEM1(br, FEM1.MESH_PSC); br.close();
+		// subdiv. recommendation note: beam subdiv 0.1, basicmesh subdiv 4, wallcrux subdiv 0.2
+		String objName = "basicmesh1";//"beam";
+		try {	br = new BufferedReader(new FileReader("data\\"+objName+".obj"));
+				fem = new FEM1(objName, br, FEM1.MESH_PSC); br.close();
 		} catch (FileNotFoundException e) { e.printStackTrace();
 		} catch (IOException e) { e.printStackTrace(); }
 		
@@ -501,10 +507,10 @@ public class MatrixApp {
 		FEM1Octree octree = new FEM1Octree(fem, FEM1Octree.DO_FACETS, 0);			// DO_FACETS activates automatic calculation of maxLevel
 		octree.root.build(octree, 0, true);	
 		fem.setDebugLevel(2);
-		FEM1Octree latticeTree = fem.volumeMeshIST(octree, 0.2, 5, true);			// subdivide to leaf octant size of 0.2m (= width of smallest element)
+		FEM1Octree latticeTree = fem.volumeMeshIST(octree, 4, 5, false);			// subdivide to leaf octant size of 0.1m (= width of smallest element)
 		latticeTree.toOBJ(3, 7, false, true, 0);									// test octree output to OBJ
 		System.out.printf("FEM1.volumeMeshIST() took %d ns\n", System.nanoTime() - tStart);
-		fem.toOBJ(true, true);													// test outputting tetrahedral data to OBJ file
+		fem.toOBJ(true, false);													// test outputting tetrahedral data to OBJ file
 		
 		// microbenchmark test of IST volume generator
 //		fem.setDebugLevel(1);
@@ -518,7 +524,7 @@ public class MatrixApp {
 //			octree.root.build(octree, 0, true);
 //			timeOT += System.nanoTime() - timerOT;
 //			//if (i==iNum-1) fem.setDebugLevel(2);
-//			fem.volumeMeshIST(octree, 0.1, 0, true);								// subdivide to leaf octant size of 0.1m
+//			fem.volumeMeshIST(octree, 0.16, 0, true);								// subdivide to leaf octant size of 0.16m
 //		}
 //		System.out.printf("FEM1OCtant.build() took %d ns\n", timeOT/iNum);
 //		System.out.printf("GeocTree + IST generation took %d ns from average of %d iterations\n", (System.nanoTime() - tStart)/iNum, iNum);
@@ -612,7 +618,7 @@ public class MatrixApp {
 		// test loading a single object from OBJ file with handmade tetrahedral data into element objects		
 		try {
 			br = new BufferedReader(new FileReader("data/tetrahedral1.obj"));
-			fem = new FEM1(br, FEM1.MESH_HANDMADE_OBJECTIFIED);
+			fem = new FEM1("tetrahedrons", br, FEM1.MESH_HANDMADE_OBJECTIFIED);
 			br.close();
 		} catch (IOException e) { e.printStackTrace(); }
 		

@@ -63,8 +63,8 @@ public class FEM1Octree {
 		levelSums[0] = 1;
 		root = new FEM1Octant(this, doWhat);
 		if ((doWhat&DO_FACETS) != 0) {
-			int maxBin = fem.edgeSpread.maxBin();					// find out what group of facet sizes is the most numerous
-			// find out what octant size that groups size will motivate
+			int maxBin = fem.edgeSpread.maxBin();					// find out what two groups of facet sizes are the most numerous
+			// find out what octant size that groups size will motivate (average size of the two groups)
 			maxLevel = maxLevelFromGranularity((fem.edgeSpread.div[maxBin+1] + fem.edgeSpread.div[maxBin]) / 2);
 			int divisions = 1; for (int m = maxLevel; m-- > 0; divisions *= 2);
 			while (divisions < fem.minLatticeSubdivs) { divisions *=2; maxLevel++; }
@@ -72,7 +72,7 @@ public class FEM1Octree {
 		this.maxLevel = (short)maxLevel;
 	}
 	
-	// instantiates first octant of subdivision of a boundary lattice (finds bounding box and sets up node reference array)
+	// instantiates first octant of subdivision of a lattice tree (finds bounding box and sets up node reference array)
 	public FEM1Octree(FEM1Octree sourceTree, int gradations) {
 		fem = sourceTree.fem;
 		DEBUG_LEVEL = FEM1.DEBUG_LEVEL;
@@ -120,7 +120,7 @@ public class FEM1Octree {
 		StringBuilder sb = new StringBuilder();
 		sb.append(latticeTree ? "Lattice tree" : "Octree");
 		sb.append(", total branches: " + root.branches + ", total leaves: " + root.leaves + ", top level: " + topLevel + "\n");
-		sb.append(root.appendToString());
+		sb.append(root.appendToString(topLevel));
 		sb.append("\n");
 		return sb.toString();
 	}
