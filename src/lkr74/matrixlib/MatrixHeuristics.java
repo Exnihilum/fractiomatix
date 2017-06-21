@@ -12,7 +12,7 @@ public class MatrixHeuristics {
 	
 	private double[] getRandomData(int r, int c, int fillrate) {
 		double[] data = new double[r * c];
-		RandFill rfill = new RandFill(r * c);
+		RandFill rfill = new RandFill(0, r * c);
 		
 		for (int fill = 0; fill < (r * c) * ((float)fillrate / 100.0); fillrate++)
 			data[rfill.getRandom()] = Math.random();

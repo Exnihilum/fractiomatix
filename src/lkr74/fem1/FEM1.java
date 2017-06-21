@@ -417,6 +417,7 @@ public class FEM1 {
 			polygonsNodeSupport();					// group the polygons supported by every node
 			facetNeighbours(false, false);			// find each facet's neighbours
 			polygonNormals();						// calculate polygonal normals
+			uniqueEdges(patches > 1);				// depending on patch count found, generate either ALL or just PSC feature edges, calculate edge lengths
 			reassignSmoothGroups(24);				// reassign PSC patch smoothing groups according to angle provided
 			polygonsNodeSupport();					// regroup the polygons supported by every node
 			facetNeighbours(false, false);			// find each facet's neighbours for the new smoothing groups
@@ -1010,7 +1011,7 @@ public class FEM1 {
 	void reassignSmoothGroups(double maxAngle) {
 		int[] facetStack = new int[polygons*2];									// worst-case length of stack = polygon count * (old index,new index)
 		int[] polygonNew = new int[polygonOffset[polygons]];					// polygon node series reassigned here
-		//int[][] polygonNeighboursNew = new int[polygons][];						// method will ONLY generate edge neighbourhoods (enough for PSC edge search)
+		//int[][] polygonNeighboursNew = new int[polygons][];					// method will ONLY generate edge neighbourhoods (enough for PSC edge search)
 		int[] polygonOriginalIdxNew = new int[polygons];
 		float[] polygonNormalNew = new float[polygons * NCOORD];
 //		borderPolygons = new int[polygons+((polygons>>3)==0?4:(polygons>>3))];	// NOT worst-case
@@ -1029,24 +1030,24 @@ public class FEM1 {
 			if (store) {
 				//int[] fNbrsNew = {11,0,0,0,0,-1,-1,-1,-1,-1,-1};				// generate a new edge neighbourhood
 				//polygonNeighboursNew[fPrev] = fNbrsNew;
-				int pOfs = polygonOffset[f];									// shift around all data pertinent to this polygon to new positions
+				int pOfs = polygonOffset[f];									// shift around all data pertinent to this facet to new positions
 				polygonNew[p++] = polygon[pOfs++]; polygonNew[p++] = polygon[pOfs++]; polygonNew[p--] = polygon[pOfs--];
 				polygonNormalNew[--p]=polygonNormal[--pOfs]; polygonNormalNew[++p]=polygonNormal[++pOfs]; polygonNormalNew[++p]=polygonNormal[++pOfs];
 				p++; pOfs++;
 				polygonOriginalIdxNew[fPrev] = polygonOriginalIdx[f];
 				polygonCheck.visit(f); patchC++; store = false;
 			}
-			if (eNo < 3) {
-				int fN = fNbrs[5+eNo]>=0 ? fNbrs[5+eNo] : fNbrs[8+eNo];
+			if (eNo < 3) {														// note: no. of processed neighbour kept in top 2 bits of facet index
+				int fN = fNbrs[5+eNo]>=0 ? fNbrs[5+eNo] : fNbrs[8+eNo];			// pick the neighbour from border or regular edge nhood, whichever exists
 				facetStack[i] = ++eNo<<30|f;
 				if (fN>=0) {
-					if (!polygonCheck.visited(fN)) {
-						if (dihedralAngle(f, fN) <= maxAngle) {						// if neighbour is part of this patch (fulfills criterion)
+					if (!polygonCheck.visited(fN)) {							// process only unvisited neighbours (which constitutes a graph-like search)
+						if (dihedralAngle(f, fN) <= maxAngle) {					// if neighbour is part of this patch (fulfills criterion)
 							facetStack[i+=2] = fN; facetStack[i+1] = ++fNew;
 							//polygonNeighboursNew[fPrev][1]++; polygonNeighboursNew[fPrev][4+eNo] = fN;	// store facet as regular in-patch neighbour
 							store = true;
-						} else {													// if neighbour forms a sharp edge 
-							if (t >= testFacets.length) {							// check if testFacets or borderPolygons need reallocation
+						} else {												// if neighbour forms a sharp edge 
+							if (t >= testFacets.length) {						// check if testFacets or borderPolygons need reallocation
 								int[] testFacetsNew = new int[t * 2];
 								for (int c = 0; c < t; c++) testFacetsNew[c] = testFacets[c]; testFacets = testFacetsNew; }
 							testFacets[t++] = fN;
@@ -1084,9 +1085,12 @@ public class FEM1 {
 		polygonOriginalIdx = polygonOriginalIdxNew;
 	}
 	
+	// note: handles a maximum range of -90 to 90 degrees
 	public float dihedralAngle(int fa, int fb) {
-		fa *= 3; fb *= 3;
-		float a = (float)(Math.acos(polygonNormal[fa++]*polygonNormal[fb++]+polygonNormal[fa++]*polygonNormal[fb++]+polygonNormal[fa]*polygonNormal[fb])*TO_DEG);
+		fa *= NCOORD; fb *= NCOORD;
+		float a = (float)(Math.acos(polygonNormal[fa++]*polygonNormal[fb++] + 
+									polygonNormal[fa++]*polygonNormal[fb++] +
+									polygonNormal[fa]*polygonNormal[fb])*TO_DEG);
 		return a < 0 ? -a : a;
 	}
 	
@@ -1097,8 +1101,8 @@ public class FEM1 {
 	// and points to an array of edge lengths edge[] and an array of node index duplets edgeNode[] (for back-reference to underlying edge data)
 	void uniqueEdges(boolean borderEdgesOnly) {
 		int polyNodes = polygonOffset[polygons];
-		int[] edgeIndex1 = new int[polyNodes];									// worst-case allocation, the mapper to the edge lengths
-		for (int i = 0; i < polyNodes; i++) edgeIndex1[i] = -1;					// set all entries to unmapped, -1
+		edgeIndex = new int[polyNodes];											// worst-case allocation, the mapper to the edge lengths
+		for (int i = 0; i < polyNodes; i++) edgeIndex[i] = -1;					// set all entries to unmapped, -1
 		double[] edgeT = new double[polyNodes];									// worst-case allocation, all edges
 		double[] edgeBT = new double[polyNodes];								// worst-case allocation, patch border edges
 		byte[] edgeA = new byte[polyNodes];										// the facet-facet (low precision) angle of edges is stored here
@@ -1110,33 +1114,32 @@ public class FEM1 {
 		// every consecutive facet is checked if it's edges are already remapped by a previously checked neighbour
 		// a new edge length is generated in case an edge hasn't been mapped yet
 		for (int f = 0; f < polygons; f++) {
-			int fO = polygonOffset[f], fO2 = fO;
+			int fO = polygonOffset[f];
 			if (polygon[fO] == -1 || polygonOffset[f+1]-fO > 3) continue;		// skip over erased and non-facet polygons
 			int[] fNbrs = polygonNeighbours[f];
-			for (int bN = 5; bN <= 7; bN++) {									// for each edge entry e01/e12/e20...
-				int fo = fNbrs[bN] != -1 ? 0 : 3;								// pick either boundary or in-patch edge, whichever exists
-				int fN = fNbrs[bN+fo];
-				if (fN >= 0 && edgeIndex1[fO] == -1) {							// if edge hasn't been mapped yet
-					int fNo = -1;
+			for (int bN = 5, fO1st = fO; bN <= 7; bN++) {						// for each edge entry e01/e12/e20...
+				if (edgeIndex[fO] == -1) {										// if neighbour edge hasn't been mapped yet
+					int fo = fNbrs[bN] != -1 ? 0 : 3;							// pick either boundary or in-patch edge, whichever exists
+					int fN = fNbrs[bN+fo], fNo = -1;
 					if (fN >= 0) {												// find neighbourhood if facet neighbour exists
 						fNNbrs = polygonNeighbours[fN];
 						if (fo==0)	{	if (fNNbrs[5]==f) fNo=0; else if (fNNbrs[6]==f) fNo=1; else if (fNNbrs[7]==f) fNo=2; }
 						else		{	if (fNNbrs[8]==f) fNo=0; else if (fNNbrs[9]==f) fNo=1; else if (fNNbrs[10]==f) fNo=2; }
 					}
-					double l = distance(na=polygon[fO++], nb=polygon[fO>=fO2+3 ? fO - 3 : fO], true);
+					double l = distance(na=polygon[fO++], nb=polygon[fO>=fO1st+3 ? fO - 3 : fO], true);
 					if (l < minEdgeLength) minEdgeLength = l; else if (l > maxEdgeLength) maxEdgeLength = l;
 					avgEdgeLength += l;
-					edgeT[eC++] = l;											// edgeT[] collects ALL edge lengths
+					edgeT[eC] = l;											// edgeT[] collects ALL edge lengths
+					// map both this element & border neighbour (if it existed, for a closed volume it should) to this new edge
+					if (fN >= 0)	edgeIndex[fO-1] = edgeIndex[polygonOffset[fN]+fNo] = eC++;
+					else			edgeIndex[fO-1] = eC++;
 					if (borderEdgesOnly && fo==0) continue;						// if edge is in-patch & we're flagged only for boundary edges, no store
 					edgeNT[eNP++] = na; edgeNT[eNP++] = nb; edgeBT[eBC] = l;	// edgeBT[] collects only boundary edge lengths
-					// map both this element & border neighbour (if it existed, for a closed volume it should) to this new edge
-					if (fNo >= 0) {
+					if (fN >= 0) {
 						// find out 3rd node of neighbour facet & calculate angle between the two boundary facets
-						edgeA[eBC] = facetFacetAngle(node, na, nb, polygon[fO2+(fO+1-fO2)%3], polygon[polygonOffset[fN]+(fNo+2)%3]);
-						edgeIndex1[fO] = edgeIndex1[polygonOffset[fN]+fNo] = eBC++;
-					}
-					else edgeIndex1[fO] = eBC++;
-				}
+						edgeA[eBC++] = facetFacetAngle(node, na, nb, polygon[fO1st+(fO+1-fO1st)%3], polygon[polygonOffset[fN]+(fNo+2)%3]);
+					} else eBC++;
+				} else fO++;
 			}
 		}
 		
@@ -1144,10 +1147,9 @@ public class FEM1 {
 		if (edges == 0) throw new RuntimeException("FEM1.uniqueEdges(): no edges found.");
 		edge = new double[edges];
 		edgeAngle = new byte[edges];
-		edgeIndex = new int[edges];
 		edgeNode = new int[edges * 2];
 		for (int e = 0, e2 = 0; e < edges; e++) {							// rescale edge[] & edgeNode[] to their final size
-			edge[e] = edgeT[e]; edgeIndex[e] = edgeIndex1[e]; edgeAngle[e] = edgeA[e];
+			edge[e] = edgeT[e]; edgeAngle[e] = edgeA[e];
 			edgeNode[e2] = edgeNT[e2++]; edgeNode[e2] = edgeNT[e2++]; }
 		avgEdgeLength /= (double)eC;
 		// separate edges into 8 classes for simple heuristic choice of eventual tetrahedral sizing field
@@ -1888,8 +1890,8 @@ public class FEM1 {
 	// therefore: the only thing that will give a guaranteedly satisfactory solution is to increase resolution!
 	boolean discardStraddlers = false;				// discards elements straddling gaps in the mesh (note: will leave holes & increase computation)
 	boolean discardBadSliversIST = true;			// flags for discarding elements fully snapped onto surface that are bad
-	boolean featureEdgeFillIST = false;				// flags for tetrahedral fill-in versus PSC feature/patch-border edges
-	boolean featureSnapOnlyIST = false;				// flags for only snapping towards feature edges
+	boolean featureEdgeFillIST = true;				// flags for tetrahedral fill-in versus PSC feature/patch-border edges
+	boolean featureSnapOnlyIST = true;				// flags for only snapping towards feature edges
 	// debug switches
 	boolean skipVolumeInternalsIST = false;			// DEBUG: skips elements inside of the hull (good for surface quality previews)
 	int maxOutputElementsIST = 0;					// DEBUG: write out up to this number number of elements (set = 0 to ignore)
@@ -1924,8 +1926,9 @@ public class FEM1 {
 	int[] elementIST = null;						// paged boundary elements are regathered into this array
 	short[] edgeOctFlags = null;					// holds child flags for every edge neighbour of an IST octant (bit set if children exist on that edge)
 	int[][] elementNhoodIST = null;
-	int ePrg = 0;									// counts nodes within elementPurger[]
-	int[] elementPurger = null;						// holds 4-tuplets of nodes of unlocated elements that need to be identified for deletion
+
+	//int ePrg = 0;									// counts nodes within elementPurger[]
+	//int[] elementPurger = null;						// holds nodesum entry + 4-tuplets of nodes of unlocated elements that need to be identified for deletion
 	
 	double[] elementStream = null;					// final element stream
 	long[] elementStreamCode = null;				// final element bitpacked compaction code stream
@@ -2006,7 +2009,9 @@ public class FEM1 {
 		
 		// this call makes extra octant leaves according to the corners vs. centroid int/ext criterion
 		// and also forms the face neighbourhoods and bitfields for fast checking of children at edges
+		geocTree.fem.setDebugLevel(3);
 		extendBCCdoNhoodsIST(latticeTree);										// extra leaf octants made, ensuring only BCC tets intersect isosurface
+		geocTree.fem.setDebugLevel(2);
 		//FEM1Octant testOctant = latticeTree.root.locateCoordinate(0.398, 0.407, -0.757);			// DEBUG: finds an erroneous BCC octant
 
 		sortStencilPermCode();
@@ -2401,7 +2406,7 @@ public class FEM1 {
 //					FEM1Octant[] octArray = {	neighbourhoodIST[++n7],neighbourhoodIST[++n7],neighbourhoodIST[++n7],
 //												neighbourhoodIST[++n7],neighbourhoodIST[++n7],neighbourhoodIST[++n7]};
 //					oct.octant = octArray; n7++;
-//				} else n7+=7;															// maxLevel octants can't find any children
+//				} else n7+=7;														// maxLevel octants can't find any children
 				
 				// if we're processing a multipatched mesh & octant holds at least 3 PSC feature edges, try locating & storing PSC feature corners
 				if (patches > 1 && oct.edges >= 3) {
@@ -2412,9 +2417,8 @@ public class FEM1 {
 						boolean matchedTwoA = false, matchedTwoB = false;
 						int eI = edgeI[e]<<1, na = edgeNode[eI++], nb = edgeNode[eI], ea2nd=e, ea3rd=-1, eb2nd=e, eb3rd=-1;
 						for (int e2 = e+1; e2 < eNum; e2++) {
-							if (edgeI[e2] < 0) break;								// stop if we reached the stored corner data
 							int eI2 = edgeI[e2]<<1, na2 = edgeNode[eI2++], nb2 = edgeNode[eI2];
-							// MatchedTwo* is set on 1st match, then if set and 3rd match appears, the match is added as a corner
+							// matchedTwo* is set on 1st match, then if set and 3rd match appears, the match is added as a corner
 							// note: if more than 3 edges meet up, then duplicates of same corner might be added, which isn't critical though
 							if (na==na2||na==nb2) {
 								ea3rd = ea2nd; ea2nd = e2;
@@ -2468,7 +2472,7 @@ public class FEM1 {
 			for (int g=0; g < latticeTree.gradations; g++) System.out.println("    Gradation " + g + ": " + gradCount[g] + " octants.");
 			System.out.print("PSC corner features located (+ possible duplicates): " + cornerPSCcount + "\n\n");
 		}
-		
+		FEM1Octant oct1 = latticeTree.root.locateCoordinate(38.734, -160.775, -79.067);
 		int[] edgeOctCheck = new int[oLast];
 		// unflag face-neighbour search for the neighbourhood checks
 		for (int o = 0; o < oLast; o++) edgeOctCheck[o] = 0x3FFFF - (1<<2|1<<6|1<<8|1<<9|1<<11|1<<15);
@@ -4362,11 +4366,12 @@ public class FEM1 {
 						// note: if the two roses do not share bottommost node, then there is an unknown element wedged between them
 						// that needs to be removed, leave it's removal to stage 5, element storage, by storing the nodes for comparisons
 						if ((nc=elementPg[page][e7-3]) != (nd=elementPg[pageN][e7N-3])) {
-							if (elementPurger==null) elementPurger = new int[128*4];
-							else if (elementPurger.length <= ePrg+4) {			// check allocation of elementPurger[]
-								int[] elementPurger1 = new int[elementPurger.length * 2];
-								for (int i = 0; i < ePrg; i++) elementPurger[i] = elementPurger1[i]; elementPurger = elementPurger1; }
-							elementPurger[ePrg++] = na; elementPurger[ePrg++] = nb; elementPurger[ePrg++] = nc; elementPurger[ePrg++] = nd; 
+//							if (elementPurger==null) elementPurger = new int[128*5];
+//							else if (elementPurger.length <= ePrg+5) {			// check allocation of elementPurger[]
+//								int[] elementPurger1 = new int[elementPurger.length * 2];
+//								for (int i = 0; i < ePrg; i++) elementPurger[i] = elementPurger1[i]; elementPurger = elementPurger1; }
+//							elementPurger[ePrg++] = na+nb+nc+nd;				// to speed up match, first first node index sum can can be checked
+//							elementPurger[ePrg++] = na; elementPurger[ePrg++] = nb; elementPurger[ePrg++] = nc; elementPurger[ePrg++] = nd; 
 						}
 						neighbourTested = octantsTested = true;	break;
 					}

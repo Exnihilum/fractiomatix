@@ -2019,12 +2019,14 @@ public class FEM1Octant {
 			if (edgeI != null && edges > 0) {								// note: edges can be > 0 even if edge == null, for branches
 				indentToLevel(sb2);
 				sb2.append("e:[");
-				int edgeItems = edges; boolean putDots = false;
-				if (maxItemPrint < edges) { edgeItems = maxItemPrint; putDots=true; }
-				for (int e = 0; e < edgeItems; e++) {
-					String edgeS;
-					if ((edgeI[e]&SET31)!=0)	edgeS = "corner_n" + (edgeI[e]&CLR31); else edgeS = Integer.toString(edgeI[e]);
-					sb2.append(edgeS + (e == edgeItems - 1 ? (putDots?"...]\n":"]\n") : ",")); }
+				for (int e = 0; e < edges; e++) {
+					sb2.append(edgeI[e] + (e == edges - 1 && edges==edgeI.length ? "" : ",")); }
+				for (int e4 = edges; e4 < edgeI.length;) {
+					if ((edgeI[e4]&SET31) != 0) {
+						sb2.append("corner_n" + (edgeI[e4++]&CLR31) + "(" + edgeI[e4++] + "," + edgeI[e4++] + "," + edgeI[e4++] + ")");
+					} else e4 += 4;
+				}
+					sb2.append("]\n");
 			}
 			if (facetI != null && facets > 0) {								// note: facets can be > 0 even if facet == null, for branches
 				if (int_ext==0) {											// regular printout of the stored facet indexes

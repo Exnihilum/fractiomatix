@@ -320,7 +320,7 @@ public class MiscMath {
 		double[][] tv = {{-1,0,0}, {-1,1,0}, {0,0,0}};
 		double[][] tv2 = {{0,0,1}, {0,1,1}, {0,0,0}};
 		
-		RandFill rfill = new RandFill(100);
+		RandFill rfill = new RandFill(0,100);
 		for (int i = 0; i < 110; i++)
 			System.out.println(rfill.getRandom());
 		

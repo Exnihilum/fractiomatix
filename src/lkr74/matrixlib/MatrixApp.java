@@ -64,7 +64,7 @@ public class MatrixApp {
 			Matrix M4;
 			CSRMatrix M5;
 	
-			RandFill rfill = new RandFill(mSize);
+			RandFill rfill = new RandFill(0,mSize);
 
 			// fill approx. 1/8 of matrix fields with random numbers
 			for (int j = 0; j < mSize/8; j++) {
@@ -446,7 +446,10 @@ public class MatrixApp {
 
 		int iters = 100000;
 		long tStart, tEnd;
-		
+		RandFill rfill = new RandFill(145,200);
+		for (int i = 0; i < 200; i++) {
+			System.out.println(rfill.getRandom() + ": " + rfill.toString());
+		}
 		
 		// test element search heuristics of triple-method element finder testFindHVSpNode()
 		// this test will tell what element limits to set for each type of search approach: iterative/linear/binary search
@@ -493,7 +496,7 @@ public class MatrixApp {
 		BufferedReader br = null;
 
 		// test loading a single object mesh from OBJ file with smoothing groups and normals
-		fem.setDebugLevel(2);
+		FEM1.setDebugLevel(3);
 		// subdiv. recommendation note: beam subdiv 0.1, basicmesh subdiv 4, wallcrux subdiv 0.2
 		String objName = "basicmesh1";//"beam";
 		try {	br = new BufferedReader(new FileReader("data\\"+objName+".obj"));

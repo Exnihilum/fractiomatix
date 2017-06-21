@@ -1,3 +1,87 @@
+
+	// some beginnings of quick neighbourhood recalculations, perhaps unaccompishable
+	void reassignSmoothGroups(double maxAngle) {
+		int[] facetStack = new int[polygons*2];									// worst-case length of stack = polygon count * (old index,new index)
+		int[] polygonNew = new int[polygonOffset[polygons]];					// polygon node series reassigned here
+		//int[][] polygonNeighboursNew = new int[polygons][];						// method will ONLY generate edge neighbourhoods (enough for PSC edge search)
+		int[] polygonOriginalIdxNew = new int[polygons];
+		float[] polygonNormalNew = new float[polygons * NCOORD];
+//		borderPolygons = new int[polygons+((polygons>>3)==0?4:(polygons>>3))];	// NOT worst-case
+		patch = new int[8];														// NOT worst-case (allocate for 16 patches initially)
+		int[] testFacets = new int[128];										// NOT worst-case (facets failing criterion put here as patch seeds)
+		int i = 0, t = 0, f = 0, fNew = 0, p = 0, pB = 1, pBC = 0, pch = 1, fCheck = 0, patchC = 0;
+		while (f < polygons && polygon[polygonOffset[f]] == -1) polygonCheck.visit(f++);
+		if (f >= polygons) throw new RuntimeException("FEM1.reassignSmoothGroups(): all facets were marked as deleted.");
+		facetStack[0] = f; facetStack[1] = fNew;
+		int[] fNbrs = null; int eNo = 0;
+		boolean store = true;
+		
+		while (i >= 0 && t >= 0) {
+			f = facetStack[i++]; int fPrev = facetStack[i--]; eNo = f>>30&3;
+			fNbrs = polygonNeighbours[f&=0x3FFFFFFF];							// get neighbours of utmost facet on stack
+			if (store) {
+				//int[] fNbrsNew = {11,0,0,0,0,-1,-1,-1,-1,-1,-1};				// generate a new edge neighbourhood
+				//polygonNeighboursNew[fPrev] = fNbrsNew;
+				int pOfs = polygonOffset[f];									// shift around all data pertinent to this polygon to new positions
+				polygonNew[p++] = polygon[pOfs++]; polygonNew[p++] = polygon[pOfs++]; polygonNew[p--] = polygon[pOfs--];
+				polygonNormalNew[--p]=polygonNormal[--pOfs]; polygonNormalNew[++p]=polygonNormal[++pOfs]; polygonNormalNew[++p]=polygonNormal[++pOfs];
+				p++; pOfs++;
+				polygonOriginalIdxNew[fPrev] = polygonOriginalIdx[f];
+				polygonCheck.visit(f); patchC++; store = false;
+			}
+			if (eNo < 3) {
+				int fN = fNbrs[5+eNo]>=0 ? fNbrs[5+eNo] : fNbrs[8+eNo];
+				facetStack[i] = ++eNo<<30|f;
+				if (fN>=0) {
+					if (!polygonCheck.visited(fN)) {
+						if (dihedralAngle(f, fN) <= maxAngle) {						// if neighbour is part of this patch (fulfills criterion)
+							facetStack[i+=2] = fN; facetStack[i+1] = ++fNew;
+							//polygonNeighboursNew[fPrev][1]++; polygonNeighboursNew[fPrev][4+eNo] = fN;	// store facet as regular in-patch neighbour
+							store = true;
+						} else {													// if neighbour forms a sharp edge 
+							if (t >= testFacets.length) {							// check if testFacets or borderPolygons need reallocation
+								int[] testFacetsNew = new int[t * 2];
+								for (int c = 0; c < t; c++) testFacetsNew[c] = testFacets[c]; testFacets = testFacetsNew; }
+							testFacets[t++] = fN;
+	//						if (pB >= borderPolygons.length) {
+	//							int[] borderPolygonsNew = new int[borderPolygons.length + (borderPolygons.length>>3)];
+	//							for (int c = 0; c < t; c++) borderPolygonsNew[c] = borderPolygons[c]; borderPolygons = borderPolygonsNew; }
+	//						borderPolygons[pB++] = f; borderPolygons[pBC]++;
+							//polygonNeighboursNew[fPrev][2]++; polygonNeighboursNew[fPrev][7+eNo] = fN;	// store neighbour facet as cross-border neighbour
+						}
+					}
+				}
+				continue;
+			}
+			if (i == 0) {														// if no more patch area expansion possible
+				if (pch >= patch.length) {
+					int[] patchNew = new int[pch*2]; for (int c = 0; c < pch; c++) patchNew[c] = patch[c]; patch = patchNew; }
+				patch[pch++] = patchC;
+//				pB++; pBC += borderPolygons[pBC] + 1;							// progress in borderPolygons[] to next patch
+				t--;
+				while (t >= 0 && polygonCheck.visited(testFacets[t])) t--;		// locate a nonvisited failed-criterion facet
+				if (t < 0) {													// testFacets[] empty, try locating detached mesh elements
+					while (fCheck < polygons && (polygonCheck.visited(fCheck) || polygon[polygonOffset[fCheck]] == -1)) fCheck++;
+					if (fCheck >= polygons) break;								// all polygons have been visited, we're done
+					else { facetStack[i=0] = fCheck; facetStack[i+1] = ++fNew; }
+					t = 0;
+				// put one of criterion-failed facets as a new patch seed on stack
+				} else { facetStack[i=0] = testFacets[t--];	facetStack[i+1] = ++fNew; }	
+				store = true;													// enforce storage of this first entry of new patch
+			} else i-=2;															// backtrack stack
+		}
+		patches = pch - 1;
+		polygon = polygonNew;
+		//polygonNeighbours = polygonNeighboursNew;
+		polygonNormal = polygonNormalNew;
+		polygonOriginalIdx = polygonOriginalIdxNew;
+	}
+
+
+
+
+
+
 	final static byte FLG_XMM=1|1<<1, FLG_XPM=1<<2|1<<3, FLG_XMP=1<<4|1<<5, FLG_XPP=(byte)(1<<6|1<<7);
 	final static byte FLG_MXM=1|1<<2, FLG_PXM=1<<1|1<<3, FLG_MXP=1<<4|1<<6, FLG_PXP=(byte)(1<<5|1<<7);
 	final static byte FLG_MMX=(byte)(1<<3|1<<7), FLG_PMX=(byte)(1<<1|1<<5), FLG_MPX=(byte)(1<<2|1<<6), FLG_PPX=(byte)(1<<3|1<<7);
@@ -73,160 +157,6 @@
 
 
 
-	// method for only two gradations
-	public FEM1Octant[] addBoundaryOctantsIST(FEM1Octree latticeTree) {
-
-		debugIST_aBOIST_time = System.nanoTime();
-		// get ALL octants pertaining to Isosurface Stuffing solution, but we'll only iterate over highest level
-		int[] countO = {0};											// gets true count of array, since leafOctantArray[] does worst-case allocation
-		FEM1Octant[] octantIST = latticeTree.root.leafOctantArray(latticeTree, latticeTree.maxLevel, countO, true);
-		FEM1Octant[] neighbourhoodIST = new FEM1Octant[octantIST.length * 7];
-		int oEnd = countO[0], oLast = oEnd, oNonLeafC = 0;
-
-		// the loop will test neighbourhood of IST octants, create neighbours if needed and append them AT END of arrayIST[]
-		// octants will assign neighbour backreferences to future octants, minimising repeated neighbourhood search work
-		for (int o = 0, n7 = 0; o < oLast; o++) {
-			FEM1Octant oct = octantIST[o];
-			neighbourhoodIST[n7] = oct;								// first octant of a neighbourhood is neighbourhood's spawning octant
-
-			int nFlags =(neighbourhoodIST[++n7]==null ? 1 : 0)  | (neighbourhoodIST[++n7]==null ? 4 : 0)   | (neighbourhoodIST[++n7]==null ? 16 : 0) |
-						(neighbourhoodIST[++n7]==null ? 64 : 0) | (neighbourhoodIST[++n7]==null ? 256 : 0) | (neighbourhoodIST[++n7]==null ? 1024 : 0);
-			if (nFlags==0) { n7++; continue; }						// a fully assigned octant (mostly interior ones), nothing more to do
-			boolean leafProcessed = false;
-			n7 -= 5;
-
-			if (oct.level < latticeTree.maxLevel) {					// get neighbourhood for non-leaves (those must have their centroids internal)
-				oct.generateGetFaceNeighbours(latticeTree, neighbourhoodIST, nFlags, n7, true);
-				octantIST[oNonLeafC++] = oct;						// reform octantIST[] to only hold non-leaf octants
-			} else if (o >= oLast) {								// get neighbourhood for the new leaves (do not generate neighbours)
-				oct.generateGetFaceNeighbours(latticeTree, neighbourhoodIST, nFlags, n7, true);
-			} else {												// get neighbourhood for leaves (creation on centroid/corner internal/external criterion)
-				boolean centroidIn = oct.centroid_internal();		// flag creation of neighbours that fulfill int/ext criterion, centroid versus corners
-				nFlags |= (centroidIn != ((oct.int_ext&0x55)!=0) ? 32 : 0) | (centroidIn != ((oct.int_ext&0xAA)!=0) ? 128 : 0);		// x-, x+ (bits 6, 8)
-				nFlags |= (centroidIn != ((oct.int_ext&0x33)!=0) ? 8 : 0)  | (centroidIn != ((oct.int_ext&0xCC)!=0) ? 512 : 0);		// y-, y+ (bits 4, 10)
-				nFlags |= (centroidIn != ((oct.int_ext&0x0F)!=0) ? 2 : 0)  | (centroidIn != ((oct.int_ext&0xF0)!=0) ? 2048 : 0);	// z-, z+ (bits 2, 12)
-				// the criterions for octant centroid versus each face's vertexes are sent to generateGetFaceNeighbours()
-				oct.generateGetFaceNeighbours(latticeTree, neighbourhoodIST, nFlags, n7, true);
-				leafProcessed = true;
-			}
-
-			int n7end = n7 + 6, level = oct.level, oEnum = oct.nodes, nbrRevIdx = 6;
-
-			while (n7 < n7end) {										// assign found neighbourhoods to pertinent neighbours of octant
-				FEM1Octant octN = neighbourhoodIST[n7];
-				if (octN == null) { nbrRevIdx--; n7++; continue; }
-
-				if (leafProcessed) {									// if that was a leaf processed, process eventual additional created leaves
-					if (oLast >= octantIST.length) {					// created leaves will be added, check neighbourhoods&octants arrays overflow
-						int newLength = octantIST.length + octantIST.length/4;
-						FEM1Octant[] octantISTnew = new FEM1Octant[newLength];
-						FEM1Octant[] neighbourhoodISTnew = new FEM1Octant[newLength * 7];
-						for (int o1 = 0; o1 < oLast; o1++) octantISTnew[o1] = octantIST[o1];
-						for (int o7 = 0, o7end = oLast*7; o7 < o7end; o7++) neighbourhoodISTnew[o7] = neighbourhoodIST[o7];
-
-						octantIST = octantISTnew;
-						neighbourhoodIST = neighbourhoodISTnew;
-					}
-					if (octN.in_progress()) {							// if neighbour had to be created, append to leafArray
-						octantIST[oLast] = octN;
-						octN.nodes = oLast++;							// continue the octant enumeration
-						octN.int_extFromParent(false);					// resolve int/ext status from parent's internal status (some internal leaves removed earlier)
-						if (octN.internal()) octN.int_ext |= FEM1Octant.CENTROID_INTERNAL;		// an internal leaf has internal centroid by default
-						// process() will halt on unfinished nodes, so clear in_progress flag for the entire new octant chain
-						FEM1Octant octN1 = octN;
-						while (octN1.in_progress()) { octN1.finish(); octN1 = octN1.parent; }
-					}
-				}
-
-				// note: IST octant can have a level N-1 neighbour, but NOT a level N+1 neighbour, therefore if levels aren't equal,
-				// a back-reference is only done from neighbours that are same level or level N+1
-				if (octN.nodes > oEnum)	{									// only interested in assigning future neighbourhoods (past ones already done)
-					if (octN.level == level) neighbourhoodIST[octN.nodes * 7 + nbrRevIdx] = oct;
-					// also if same-level back-referencing already was found, ignore N to N-1 level backreferences
-					else { /* flag N-1 to N neighbourhood */ }
-				}
-				nbrRevIdx--; n7++;
-			}
-		}
-
-		// since a neighbour octant might have been created AFTER a neighbourhood was found, need to recheck the cases
-		// of level N octants neighbouring level N-1 octants, to see if a generated child can be made neighbour
-		for (int o = 0, n7 = 0; o < oLast; o++) {
-			FEM1Octant oct = neighbourhoodIST[n7++];
-			int n7end = n7 + 6, n7b = n7;
-			short level = oct.level;
-			while (n7 < n7end) {
-				FEM1Octant octN = neighbourhoodIST[n7];
-				if (octN != null && octN.level < level && octN.octant != null) {
-					switch (n7 - n7b) {
-					case 0: neighbourhoodIST[n7] = octN.locateCoordinate(oct.xC, oct.yC, oct.zM - FEM1Octant.OCT_MARGIN, level); break;	// z-
-					case 1: neighbourhoodIST[n7] = octN.locateCoordinate(oct.xC, oct.yM - FEM1Octant.OCT_MARGIN, oct.zC, level); break;	// y-
-					case 2: neighbourhoodIST[n7] = octN.locateCoordinate(oct.xM - FEM1Octant.OCT_MARGIN, oct.yC, oct.zC, level); break; // x-
-					case 3: neighbourhoodIST[n7] = octN.locateCoordinate(oct.xP + FEM1Octant.OCT_MARGIN, oct.yC, oct.zC, level); break;	// x+
-					case 4: neighbourhoodIST[n7] = octN.locateCoordinate(oct.xC, oct.yP + FEM1Octant.OCT_MARGIN, oct.zC, level); break;	// y+
-					case 5: neighbourhoodIST[n7] = octN.locateCoordinate(oct.xC, oct.yC, oct.zP + FEM1Octant.OCT_MARGIN, level); }		// z+
-				}
-				n7++;
-			}
-		}
-
-
-		int[] edgeOctCheck = new int[oLast];
-		// unflag face-neighbour search for the neighbourhood checks
-		for (int o = 0; o < oLast; o++) edgeOctCheck[o] = 0x3FFFF - (1<<2|1<<6|1<<8|1<<9|1<<11|1<<15);
-		edgeOctFlags = new short[oLast];
-		FEM1Octant[] neighbourhood18IST = new FEM1Octant[18];
-
-		// get the 18-neighbourhood for every IST octant that isn't a leaf, but only those 12 neighbours that haven's been found yet,
-		// and flag any edge that carries children towards current octant
-		for (FEM1Octant oct : octantIST) {
-			if (oNonLeafC-- <= 0) break;
-			int level = oct.level, oEnum = oct.nodes;
-			int nCheck = edgeOctCheck[oEnum], n6 = oEnum*7+1;
-			oct.getFaceEdgeNeighbours(latticeTree, neighbourhood18IST, 0, nCheck);
-			// need to integrate the face neighbours to get their childflags
-			neighbourhood18IST[2] = neighbourhoodIST[n6++]; neighbourhood18IST[6] = neighbourhoodIST[n6++];
-			neighbourhood18IST[8] = neighbourhoodIST[n6++]; neighbourhood18IST[9] = neighbourhoodIST[n6++];
-			neighbourhood18IST[11] = neighbourhoodIST[n6++]; neighbourhood18IST[15] = neighbourhoodIST[n6++];
-			short flagsEN = 0;
-
-			for (int n18 = 0; n18 < 18 && nCheck != 0; n18++, nCheck>>=1) {
-				FEM1Octant octN = neighbourhood18IST[n18];
-				if (octN == null || octN.level != level) continue;		// child-bitflagging ONLY relevant for same-level neighbourhoods
-				int statusN = octN.status>>3;
-				switch (n18) {											// flags are stored in bitfields within edgeOctFlag[] for every edge-neighbourhood
-				case 0:		if ((statusN&FLG_XPP) != 0) flagsEN |= 1; break;
-				case 1:		if ((statusN&FLG_PXP) != 0) flagsEN |= 2; break;
-				case 2:		if ((statusN&FLG_XMP) != 0)	flagsEN |= 1; if ((statusN&FLG_MXP) != 0) flagsEN |= 2;
-							if ((statusN&FLG_PXP) != 0)	flagsEN |= 4; if ((statusN&FLG_XPP) != 0) flagsEN |= 8; break;
-				case 3:		if ((statusN&FLG_MXP) != 0) flagsEN |= 4; break;
-				case 4:		if ((statusN&FLG_XMP) != 0) flagsEN |= 8; break;
-				case 5:		if ((statusN&FLG_PPX) != 0) flagsEN |= 16; break;
-				case 6:		if ((statusN&FLG_XPM) != 0)	flagsEN |= 1; if ((statusN&FLG_MPX) != 0) flagsEN |= 16;
-							if ((statusN&FLG_PPX) != 0)	flagsEN |= 32; if ((statusN&FLG_XPP) != 0) flagsEN |= 256; break;
-				case 7:		if ((statusN&FLG_MPX) != 0) flagsEN |= 32; break;
-				case 8:		if ((statusN&FLG_PXM) != 0)	flagsEN |= 2; if ((statusN&FLG_PMX) != 0) flagsEN |= 16;
-							if ((statusN&FLG_PPX) != 0)	flagsEN |= 64; if ((statusN&FLG_PXP) != 0) flagsEN |= 512; break;
-				case 9:		if ((statusN&FLG_MXM) != 0)	flagsEN |= 4; if ((statusN&FLG_MMX) != 0) flagsEN |= 32;
-							if ((statusN&FLG_MPX) != 0)	flagsEN |= 128; if ((statusN&FLG_MXP) != 0) flagsEN |= 1024; break;
-				case 10:	if ((statusN&FLG_PMX) != 0) flagsEN |= 64; break;
-				case 11:	if ((statusN&FLG_XMM) != 0)	flagsEN |= 8; if ((statusN&FLG_MMX) != 0) flagsEN |= 64;
-							if ((statusN&FLG_PMX) != 0)	flagsEN |= 128; if ((statusN&FLG_XMP) != 0) flagsEN |= 2048; break;
-				case 12:	if ((statusN&FLG_MMX) != 0) flagsEN |= 128; break;
-				case 13:	if ((statusN&FLG_XPM) != 0) flagsEN |= 256; break;
-				case 14:	if ((statusN&FLG_PXM) != 0) flagsEN |= 512; break;
-				case 15:	if ((statusN&FLG_XMM) != 0)	flagsEN |= 256; if ((statusN&FLG_MXM) != 0) flagsEN |= 512;
-							if ((statusN&FLG_PXM) != 0)	flagsEN |= 1024; if ((statusN&FLG_XPM) != 0) flagsEN |= 2048; break;
-				case 16: 	if ((statusN&FLG_MXM) != 0) flagsEN |= 1024; break;
-				case 17: 	if ((statusN&FLG_XMM) != 0) flagsEN |= 2048;
-				}
-			}
-			edgeOctFlags[oEnum] = flagsEN;
-		}
-		octantIST = null;
-		debugIST_aBOIST_time = System.nanoTime() - debugIST_aBOIST_time;
-		return neighbourhoodIST;										// return neighbourhoods collection
-	}
 
 
 
