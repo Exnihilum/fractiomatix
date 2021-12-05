@@ -17,6 +17,8 @@ QR and LU decompositions implemented.
 A finder of largest eigenvalue & vector included (the simple Power Method).
 A finder of all eigenvalues and vectors using orthogonalisation and Householder reduction implemented. Probably not the fastest on the planet, but we all have to start somewhere.
 
+The Isosurface Stuffing method has been implemented and https://fractiomatix.dreamwidth.org/400.html describes it's inner workings in a more or less detailed manner.
+
 I've implemented in Java the O(n^2.783) Strassen-Winograd matrix multiplicator (which coincidentally would have to be taking on quite big matrices to be worth the bother, as it is changing stack levels and array context all the time. I've included a little speed test in the main() method). Eventually I will change the operations to a preallocated fixed array for all array operations, but I doubt it will gain any major speed improvement, as I suspect the allocations in Java happen in nearly O(1) time when a lot of free memory is available, as I have in these test cases. Perhaps getting rid of Java's incessant array zeroing will give a little gain. So it's very low priority indeed.
 
 I am currently more interested in sparse-matrix fast-solving methods for physical applications. I'd like to be able to import 3D meshes into Java from ex. FBX format, decompose into tetrahedral volumes and run electromagnetic field simulations and stress/strain/displacement simulations with support for (hopefully) anisotropic materials.
